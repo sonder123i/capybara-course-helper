@@ -24,7 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AssignmentInd
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ContentPasteSearch
-import androidx.compose.material.icons.outlined.Cookie
+import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.ManageAccounts
@@ -84,7 +84,9 @@ fun SettingsScreen(
     isSuper: Boolean = false,
     quotaInfo: String = "",
     canRefreshCookie: Boolean = false,
-    isRefreshingCookie: Boolean = false
+    isRefreshingCookie: Boolean = false,
+    academicSystemName: String = "",
+    onAcademicSupport: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
     // 折叠进度随滚动偏移连续变化（约 96px 行程），全程跟手
@@ -131,8 +133,15 @@ fun SettingsScreen(
                     icon = Icons.Outlined.School,
                     iconTint = Color(0xFF0A84FF),
                     title = "学校选择",
-                    subtitle = schoolName.ifBlank { "未选择学校" },
+                    subtitle = listOf(schoolName.ifBlank { "未选择学校" }, academicSystemName).filter(String::isNotBlank).joinToString(" · "),
                     onClick = onSchoolSelect
+                )
+                SettingsRow(
+                    icon = Icons.Outlined.School,
+                    iconTint = Color(0xFF18796B),
+                    title = "教务支持与限制",
+                    subtitle = "新正方 · 旧正方 · 新强智 · 旧强智",
+                    onClick = onAcademicSupport
                 )
                 SettingsRow(
                     icon = Icons.Outlined.AssignmentInd,
@@ -153,7 +162,7 @@ fun SettingsScreen(
                     onClick = onAccountManage
                 )
                 SettingsRow(
-                    icon = Icons.Outlined.Cookie,
+                    icon = Icons.AutoMirrored.Outlined.Login,
                     iconTint = Color(0xFFFF9F0A),
                     title = "重新登录",
                     subtitle = "退出当前会话并返回登录页（保留已存密码）",
@@ -261,6 +270,7 @@ fun SettingsScreen(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun SettingsHeader(
     name: String,
     studentId: String,
@@ -278,52 +288,28 @@ private fun SettingsHeader(
         modifier = Modifier
             .fillMaxWidth()
             .clip(heroShape)
-            .background(Color.White.copy(alpha = 0.62f))
-            .border(0.5.dp, Color.White.copy(alpha = 0.55f), heroShape)
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(com.tyust.course.ui.system.glassSurfaceColor())
+            .border(0.5.dp, com.tyust.course.ui.system.glassBorderColor(), heroShape)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 渐变光晕头像：外圈柔光环 + 内部彩色渐变圆
             Box(
-                modifier = Modifier.size(60.dp),
+                modifier = Modifier.size(40.dp).background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), CircleShape
+                ),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFF0A84FF).copy(alpha = 0.35f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
+                Text(
+                    text = name.take(1).ifBlank { "同" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
                 )
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .background(
-                            brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                                colors = listOf(Color(0xFF0A84FF), Color(0xFF5E5CE6))
-                            ),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = name.take(1).ifBlank { "同" },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
             }
 
             Column(
@@ -332,7 +318,7 @@ private fun SettingsHeader(
             ) {
                 Text(
                     text = name.ifBlank { "同学" },
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -341,17 +327,12 @@ private fun SettingsHeader(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = "设备 ID：${studentId.ifBlank { "未获取" }}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                )
             }
         }
 
-        Row(
+        androidx.compose.foundation.layout.FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (isSuper) {
                 SystemStatusBadge(

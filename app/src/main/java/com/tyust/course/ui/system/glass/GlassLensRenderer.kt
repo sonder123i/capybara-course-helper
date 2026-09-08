@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CopyOnWriteArraySet
 
 /** 一次折射渲染的全部参数。除 [dispersion] 外，所有长度单位为像素。 */
 internal data class GlassLensParams(
@@ -60,6 +60,11 @@ internal class GlassLensSource {
         private set
 
     private var uploadedVersion = -1
+
+    @Volatile
+    internal var revision = 0L
+        private set
+    internal val listeners = CopyOnWriteArraySet<(Long) -> Unit>()
 
     /**
      * 失败就永久停用，退回无折射。引擎级失败对所有元素生效。
@@ -122,6 +127,8 @@ internal class GlassLensSource {
                 srcWidth = bitmap.width
                 srcHeight = bitmap.height
                 uploadedVersion = version
+                revision++
+                listeners.forEach { it(revision) }
             } catch (t: Throwable) {
                 fail("uploadSource", t)
             }
@@ -130,6 +137,7 @@ internal class GlassLensSource {
 
     fun release() {
         released = true
+        listeners.clear()
         GlassLensEngine.post {
             try {
                 if (textureId != 0) GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
@@ -233,24 +241,27 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
     @Volatile
     private var ownFailed = false
 
-    private val pending = AtomicBoolean(false)
+    private val frames = GlassFrameQueue<GlassLensParams>()
+    private val sourceChanged: (Long) -> Unit = { revision ->
+        if (frames.sourceChanged(revision)) scheduleRender()
+    }
+    @Volatile
     private var released = false
 
     init {
         GlassLensEngine.retain()
+        source.listeners.add(sourceChanged)
+        frames.sourceChanged(source.revision)
     }
 
     /**
      * 待渲染的最新参数。滑动时每帧都会提交，但 GL 线程可能还在画上一帧；
      * 这时**覆盖**而不是丢弃，保证画的总是最新位置，否则指示器会滞后。
      */
-    @Volatile
-    private var requested: GlassLensParams? = null
-
     /**
      * 请求渲染一帧。
      *
-     * 同一时刻只排一个任务，但参数取的是**最新**的（见 [requested]）：
+     * 同一时刻只排一个任务，但参数取的是**最新**的（见 [frames]）：
      * 滑动时每帧提交，若 GL 线程还在画上一帧，新参数覆盖旧的而不是被丢掉。
      *
      * 注意「底图是否就绪」的判断必须放在 GL 线程内：上传是 post 的，
@@ -259,25 +270,30 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
      */
     fun submit(params: GlassLensParams) {
         if (failed || released) return
-        requested = params
-        if (!pending.compareAndSet(false, true)) return
+        if (frames.request(params)) scheduleRender()
+    }
+
+    private fun scheduleRender() {
         GlassLensEngine.post {
+            val request = frames.next() ?: return@post
+            var rendered = false
             try {
                 if (failed || released) return@post
-                // 排到这里时 uploadSource 的 post 一定已执行（同一 handler 顺序保证）
                 if (!source.ready) return@post
-                val p = requested ?: return@post
-                renderBlocking(p)
+                rendered = renderBlocking(request.params)
             } catch (t: Throwable) {
                 fail("render", t)
             } finally {
-                pending.set(false)
+                if (frames.finish(request, rendered)) scheduleRender()
             }
         }
     }
 
     fun release() {
         released = true
+        onFrameReady = null
+        source.listeners.remove(sourceChanged)
+        frames.close()
         GlassLensEngine.post {
             try {
                 if (fboTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(fboTexture), 0)
@@ -297,18 +313,18 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
     // ---- GL 线程内部 ----
 
-    private fun renderBlocking(p: GlassLensParams) {
-        if (!GlassLensEngine.ensureReady()) return
+    private fun renderBlocking(p: GlassLensParams): Boolean {
+        if (!GlassLensEngine.ensureReady()) return false
         val srcWidth = source.srcWidth
         val srcHeight = source.srcHeight
-        if (srcWidth <= 0 || srcHeight <= 0) return
+        if (srcWidth <= 0 || srcHeight <= 0) return false
         val w = p.widthPx
         val h = p.heightPx
-        if (w <= 0 || h <= 0) return
+        if (w <= 0 || h <= 0) return false
 
         val program = GlassLensEngine.program
-        val vb = GlassLensEngine.vertexBuffer ?: return
-        if (!ensureFbo(w, h)) return
+        val vb = GlassLensEngine.vertexBuffer ?: return false
+        if (!ensureFbo(w, h)) return false
 
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
         GLES20.glViewport(0, 0, w, h)
@@ -352,6 +368,8 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         }
         buf.position(0)
         GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
+        val error = GLES20.glGetError()
+        if (error != GLES20.GL_NO_ERROR) return fail("readPixels: glError=$error")
 
         // 写进「另一张」，避免覆盖绘制侧正在读的那张
         outIndex = 1 - outIndex
@@ -368,8 +386,10 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         // copyPixelsFromBuffer 把 buffer 第 0 行写进 bitmap 第 0 行（最上行）。
         // 两次反向恰好抵消，所以产物已经是 Canvas 期望的自上而下，
         // **绘制侧不要再翻转**，否则内容上下镜像。
+        if (released) return false
         latest = out
         onFrameReady?.invoke()
+        return true
     }
 
     /** 按元素尺寸准备 FBO，尺寸变化才重建。 */
@@ -442,6 +462,7 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         if (!ownFailed) {
             ownFailed = true
             android.util.Log.w("GlassLensRenderer", "element lens disabled at $stage", t)
+            onFrameReady?.invoke()
         }
         return false
     }

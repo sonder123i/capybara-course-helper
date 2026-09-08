@@ -1,0 +1,46 @@
+<html><body>
+<input id="sfyzmxk" name="sfyzmxk" value="0">
+<input id="kcxx" value=""><input id="skls" value="">
+<input id="sfym" type="checkbox"><input id="sfct" type="checkbox" checked>
+<script>
+function queryKxkcList() {
+    var kcxx = $("#kcxx").val();
+    var skls = $("#skls").val();
+    var sfym = $("#sfym").is(":checked");
+    var sfct = $("#sfct").is(":checked");
+    kcxx = encodeURI(encodeURI(kcxx));
+    skls = encodeURI(encodeURI(skls));
+    var param = "?kcxx="+kcxx+"&skls="+skls+"&sfym="+sfym+"&sfct="+sfct;
+    $("#table").dataTable({
+        "sAjaxSource": "/jsxsd/xsxkkc/xsxkGgxxkxk"+param,
+        "aoColumns": [
+            {"mDataProp":"kch"},
+            {"mDataProp":"kcmc"},
+            {"mDataProp":"jx0404id"}
+        ]
+    });
+}
+function xsxkFun(jx0404id,kcid,cfbs) {
+    xsxkOper(jx0404id,"","",kcid,cfbs,"0");
+}
+function xsxkOper(jx0404id,xkzy,trjf,kcid,cfbs,sfsyjc) {
+    var param = "?kcid="+kcid+"&cfbs="+cfbs;
+    $.ajax({
+        url: "/jsxsd/xsxkkc/ggxxkxkOper"+param,
+        data: {
+            jx0404id: jx0404id,
+            xkzy: xkzy,
+            trjf: trjf,
+            sfsyjc: sfsyjc
+        }
+    });
+}
+function xstkOper(jx0404id) {
+    $.ajax({
+        url: "/jsxsd/xsxkjg/xstkOper",
+        data: {
+            jx0404id: jx0404id
+        }
+    });
+}
+</script></body></html>

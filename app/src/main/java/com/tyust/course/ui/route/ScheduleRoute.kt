@@ -40,6 +40,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
 import com.tyust.course.demo.DemoData
+import com.tyust.course.academic.AcademicGatewayFactory
+import com.tyust.course.academic.AcademicStudyBridge
 import com.tyust.course.manager.ScheduleSettingsManager
 import com.tyust.course.manager.UserManager
 import com.tyust.course.network.CourseApiClient
@@ -54,7 +56,9 @@ import com.tyust.course.ui.theme.MotionDuration
 import com.tyust.course.ui.theme.MotionEasing
 import com.tyust.course.ui.theme.MotionSpring
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
@@ -112,6 +116,9 @@ fun ScheduleRoute() {
         mutableStateOf(restoredSnapshot?.courses ?: emptyList())
     }
     var isLoading by remember { mutableStateOf(false) }
+    var loadError by remember(routeAccountKey) { mutableStateOf("") }
+    var studyLoadJob by remember(routeAccountKey) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var studyGeneration by remember(routeAccountKey) { mutableIntStateOf(0) }
     var periodTimes by remember(routeAccountKey) {
         mutableStateOf(restoredSnapshot?.periodTimes ?: emptyList())
     }
@@ -138,7 +145,7 @@ fun ScheduleRoute() {
         isNextSemester = isNextSemester
     )
     val latestSnapshotForCache by rememberUpdatedState(snapshotForCache)
-    val canCacheSnapshot by rememberUpdatedState(hasInitializedRoute && !isLoading)
+    val canCacheSnapshot by rememberUpdatedState(hasInitializedRoute && !isLoading && loadError.isBlank())
     DisposableEffect(routeAccountKey) {
         onDispose {
             if (canCacheSnapshot) {
@@ -248,6 +255,36 @@ fun ScheduleRoute() {
             }
             val school = UserManager.getInstance().currentSchool
             if (school == null) return
+
+            if (AcademicGatewayFactory.supports(school)) {
+                studyLoadJob?.cancel()
+                val generation = ++studyGeneration
+                val account = UserManager.getInstance().currentAccountStorageKey
+                isLoading = true
+                loadError = ""
+                courses = emptyList()
+                studyLoadJob = scope.launch {
+                    try {
+                        val (cacheKey, json) = withContext(Dispatchers.IO) {
+                            val reader = AcademicStudyBridge.reader(school, account)
+                            val current = reader.catalog().currentTerm
+                            val term = if (isNextSemester) current.next() else current
+                            val entries = reader.schedule(term)
+                            "schedule_${account}_${school.id}_${term.id}" to AcademicStudyBridge.scheduleJson(entries)
+                        }
+                        if (UserManager.getInstance().currentAccountStorageKey != account || studyGeneration != generation) return@launch
+                        saveScheduleToCache(cacheKey, json)
+                        courses = reloadCustomCourses(parseSchedule(json))
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (UserManager.getInstance().currentAccountStorageKey == account && studyGeneration == generation)
+                            loadError = e.message ?: "课表同步失败，请重试"
+                    } finally {
+                        if (studyGeneration == generation) isLoading = false
+                    }
+                }
+                return
+            }
             
             val calendar = Calendar.getInstance()
             val year = calendar.get(Calendar.YEAR)
@@ -345,6 +382,8 @@ fun ScheduleRoute() {
         currentWeek = currentWeek,
         courses = courses,
         isLoading = isLoading,
+        errorMessage = loadError,
+        onRetry = { loadSchedule(true) },
         periodTimes = periodTimes,
         periodCount = periodCount,
         onWeekChange = { currentWeek = it },
@@ -372,57 +411,18 @@ fun ScheduleRoute() {
         onToggleSemester = { isNextSemester = !isNextSemester }
     )
     
-    // 设置页：独立窗口 + 底部升起。它自己在窗口内铺壁纸捕获层、自带 DialogHost，
-    // 所以这里【不能】再把 LocalAppBackdrop/LocalControlBackdrop/LocalDialogHost
-    // 置为 null，也不能套一层不透明 Surface——那会把整页压成灰卡片。
     if (showSettingsDialog) {
-        var animateTrigger by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) { animateTrigger = true }
-
-        fun dismiss() {
-            animateTrigger = false
-        }
-
-        if (!animateTrigger) {
-            LaunchedEffect(Unit) {
-                kotlinx.coroutines.delay(300)
-                showSettingsDialog = false
-            }
-        }
-
-        Dialog(
-            onDismissRequest = { dismiss() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            DisablePlatformDialogDim()
-            AnimatedVisibility(
-                visible = animateTrigger,
-                // 进入用弹簧从屏幕底部整幅升起（原来是 1/4 屏高的 tween，
-                // 观感更像"淡入时轻轻抖一下"而不是"被推上来"）；
-                // 退出仍用加速 tween——退出要快，不要弹。
-                enter = slideInVertically(
-                    initialOffsetY = { it },
-                    animationSpec = MotionSpring.liquidSettle()
-                ) + fadeIn(animationSpec = tween(MotionDuration.Medium)),
-                exit = slideOutVertically(
-                    targetOffsetY = { it / 3 },
-                    animationSpec = tween(MotionDuration.Medium, easing = MotionEasing.Accelerate)
-                ) + fadeOut(animationSpec = tween(MotionDuration.Medium))
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ScheduleSettingsScreen(
-                        manager = settingsManager,
-                        onClose = {
-                            periodCount = settingsManager.periodCount
-                            periodTimes = settingsManager.getPeriodTimes().map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
-                            val w = settingsManager.calculateCurrentWeek()
-                            if (w > 0) currentWeek = w
-
-                            dismiss()
-                        }
-                    )
+        com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSettingsDialog = false }) { close ->
+            ScheduleSettingsScreen(
+                manager = settingsManager,
+                onClose = {
+                    periodCount = settingsManager.periodCount
+                    periodTimes = settingsManager.getPeriodTimes().map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
+                    val w = settingsManager.calculateCurrentWeek()
+                    if (w > 0) currentWeek = w
+                    close()
                 }
-            }
+            )
         }
     }
     

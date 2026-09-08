@@ -33,6 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.tyust.course.ui.system.GlassPageScaffold
+import com.tyust.course.ui.system.SystemIconButton
 import com.tyust.course.ui.system.SystemDialog
 import com.tyust.course.ui.system.SystemPrimaryButton
 import com.tyust.course.ui.system.SystemSecondaryButton
@@ -175,100 +177,29 @@ fun CookieWebViewScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = pageTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = currentUrl.take(50) + if (currentUrl.length > 50) "..." else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (canGoBack) {
-                            webView?.goBack()
-                        } else {
-                            onBack()
-                        }
-                    }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { webView?.reload() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                    IconButton(onClick = { showTutorial = true }) {
-                        Icon(Icons.AutoMirrored.Filled.Help, contentDescription = "帮助")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
+    GlassPageScaffold(
+        title = "网页登录",
+        subtitle = currentUrl.let { android.net.Uri.parse(it).host }.orEmpty().ifBlank { "打开学校教务系统" },
+        onBack = { if (canGoBack) webView?.goBack() else onBack() },
+        actions = {
+            SystemIconButton(Icons.Default.Refresh, "刷新网页", { webView?.reload() })
+            SystemIconButton(Icons.AutoMirrored.Filled.Help, "登录帮助", { showTutorial = true })
         },
         bottomBar = {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shadowElevation = 8.dp,
-                color = MaterialTheme.colorScheme.surface
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            extractedCookie = extractCookie()
-                            if (extractedCookie.isNotEmpty()) {
-                                showCookieDialog = true
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Cookie,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "获取当前页面 Cookie",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Text(
-                        text = "请先在页面中登录教务系统，再点击上方按钮获取 Cookie",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                SystemPrimaryButton(
+                    text = "使用当前登录状态",
+                    onClick = {
+                        extractedCookie = extractCookie()
+                        if (extractedCookie.isNotEmpty()) showCookieDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("请先在网页中登录学校教务账号", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     ) { paddingValues ->
@@ -430,13 +361,13 @@ fun CookieWebViewScreen(
             },
             title = {
                 Text(
-                    "Cookie 获取成功",
+                    "使用登录状态",
                     fontWeight = FontWeight.Bold
                 )
             },
             confirmButton = {
                 SystemPrimaryButton(
-                    text = "使用此 Cookie",
+                    text = "返回应用登录",
                     onClick = {
                         showCookieDialog = false
                         onCookieExtracted(extractedCookie)
@@ -453,33 +384,8 @@ fun CookieWebViewScreen(
             }
         ) {
             Text(
-                text = "已获取到以下 Cookie：",
-                style = MaterialTheme.typography.bodyMedium
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 150.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text(
-                    text = extractedCookie,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(12.dp),
-                    maxLines = 6,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "点击「使用此 Cookie」将自动填充并返回登录界面",
-                style = MaterialTheme.typography.bodySmall,
+                text = "确认已登录学校教务账号后，返回应用完成登录。",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

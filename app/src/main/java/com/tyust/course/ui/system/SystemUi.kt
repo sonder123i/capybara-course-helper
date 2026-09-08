@@ -34,6 +34,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,6 +44,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -288,9 +291,10 @@ fun SystemTopBar(
                         text = title,
                         fontSize = lerpSp(28f, 17f, collapse),
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.5).sp,
+                        letterSpacing = 0.sp,
                         color = titleColor,
-                        maxLines = 1
+                        maxLines = if (collapse < 0.5f) 2 else 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     if (!subtitle.isNullOrBlank()) {
                         // 折叠时副标题高度收拢并渐隐
@@ -315,7 +319,8 @@ fun SystemTopBar(
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Medium,
                                     color = appearance.onSurfaceVariant.copy(alpha = 0.80f),
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -403,13 +408,14 @@ fun SystemCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val reduceMotion = rememberGlassAccessibilityMode().reduceMotion
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
+        targetValue = if (isPressed && !reduceMotion) 0.985f else 1f,
         animationSpec = MotionSpring.bounce(),
         label = "cardScale"
     )
 
-    val cardShape = RoundedCornerShape(24.dp)
+    val cardShape = RoundedCornerShape(16.dp)
 
     val baseModifier = modifier
         .fillMaxWidth()
@@ -427,15 +433,15 @@ fun SystemCard(
 
     // 调用方普遍显式传 colorScheme.surface；把"默认白面"语义映射为半透玻璃面
     // （纯 alpha 混合零采样开销，多彩壁纸自然透出），特殊色卡保持原色。
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     val translucent = backgroundColor == MaterialTheme.colorScheme.surface
     val effectiveColor = when {
         !translucent -> backgroundColor
-        isLightTheme -> Color.White.copy(alpha = 0.62f)
-        else -> Color(0xFF1C1C1E).copy(alpha = 0.55f)
+        else -> glassSurfaceColor()
     }
     val effectiveBorder = if (translucent) {
-        Color.White.copy(alpha = if (isLightTheme) 0.55f else 0.12f)
+        if (borderColor == MaterialTheme.colorScheme.outlineVariant) glassBorderColor()
+        else lerpColor(glassBorderColor(), borderColor, 0.55f)
     } else {
         borderColor.copy(alpha = 0.15f)
     }
@@ -446,7 +452,7 @@ fun SystemCard(
         color = effectiveColor,
         border = BorderStroke(
             width = 0.5.dp,
-            color = effectiveBorder
+            brush = Brush.linearGradient(listOf(effectiveBorder, effectiveBorder.copy(alpha = effectiveBorder.alpha * 0.45f), effectiveBorder))
         ),
         // 半透玻璃面必须关 elevation 阴影：RenderNode 阴影会透过半透表面显形为白蒙层
         shadowElevation = when {
@@ -556,7 +562,7 @@ fun SystemDivider(modifier: Modifier = Modifier) {
     HorizontalDivider(
         modifier = modifier,
         thickness = 1.dp,
-        color = NeuDivider
+        color = MaterialTheme.colorScheme.outlineVariant
     )
 }
 
@@ -565,17 +571,17 @@ fun SystemStatStrip(
     modifier: Modifier = Modifier,
     items: List<Pair<String, String>>
 ) {
-    // 玻璃数字胶囊横排：替代灰底凹陷统计条
     Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         items.forEach { (label, value) ->
-            GlassStatChip(
-                value = value,
-                label = label,
-                modifier = Modifier.weight(1f)
-            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(value, style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                Text(label, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -676,7 +682,8 @@ fun SystemPicker(
     leadingIcon: ImageVector? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
-    backdrop: Backdrop? = LocalControlBackdrop.current
+    backdrop: Backdrop? = LocalControlBackdrop.current,
+    maxLabelLines: Int = 1
 ) {
     LiquidPicker(
         options = options.map(::LiquidPickerOption),
@@ -689,7 +696,8 @@ fun SystemPicker(
         leadingIcon = leadingIcon,
         actionLabel = actionLabel,
         onAction = onAction,
-        backdrop = backdrop
+        backdrop = backdrop,
+        maxLabelLines = maxLabelLines
     )
 }
 
@@ -707,7 +715,7 @@ fun SystemPrimaryButton(
         modifier = modifier.height(52.dp),
         enabled = enabled,
         style = LiquidButtonStyle.SolidTinted,
-        tint = if (!rememberGlassDarkTheme()) IOSBlueLight else IOSBlueDark,
+        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSBlueLight else IOSBlueDark,
         shape = Capsule()
     ) {
         if (leadingIcon != null) leadingIcon()
@@ -759,7 +767,7 @@ fun SystemDestructiveButton(
         modifier = modifier.height(52.dp),
         enabled = enabled,
         style = LiquidButtonStyle.SolidTinted,
-        tint = if (!rememberGlassDarkTheme()) IOSRedLight else IOSRedDark,
+        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSRedLight else IOSRedDark,
         shape = Capsule()
     ) {
         if (leadingIcon != null) leadingIcon()
@@ -776,9 +784,10 @@ fun SystemEmptyState(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Outlined.Inbox,
     action: (@Composable () -> Unit)? = null
 ) {
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -786,7 +795,7 @@ fun SystemEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 玻璃圆底托一个占位圆点，让空态与液态层次一致
+        // Empty and unavailable states retain the same glass treatment as the page controls.
         Box(
             modifier = Modifier
                 .size(56.dp)
@@ -802,24 +811,21 @@ fun SystemEmptyState(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-            )
+            Icon(icon, contentDescription = null, modifier = Modifier.size(26.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
         if (action != null) {
@@ -837,6 +843,7 @@ fun SystemLoadingState(
     GlassLoadingState(text = text, modifier = modifier)
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SystemIconButton(
     icon: ImageVector,
@@ -848,15 +855,23 @@ fun SystemIconButton(
     chip: Boolean = true,
     backdrop: Backdrop? = LocalControlBackdrop.current
 ) {
-    AnimatedIconButton(
-        onClick = onClick,
-        icon = icon,
-        contentDescription = contentDescription,
-        enabled = enabled,
-        tint = tint,
-        chip = chip,
-        backdrop = backdrop
-    )
+    androidx.compose.material3.TooltipBox(
+        positionProvider = androidx.compose.material3.TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = {
+            if (!contentDescription.isNullOrBlank()) PlainTooltip { Text(contentDescription) }
+        },
+        state = androidx.compose.material3.rememberTooltipState()
+    ) {
+        AnimatedIconButton(
+            onClick = onClick,
+            icon = icon,
+            contentDescription = contentDescription,
+            enabled = enabled,
+            tint = tint,
+            chip = chip,
+            backdrop = backdrop
+        )
+    }
 }
 
 @Composable
@@ -881,7 +896,7 @@ fun SystemActionButton(
         modifier = modifier,
         enabled = enabled,
         style = if (primary) LiquidButtonStyle.SolidTinted else LiquidButtonStyle.SolidSurface,
-        tint = if (!rememberGlassDarkTheme()) IOSBlueLight else IOSBlueDark,
+        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSBlueLight else IOSBlueDark,
         contentColor = contentColor,
         shape = Capsule(),
         minHeight = 36.dp,
@@ -1016,6 +1031,7 @@ fun SystemDialog(
     dismissButton: @Composable (() -> Unit)? = null,
     icon: @Composable (() -> Unit)? = null,
     title: @Composable (() -> Unit)? = null,
+    presentation: DialogPresentation = DialogPresentation.Center,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val dialogHost = LocalDialogHost.current
@@ -1039,9 +1055,10 @@ fun SystemDialog(
         // 大多数弹窗看不出来（内容开着的时候不变），但背景取色那种"拖一下就变"的
         // 内容会整块定格。这里让 Host 读一个 State，闭包换新它就重组。
         val currentBody by androidx.compose.runtime.rememberUpdatedState(dialogBody)
-        androidx.compose.runtime.DisposableEffect(Unit) {
-            dialogHost.show(onDismissRequest) { currentBody() }
-            onDispose { dialogHost.dismiss() }
+        val currentDismiss by androidx.compose.runtime.rememberUpdatedState(onDismissRequest)
+        androidx.compose.runtime.DisposableEffect(dialogHost) {
+            val handle = dialogHost.show(onDismiss = { currentDismiss() }, presentation = presentation) { currentBody() }
+            onDispose { dialogHost.dismiss(handle, notify = false) }
         }
     } else {
         Dialog(onDismissRequest = onDismissRequest) {

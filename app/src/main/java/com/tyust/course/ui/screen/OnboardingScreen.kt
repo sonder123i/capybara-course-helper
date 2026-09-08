@@ -49,6 +49,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.tyust.course.manager.AppearanceSettingsManager
 import com.tyust.course.ui.system.LocalAppBackdrop
+import com.tyust.course.ui.system.GlassWindowHost
 import com.tyust.course.ui.system.LocalControlBackdrop
 import com.tyust.course.ui.system.PagePadding
 import com.tyust.course.ui.system.SystemPrimaryButton
@@ -98,12 +99,12 @@ fun OnboardingScreen(
             OnboardingPage(
                 icon = Icons.Outlined.Shield,
                 title = "账号与会话",
-                description = "密码经系统密钥库加密后仅保存在本机，用于登录状态失效时自动续期；可在「设置 → 账号管理」中随时删除。"
+                description = "已保存的密码经系统密钥库加密，仅存于本机；登录失效时可尝试续期，学校要求验证码时需手动填写。所有学校合计最多 3 个学生账号。"
             ),
             OnboardingPage(
                 icon = Icons.Outlined.RocketLaunch,
-                title = "开始使用",
-                description = "适用于采用正方教务系统的学校，也可以自行添加所在学校的教务域名。"
+                title = "支持四类教务",
+                description = "新正方、旧正方、新强智、旧强智。可自行添加学校地址；各教务的支持范围和限制可在「设置 → 教务支持与限制」查看。"
             )
         )
     }
@@ -112,30 +113,14 @@ fun OnboardingScreen(
     val accessibility = rememberGlassAccessibilityMode()
     val isLastPage = pagerState.currentPage == pages.lastIndex
 
-    Box(
+    GlassWindowHost(
         modifier = Modifier
             .fillMaxSize()
             .drawBehind { drawRect(AppearanceSettingsManager.style.baseColor) }
     ) {
         // 每处都在【绘制 lambda 内部】读 state：rememberLayerBackdrop 没有 key，
         // 捕获外面的快照会让图片壁纸异步解码完成后这一层不重绘。
-        val backdrop = if (isBackdropSupported()) {
-            rememberLayerBackdrop {
-                drawWallpaperPattern(AppearanceSettingsManager.style)
-                drawContent()
-            }
-        } else {
-            null
-        }
-
-        // 采样源：一个只画壁纸的空节点，与下面的内容列同级
-        if (backdrop != null) {
-            Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop))
-        } else {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawWallpaperPattern(AppearanceSettingsManager.style)
-            }
-        }
+        val backdrop = LocalControlBackdrop.current
 
         CompositionLocalProvider(
             LocalAppBackdrop provides backdrop,
@@ -150,6 +135,11 @@ fun OnboardingScreen(
             ) {
                 // 高度恒定：最后一页藏掉「跳过」时不能让下面整块跳一下
                 Box(modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(com.tyust.course.R.mipmap.ic_launcher),
+                        contentDescription = "正方教务助手",
+                        modifier = Modifier.size(40.dp).align(Alignment.CenterStart)
+                    )
                     if (!isLastPage) {
                         TextButton(
                             onClick = onFinish,
@@ -184,8 +174,8 @@ fun OnboardingScreen(
 
                 PagerCapsuleIndicator(
                     pageCount = pages.size,
-                    currentPage = pagerState.currentPage,
-                    reduceMotion = accessibility.reduceMotion
+                    position = if (accessibility.reduceMotion) pagerState.currentPage.toFloat()
+                        else pagerState.currentPage + pagerState.currentPageOffsetFraction
                 )
 
                 SystemPrimaryButton(
@@ -206,29 +196,19 @@ fun OnboardingScreen(
     }
 }
 
-/** 当前页是一枚 26dp 胶囊，其余是 8dp 圆点；宽度用弹簧过渡，读起来像液体被拉长。 */
+/** Width is driven by the pager itself, including a cancelled swipe. */
 @Composable
 private fun PagerCapsuleIndicator(
     pageCount: Int,
-    currentPage: Int,
-    reduceMotion: Boolean
+    position: Float
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center
     ) {
         repeat(pageCount) { index ->
-            val selected = index == currentPage
-            val targetWidth = if (selected) 26.dp else 8.dp
-            val width by animateDpAsState(
-                targetValue = targetWidth,
-                animationSpec = if (reduceMotion) {
-                    androidx.compose.animation.core.snap()
-                } else {
-                    MotionSpring.liquidSettle()
-                },
-                label = "onboardingIndicatorWidth"
-            )
+            val amount = (1f - (position - index).absoluteValue).coerceIn(0f, 1f)
+            val width = (8f + 18f * amount).dp
             Box(
                 modifier = Modifier
                     .padding(horizontal = 4.dp)
@@ -236,11 +216,10 @@ private fun PagerCapsuleIndicator(
                     .height(8.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(
-                        if (selected) {
-                            NeuPrimary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
-                        }
+                        androidx.compose.ui.graphics.lerp(
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
+                            NeuPrimary, amount
+                        )
                     )
             )
         }
@@ -254,6 +233,7 @@ private fun OnboardingPageContent(
     pageOffset: Float
 ) {
     val fade = 1f - (pageOffset.absoluteValue * 0.5f)
+    val metrics = com.tyust.course.ui.system.rememberScreenMetrics()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -279,14 +259,14 @@ private fun OnboardingPageContent(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                    .padding(horizontal = 24.dp, vertical = metrics.tall(32.dp, 20.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(22.dp)
+                verticalArrangement = Arrangement.spacedBy(metrics.tall(22.dp, 16.dp))
             ) {
                 Box(
                     modifier = Modifier
                         .graphicsLayer { translationX = pageOffset * 56f }
-                        .size(84.dp)
+                        .size(metrics.tall(84.dp, 64.dp))
                         .glassChip(shape = RoundedCornerShape(26.dp), elevation = 2.dp),
                     contentAlignment = Alignment.Center
                 ) {

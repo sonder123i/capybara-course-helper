@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.tyust.course.ui.system.isBackdropSupported
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
 import com.tyust.course.ui.system.DialogHost
+import com.tyust.course.ui.system.GlassWindowHost
 import com.tyust.course.ui.system.LocalAppBackdrop
 import com.tyust.course.ui.system.LocalControlBackdrop
 import com.tyust.course.ui.system.LocalDialogHost
@@ -83,6 +84,7 @@ fun LoginScreen(
     bindingStudentName: String = "",
     bindingMaxStudents: Int = 0,
     bindingUsedNames: Set<String> = emptySet(),
+    bindingUsedCount: Int = bindingUsedNames.size,
     onConfirmBinding: () -> Unit = {},
     onCancelBinding: () -> Unit = {}
 ) {
@@ -134,44 +136,12 @@ fun LoginScreen(
         }
     }
     
-    // 与主界面同款流体壁纸，登录卡的玻璃采样有真实的多彩层次。
-    //
-    // 每一处都在【绘制 lambda 内部】读 state：这个 rememberLayerBackdrop 没有 key，
-    // 捕获外面那个快照的话，壁纸换了、或者图片壁纸异步解码完成，这一层都不会重绘。
-    val backdrop = if (isBackdropSupported()) {
-        rememberLayerBackdrop {
-            drawWallpaperPattern(AppearanceSettingsManager.style)
-            drawContent()
-        }
-    } else {
-        null
-    }
-
-    // 登录页原先根本没有把 backdrop 提供出去，于是页面内的选择器、分段控件和
-    // 所有弹窗都只能走"不透明白底"回退——「添加学校」「编辑学校配置」看起来
-    // 像另一个 App 就是这个原因。
-    //
-    // DialogHost 同样是必需的：没有它，SystemDialog 会退回平台 Dialog（独立窗口），
-    // 而玻璃采样的是本窗口的图层，跨窗口取不到（MainActivity 里那条注释就是这件事）。
-    // 挂上之后弹窗在同一窗口渲染，玻璃、压暗、返回键与点击外部关闭都成立。
-    val dialogHostState = rememberDialogHostState()
-    CompositionLocalProvider(
-        LocalAppBackdrop provides backdrop,
-        LocalControlBackdrop provides backdrop,
-        LocalDialogHost provides dialogHostState
-    ) {
+    GlassWindowHost {
+    val backdrop = LocalControlBackdrop.current
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .drawBehind { drawRect(AppearanceSettingsManager.style.baseColor) }
     ) {
-        if (backdrop != null) {
-            Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop))
-        } else {
-            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                drawWallpaperPattern(AppearanceSettingsManager.style)
-            }
-        }
 
         Column(
             modifier = Modifier
@@ -189,66 +159,40 @@ fun LoginScreen(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val iconShape = RoundedCornerShape(24.dp)
-                    Surface(
-                        modifier = Modifier.size(90.dp),
-                        shape = iconShape,
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            0.5.dp,
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.56f)
-                        ),
-                        shadowElevation = 2.dp,
-                        tonalElevation = 0.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.School,
-                                contentDescription = "School Icon",
-                                modifier = Modifier.size(48.dp),
-                                tint = NeuPrimary
-                            )
-                        }
-                    }
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(com.tyust.course.R.mipmap.ic_launcher),
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp)
+                    )
                     
                     Spacer(modifier = Modifier.height(24.dp))
                     
                     Text(
                         text = "正方教务助手",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = Neutral900,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = (-0.5).sp
+                        letterSpacing = 0.sp
                     )
                     
                     Spacer(modifier = Modifier.height(4.dp))
                     
                     Text(
-                        text = "正方教务系统第三方客户端",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Neutral500,
+                        text = com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Medium
                     )
                 }
             }
             
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
             // Login Card (Glassmorphism / Outline style)
             AnimatedVisibility(
                 visible = visible,
                 enter = loginPanelEnter
             ) {
-                val sheetShape = RoundedCornerShape(28.dp)
-                // 配方搬到了 Modifier.glassSheet（引导页复用同一件），参数一一对齐，视觉不变
-                val cardGlassMod = if (backdrop != null && isBackdropSupported()) {
-                    Modifier
-                        .fillMaxWidth()
-                        .glassSheet(backdrop = backdrop, cornerRadius = 28.dp)
-                } else {
-                    null
-                }
-
                 val cardInner: @Composable ColumnScope.() -> Unit = {
                     // Title with Settings Button
                         Box(
@@ -258,7 +202,7 @@ fun LoginScreen(
                                 text = if (loginTab == 0 && onPasswordLogin != null) "登录教务系统" else "Cookie 登录",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = Neutral900,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.align(Alignment.Center)
                             )
                             
@@ -270,7 +214,7 @@ fun LoginScreen(
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "编辑学校配置",
-                                    tint = Neutral500,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -285,7 +229,7 @@ fun LoginScreen(
                                 "请从浏览器复制教务系统登录后的会话 Cookie"
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = Neutral500,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
                         
@@ -328,9 +272,16 @@ fun LoginScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             placeholder = "请选择学校",
-                            actionLabel = "+ 添加学校",
+                            actionLabel = "添加学校",
                             onAction = { showAddSchoolDialog = true },
-                            backdrop = backdrop
+                            backdrop = backdrop,
+                            maxLabelLines = 2
+                        )
+                        Text(
+                            text = com.tyust.course.academic.AcademicCapabilities.name(selectedSchool?.academicSystem) + " · 跨学校合计最多 3 个学生账号",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
                         
                         // Add School Dialog
@@ -352,6 +303,8 @@ fun LoginScreen(
                                         val schoolName = if (name.isNotBlank()) name else domain.split(".").firstOrNull()?.uppercase() ?: domain
                                         val newSchool = SchoolConfig(schoolId, schoolName, domain, protocol).apply {
                                             this.basePath = basePath
+                                            this.academicSystem = "auto"
+                                            this.detectionSource = "pending"
                                         }
                                         com.tyust.course.manager.UserManager.getInstance().addCustomSchool(newSchool)
                                         onSchoolAdded()
@@ -427,7 +380,7 @@ fun LoginScreen(
                                         Icon(
                                             imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                             contentDescription = null,
-                                            tint = Neutral500,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
@@ -481,7 +434,7 @@ fun LoginScreen(
                                     Icon(
                                         imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                         contentDescription = if (showPassword) "隐藏" else "显示",
-                                        tint = Neutral500,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -536,7 +489,7 @@ fun LoginScreen(
                                 Text(
                                     text = "切换到 Cookie 登录 →",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = Neutral500
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         } else {
@@ -551,7 +504,7 @@ fun LoginScreen(
                                         imageVector = Icons.Default.OpenInBrowser,
                                         contentDescription = null,
                                         modifier = Modifier.size(20.dp),
-                                        tint = Neutral700
+                                        tint = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             )
@@ -581,42 +534,17 @@ fun LoginScreen(
                             Text(
                                 text = "体验只读演示模式",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = Neutral500,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
                 }
 
-                if (cardGlassMod != null) {
-                    Box(modifier = cardGlassMod) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp)
-                                .padding(top = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            cardInner()
-                        }
-                    }
-                } else {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = sheetShape,
-                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f)),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.60f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp)
-                                .padding(top = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            cardInner()
-                        }
-                    }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    cardInner()
                 }
             }
             
@@ -627,21 +555,12 @@ fun LoginScreen(
                 Text(
                     text = "正方教务助手 · 第三方客户端",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Neutral300,
-                    letterSpacing = 1.sp
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 0.sp
                 )
             }
         }
 
-        // 弹窗层：与内容列同级，压在最上面。
-        // imePadding 是必需的——添加学校/验证码弹窗里都有输入框，键盘弹起时
-        // 弹窗要在剩余空间里重新居中，否则确认按钮会被键盘压住。
-        DialogHost(
-            state = dialogHostState,
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-        )
     }
 
     // Student Binding Confirmation Dialog
@@ -650,6 +569,7 @@ fun LoginScreen(
             studentName = bindingStudentName,
             maxStudents = bindingMaxStudents,
             usedNames = bindingUsedNames,
+            usedCount = bindingUsedCount,
             onConfirm = onConfirmBinding,
             onDismiss = onCancelBinding
         )
@@ -716,7 +636,7 @@ fun LoginScreen(
                     onValueChange = { captchaInput = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = "验证码",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     minHeight = 50.dp
                 )
             }
@@ -730,6 +650,7 @@ fun BindingConfirmationDialog(
     studentName: String,
     maxStudents: Int,
     usedNames: Set<String>,
+    usedCount: Int,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -807,9 +728,9 @@ fun BindingConfirmationDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${usedNames.size} / $maxStudents",
+                            text = "$usedCount / $maxStudents",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (usedNames.size >= maxStudents) SemanticDanger else SemanticSuccess
+                            color = if (usedCount >= maxStudents) SemanticDanger else SemanticSuccess
                         )
                     }
 
@@ -827,7 +748,7 @@ fun BindingConfirmationDialog(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "确认后此账号将与本设备永久绑定，占用 1 个名额，且无法撤销。",
+                text = "不同学校可共用设备，合计最多绑定 $maxStudents 个学生账号。确认后占用 1 个名额，且无法撤销。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -848,73 +769,11 @@ fun AddSchoolDialog(
     var basePath by remember { mutableStateOf("/jwglxt") }
     var protocol by remember { mutableStateOf("https") }
     
-    // Smart URL parsing function
     fun parseUrl(url: String) {
-        if (url.isBlank()) return
-        
-        var cleanUrl = url.trim()
-        
-        // Extract protocol
-        when {
-            cleanUrl.startsWith("https://") -> {
-                protocol = "https"
-                cleanUrl = cleanUrl.removePrefix("https://")
-            }
-            cleanUrl.startsWith("http://") -> {
-                protocol = "http"
-                cleanUrl = cleanUrl.removePrefix("http://")
-            }
-        }
-        
-        // Extract domain
-        val pathStart = cleanUrl.indexOf('/')
-        if (pathStart > 0) {
-            domain = cleanUrl.substring(0, pathStart)
-            val pathPart = cleanUrl.substring(pathStart)
-            
-            // Find base path - look for common patterns
-            val commonPaths = listOf("/jwglxt", "/jwxt", "/jwxs", "/jw")
-            var foundPath = false
-            
-            for (commonPath in commonPaths) {
-                if (pathPart.startsWith(commonPath + "/") || pathPart == commonPath) {
-                    basePath = commonPath
-                    foundPath = true
-                    break
-                }
-            }
-            
-            // If no common path found, check if it starts directly with module paths
-            // This means basePath should be empty
-            if (!foundPath) {
-                val directPaths = listOf("/xtgl/", "/xsxk/", "/kbcx/", "/cjcx/", "/xsxy/")
-                for (directPath in directPaths) {
-                    if (pathPart.startsWith(directPath)) {
-                        basePath = ""  // No base path, modules are at root
-                        foundPath = true
-                        break
-                    }
-                }
-            }
-            
-            // If still not found, try to extract the first path segment
-            if (!foundPath && pathPart.length > 1) {
-                val secondSlash = pathPart.indexOf('/', 1)
-                if (secondSlash > 1) {
-                    val firstSegment = pathPart.substring(0, secondSlash)
-                    // Check if it looks like a module path or a base path
-                    val modulePatterns = listOf("xtgl", "xsxk", "kbcx", "cjcx", "xsxy")
-                    val segmentName = firstSegment.removePrefix("/")
-                    if (modulePatterns.any { segmentName.startsWith(it) }) {
-                        basePath = ""  // Direct module access
-                    } else {
-                        basePath = firstSegment
-                    }
-                }
-            }
-        } else {
-            domain = cleanUrl.split("?")[0]
-        }
+        val parsed = com.tyust.course.academic.AcademicAddress.parse(url) ?: return
+        protocol = parsed.protocol
+        domain = parsed.domain
+        basePath = parsed.basePath
     }
     
     // Domain validation

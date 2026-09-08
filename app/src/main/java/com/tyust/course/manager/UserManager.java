@@ -25,6 +25,10 @@ public class UserManager {
     // 内存缓存，避免每次续期都过一次 Keystore 解密；真正的落盘在 CredentialStore
     private String sessionPassword = "";
     private String currentAccountKey = "";
+    private final SessionStateStore sessionState = new SessionStateStore();
+    private String runtimeAccountStorageKey = "";
+    private String runtimeCookie = "";
+    private String runtimeSchoolAddress = "";
     private final Map<String, String> sessionPasswords = new HashMap<>();
     private List<Course> selectedCourses = new ArrayList<>();
 
@@ -315,12 +319,14 @@ public class UserManager {
     // 保存 Cookie。默认只更新当前会话 Cookie，不改变登录模式。
     public void saveCookie(String cookie) {
         this.savedCookie = cookie != null ? cookie : "";
+        this.isLoggedIn = !this.savedCookie.isEmpty();
         saveLoginState();
-        refreshRuntimeForCurrentAccount();
+        installSession(true);
     }
 
     public void saveCookieLogin(String cookie) {
         this.savedCookie = cookie != null ? cookie : "";
+        this.isLoggedIn = !this.savedCookie.isEmpty();
         this.sessionPassword = "";
         currentAccountKey = buildAccountKey(currentSchool, "", studentId, studentName);
         if (appContext != null) {
@@ -331,11 +337,12 @@ public class UserManager {
                     .apply();
         }
         saveLoginState();
-        refreshRuntimeForCurrentAccount();
+        installSession(true);
     }
 
     public void savePasswordLogin(String username, String cookie, String password) {
         this.savedCookie = cookie != null ? cookie : "";
+        this.isLoggedIn = !this.savedCookie.isEmpty();
         this.sessionPassword = password != null ? password : "";
         String key = buildAccountKey(currentSchool, username, studentId, studentName);
         if (!key.isEmpty()) {
@@ -356,6 +363,7 @@ public class UserManager {
                     .apply();
         }
         saveLoginState();
+        installSession(true);
     }
 
     /**
@@ -698,23 +706,48 @@ public class UserManager {
                     .apply();
         }
 
-        refreshRuntimeForCurrentAccount();
+        installSession(persist);
+        if (sessionState.getState().getValue().getExpired()) isLoggedIn = false;
         Log.d(TAG, "已切换账号: " + studentName + " @ " + school.name);
         return true;
     }
 
     public void refreshRuntimeForCurrentAccount() {
+        installSession(false);
+    }
+
+    public SessionStateStore getSessionState() {
+        return sessionState;
+    }
+
+    private void installSession(boolean renewed) {
+        synchronized (sessionState) {
+        String account = getCurrentAccountStorageKey();
+        String address = currentSchool != null ? currentSchool.getFullBasePath() : "";
+        boolean accountChanged = !account.equals(runtimeAccountStorageKey);
+        boolean changed = accountChanged || !address.equals(runtimeSchoolAddress)
+                || !savedCookie.equals(runtimeCookie);
+        if (!renewed && !changed) return;
         try {
             CourseApiClient apiClient = CourseApiClient.getInstance();
             apiClient.clearDisplayParamsCache();
             if (currentSchool != null && savedCookie != null && !savedCookie.isEmpty()) {
-                apiClient.setCookie(currentSchool.getBaseUrl(), savedCookie);
+                apiClient.setCookie(currentSchool.getBaseUrl(), savedCookie, account);
+                if (com.tyust.course.academic.AcademicGatewayFactory.INSTANCE.supports(currentSchool)) {
+                    com.tyust.course.academic.AcademicGatewayFactory.INSTANCE.importCookie(
+                            currentSchool, account, savedCookie, true, firstNotBlank(getUsername(), studentId));
+                }
             } else {
-                apiClient.clearCookies();
+                apiClient.clearCookies(account);
             }
-            SmartSelector.getInstance().reloadForCurrentAccount();
+            runtimeAccountStorageKey = account;
+            runtimeCookie = savedCookie;
+            runtimeSchoolAddress = address;
+            sessionState.replace(account);
+            if (accountChanged) SmartSelector.getInstance().reloadForCurrentAccount();
         } catch (Exception e) {
             Log.w(TAG, "刷新账号运行态失败: " + e.getMessage());
+        }
         }
     }
 
@@ -728,6 +761,13 @@ public class UserManager {
     public void clearLoginState() {
         boolean wasDemoMode = isDemoMode;
         String accountStorageKeyToClear = getCurrentAccountStorageKey();
+        if (currentSchool != null) {
+            com.tyust.course.academic.AcademicGatewayFactory.INSTANCE.invalidate(currentSchool, accountStorageKeyToClear);
+        }
+        runtimeAccountStorageKey = "";
+        runtimeCookie = "";
+        runtimeSchoolAddress = "";
+        sessionState.replace("default");
         isLoggedIn = false;
         isDemoMode = false;
         studentName = "";
@@ -793,6 +833,9 @@ public class UserManager {
         selectedCourses = new ArrayList<>();
         isDemoMode = true;
         isLoggedIn = true;
+        if (!sessionState.getToken().getAccountStorageKey().equals(getCurrentAccountStorageKey())) {
+            sessionState.replace(getCurrentAccountStorageKey());
+        }
     }
 
     public void setDemoMode(boolean demoMode) {

@@ -20,6 +20,7 @@ interface PasswordLoginCallback {
     fun onCaptchaInvalid()
     fun onInvalidCredentials()
     fun onError(message: String)
+    fun onWebLoginRequired(message: String) = onError(message)
 }
 
 class PasswordLoginManager : PasswordLoginGateway {

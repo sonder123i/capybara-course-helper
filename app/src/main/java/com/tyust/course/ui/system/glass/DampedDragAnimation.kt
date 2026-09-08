@@ -5,6 +5,10 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.MutatorMutex
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -13,7 +17,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.util.fastCoerceIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -21,7 +25,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.time.Clock
+import android.os.SystemClock
 
 class DampedDragAnimation(
     private val animationScope: CoroutineScope,
@@ -39,6 +43,7 @@ class DampedDragAnimation(
     val onDragStarted: DampedDragAnimation.(position: Offset) -> Unit,
     val onDragStopped: DampedDragAnimation.() -> Unit,
     val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
+    val onDragCancelled: DampedDragAnimation.() -> Unit = {},
 ) {
     private val velocityAnimationSpec = spring(0.5f, 300f, visibilityThreshold * 10f)
     // tint/色散转玻璃过渡：略降刚度让\"实色→玻璃\"更平滑，不突兀。
@@ -55,27 +60,53 @@ class DampedDragAnimation(
 
     private val mutatorMutex = MutatorMutex()
     private val velocityTracker = VelocityTracker()
+    private var interactionJob: Job? = null
+    private var valueJob: Job? = null
+    private var velocityJob: Job? = null
+    private var requestedValue by mutableFloatStateOf(initialValue)
+    private var reducedMotion = false
+    private var gestureStartValue = initialValue
 
-    val value: Float get() = valueAnimation.value
-    val targetValue: Float get() = valueAnimation.targetValue
-    val pressProgress: Float get() = pressProgressAnimation.value
-    val scaleX: Float get() = scaleXAnimation.value
-    val scaleY: Float get() = scaleYAnimation.value
-    val velocity: Float get() = velocityAnimation.value
+    val value: Float get() = if (reducedMotion) requestedValue else valueAnimation.value
+    val targetValue: Float get() = requestedValue
+    val pressProgress: Float get() = if (reducedMotion) 0f else pressProgressAnimation.value
+    val scaleX: Float get() = if (reducedMotion) initialScale else scaleXAnimation.value
+    val scaleY: Float get() = if (reducedMotion) initialScale else scaleYAnimation.value
+    val velocity: Float get() = if (reducedMotion) 0f else velocityAnimation.value
+
+    fun setReducedMotion(reduced: Boolean, selectedValue: Float = targetValue) {
+        reducedMotion = reduced
+        if (reduced) snapToValue(selectedValue)
+    }
+
+    private fun snapToValue(value: Float) {
+        requestedValue = value.coerceIn(valueRange)
+        interactionJob?.cancel()
+        valueJob?.cancel()
+        velocityJob?.cancel()
+        interactionJob = animationScope.launch {
+            valueAnimation.snapTo(requestedValue)
+            velocityAnimation.snapTo(0f)
+            pressProgressAnimation.snapTo(0f)
+            scaleXAnimation.snapTo(initialScale)
+            scaleYAnimation.snapTo(initialScale)
+        }
+    }
 
     val modifier: Modifier = Modifier.pointerInput(Unit) {
         inspectDragGestures(
             onDragStart = { down ->
-                onDragStarted(down.position)
+                gestureStartValue = targetValue
                 press()
+                onDragStarted(down.position)
             },
             onDragEnd = {
                 onDragStopped()
                 release()
             },
             onDragCancel = {
-                onDragStopped()
-                release()
+                animateToValue(gestureStartValue)
+                onDragCancelled()
             }
         ) { change, dragAmount ->
             onDrag(size, dragAmount)
@@ -83,8 +114,11 @@ class DampedDragAnimation(
     }
 
     fun press() {
+        if (reducedMotion) return
+        interactionJob?.cancel()
+        valueJob?.cancel()
         velocityTracker.resetTracking()
-        animationScope.launch {
+        interactionJob = animationScope.launch {
             launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
             launch { scaleXAnimation.animateTo(pressedScale, scaleXAnimationSpec) }
             launch { scaleYAnimation.animateTo(pressedScale, scaleYAnimationSpec) }
@@ -92,7 +126,16 @@ class DampedDragAnimation(
     }
 
     fun release() {
-        animationScope.launch {
+        if (reducedMotion) { snapToValue(targetValue); return }
+        interactionJob?.cancel()
+        // A second press can interrupt the position spring. Resume its target before waiting
+        // for the release gate, otherwise the gate waits forever on a stationary midpoint.
+        valueJob?.cancel()
+        valueJob = animationScope.launch {
+            valueAnimation.animateTo(targetValue, settleAnimationSpec) { updateVelocity() }
+            settleVelocity()
+        }
+        interactionJob = animationScope.launch {
             awaitReleaseGate()
             startReleaseAnimations(this)
         }
@@ -100,14 +143,22 @@ class DampedDragAnimation(
 
     fun updateValue(value: Float) {
         val targetValue = value.coerceIn(valueRange)
-        animationScope.launch {
-            launch { valueAnimation.animateTo(targetValue, directManipulationSpec) { updateVelocity() } }
+        requestedValue = targetValue
+        if (reducedMotion) { snapToValue(targetValue); return }
+        valueJob?.cancel()
+        valueJob = animationScope.launch {
+            valueAnimation.animateTo(targetValue, directManipulationSpec) { updateVelocity() }
+            settleVelocity()
         }
     }
 
     fun animateToValue(value: Float) {
         val target = value.coerceIn(valueRange)
-        animationScope.launch {
+        requestedValue = target
+        if (reducedMotion) { snapToValue(target); return }
+        interactionJob?.cancel()
+        valueJob?.cancel()
+        interactionJob = animationScope.launch {
             mutatorMutex.mutate {
                 // 结构化会话：增亮与位移并行推进，褪光协程等 value 走过大半程就启动，
                 // 于是"褪光"与"位移"是重叠的，而不是等位移完全结束才回弹。
@@ -123,12 +174,10 @@ class DampedDragAnimation(
                             valueAnimation.animateTo(target, settleAnimationSpec) {
                                 updateVelocity()
                             }
+                            settleVelocity()
                         } catch (_: CancellationException) {
                             currentCoroutineContext().ensureActive()
                         }
-                    }
-                    if (velocity != 0f) {
-                        launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
                     }
                     launch {
                         awaitReleaseGate()
@@ -141,11 +190,11 @@ class DampedDragAnimation(
 
     /** 滑动过大半程即开始褪光缩小，避免全亮白环拖出长残影。 */
     private suspend fun awaitReleaseGate() {
-        awaitFrame()
+        withFrameNanos { }
         if (value != targetValue) {
-            val threshold = (valueRange.endInclusive - valueRange.start) * 0.15f
+            val threshold = maxOf(visibilityThreshold, (valueRange.endInclusive - valueRange.start) * 0.15f)
             snapshotFlow { valueAnimation.value }
-                .filter { abs(it - valueAnimation.targetValue) < threshold }
+                .filter { abs(it - targetValue) <= threshold }
                 .first()
         }
     }
@@ -163,10 +212,16 @@ class DampedDragAnimation(
             return
         }
         velocityTracker.addPosition(
-            Clock.System.now().toEpochMilliseconds(),
+            SystemClock.uptimeMillis(),
             Offset(value, 0f)
         )
         val targetVelocity = velocityTracker.calculateVelocity().x / valueSpan
-        animationScope.launch { velocityAnimation.animateTo(targetVelocity, velocityAnimationSpec) }
+        velocityJob?.cancel()
+        velocityJob = animationScope.launch { velocityAnimation.animateTo(targetVelocity, velocityAnimationSpec) }
+    }
+
+    private fun settleVelocity() {
+        velocityJob?.cancel()
+        velocityJob = animationScope.launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
     }
 }

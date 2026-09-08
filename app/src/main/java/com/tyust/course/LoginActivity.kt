@@ -25,6 +25,9 @@ import com.tyust.course.utils.CourseParser
 import com.tyust.course.login.PasswordLoginCallback
 import com.tyust.course.login.PasswordLoginGateway
 import com.tyust.course.login.PasswordLoginGatewayFactory
+import com.tyust.course.academic.AcademicGatewayFactory
+import com.tyust.course.academic.AcademicPasswordLoginGateway
+import com.tyust.course.AcademicWebViewActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +45,8 @@ class LoginActivity : ComponentActivity() {
     private var isLoading by mutableStateOf(false)
     private var errorMessage by mutableStateOf<String?>(null)
     private var cookieFromWebView by mutableStateOf("")
+    private var academicWebPageUrl = ""
+    private var academicValidationGeneration = 0
     private var isAutoValidating by mutableStateOf(false)
 
     // Binding Dialog State
@@ -49,6 +54,7 @@ class LoginActivity : ComponentActivity() {
     private var bindingStudentName by mutableStateOf("")
     private var bindingStudentId by mutableStateOf("")
     private var bindingMaxStudents by mutableStateOf(0)
+    private var bindingUsedCount by mutableStateOf(0)
     private var bindingUsedNames by mutableStateOf<Set<String>>(emptySet())
     private var pendingCookie by mutableStateOf("")
     private var pendingPasswordLogin by mutableStateOf(false)
@@ -68,6 +74,7 @@ class LoginActivity : ComponentActivity() {
             val cookie = result.data?.getStringExtra(CookieWebViewActivity.EXTRA_COOKIE_RESULT)
             if (!cookie.isNullOrBlank()) {
                 cookieFromWebView = cookie
+                academicWebPageUrl = result.data?.getStringExtra(AcademicWebViewActivity.EXTRA_PAGE_URL).orEmpty()
                 Toast.makeText(this, "Cookie 已获取，点击登录", Toast.LENGTH_SHORT).show()
             }
         }
@@ -166,16 +173,22 @@ class LoginActivity : ComponentActivity() {
                     bindingStudentName = bindingStudentName,
                     bindingMaxStudents = bindingMaxStudents,
                     bindingUsedNames = bindingUsedNames,
+                    bindingUsedCount = bindingUsedCount,
                     onConfirmBinding = {
                         showBindingDialog = false
-                        com.tyust.course.manager.StudentLimitManager.recordStudent(
+                        val recorded = com.tyust.course.manager.StudentLimitManager.recordStudent(
                             context = this@LoginActivity,
                             schoolId = UserManager.getInstance().currentSchool?.id.orEmpty(),
                             schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
                             studentName = bindingStudentName,
                             studentId = bindingStudentId
                         )
-                        proceedToMain(UserManager.getInstance(), bindingStudentName, pendingCookie)
+                        if (recorded) {
+                            proceedToMain(UserManager.getInstance(), bindingStudentName, pendingCookie)
+                        } else {
+                            discardPendingPasswordLogin()
+                            errorMessage = "该设备所有学校合计最多绑定 3 个学生账号"
+                        }
                     },
                     onCancelBinding = {
                         showBindingDialog = false
@@ -224,6 +237,19 @@ class LoginActivity : ComponentActivity() {
 
     private fun openWebView() {
         val currentSchool = UserManager.getInstance().currentSchool
+        if (currentSchool != null && AcademicGatewayFactory.supports(currentSchool)) {
+            val hosts = java.util.ArrayList<String>().apply {
+                add(currentSchool.domain)
+                addAll(currentSchool.allowedAcademicHosts)
+            }
+            val intent = Intent(this, AcademicWebViewActivity::class.java).apply {
+                putExtra(AcademicWebViewActivity.EXTRA_START_URL, AcademicGatewayFactory.loginUrl(currentSchool))
+                putExtra(AcademicWebViewActivity.EXTRA_COOKIE_URL, currentSchool.fullBasePath.trimEnd('/') + "/")
+                putStringArrayListExtra(AcademicWebViewActivity.EXTRA_ALLOWED_HOSTS, hosts)
+            }
+            webViewLauncher.launch(intent)
+            return
+        }
         val searchKeyword = if (currentSchool != null) {
             "${currentSchool.name} 教务系统"
         } else {
@@ -279,6 +305,47 @@ class LoginActivity : ComponentActivity() {
     }
     
     private fun performLoginValidation(currentSchool: SchoolConfig, cookieStr: String) {
+        val academicGateway = activePasswordLoginGateway as? AcademicPasswordLoginGateway
+        if (AcademicGatewayFactory.supports(currentSchool)) {
+            val generation = ++academicValidationGeneration
+            val username = pendingPasswordUsername.ifBlank {
+                runCatching { android.net.Uri.parse(academicWebPageUrl).getQueryParameter("xh") }.getOrNull().orEmpty()
+            }
+            val key = AcademicGatewayFactory.accountKey(currentSchool, username.ifBlank { "webview_pending" })
+            lifecycleScope.launch {
+                val result = runCatching { withContext(Dispatchers.IO) {
+                    if (currentSchool.academicSystem == "auto" && AcademicGatewayFactory.detect(currentSchool, key) == null)
+                        throw IllegalStateException("无法识别教务系统，请在学校配置中手动选择")
+                    AcademicGatewayFactory.importCookie(currentSchool, key, cookieStr, username = username)
+                    AcademicGatewayFactory.create(currentSchool, key).validateSession()
+                } }
+                if (generation != academicValidationGeneration || UserManager.getInstance().currentSchool?.id != currentSchool.id) return@launch
+                result.onSuccess { identity ->
+                    if (identity.status != com.tyust.course.academic.AcademicStatus.SUCCESS) {
+                        isLoading = false
+                        errorMessage = identity.message.ifBlank { "未能验证登录，请在教务网页完成登录后重试" }
+                        discardPendingPasswordLogin()
+                    } else {
+                        val id = identity.studentId.ifBlank { academicGateway?.studentId.orEmpty() }.ifBlank { username }
+                        if (id.isBlank()) {
+                            isLoading = false
+                            errorMessage = "已登录，但未识别到学号，请使用密码登录或重新打开教务网页"
+                            discardPendingPasswordLogin()
+                        } else {
+                            UserManager.getInstance().updateSchoolConfig(currentSchool)
+                            AcademicGatewayFactory.importCookie(currentSchool, AcademicGatewayFactory.accountKey(currentSchool, id), cookieStr, username = id)
+                            finishAcademicLogin(currentSchool, cookieStr, identity.studentName.ifBlank { academicGateway?.studentName.orEmpty() }, id)
+                        }
+                    }
+                }.onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    isLoading = false
+                    errorMessage = it.message ?: "教务登录验证失败"
+                    discardPendingPasswordLogin()
+                }
+            }
+            return
+        }
         // 1. Set Cookie
         CourseApiClient.getInstance().setCookie(currentSchool.baseUrl, cookieStr.trim())
 
@@ -332,10 +399,8 @@ class LoginActivity : ComponentActivity() {
                         val bindingCheck = com.tyust.course.manager.StudentLimitManager.checkCanUseStudent(
                             context = this@LoginActivity,
                             schoolId = currentSchool.id,
-                            schoolName = currentSchool.name,
                             studentName = studentNameParsed,
-                            studentId = studentIdParsed,
-                            maxStudents = maxStudents
+                            studentId = studentIdParsed
                         )
 
                         if (!bindingCheck.allowed) {
@@ -344,17 +409,7 @@ class LoginActivity : ComponentActivity() {
                             return@runOnUiThread
                         }
 
-                        if (bindingCheck.alreadyBound || maxStudents <= 0) {
-                            if (!bindingCheck.alreadyBound) {
-                                Log.d(TAG, "超级账户，无需绑定确认")
-                                com.tyust.course.manager.StudentLimitManager.recordStudent(
-                                    context = this@LoginActivity,
-                                    schoolId = currentSchool.id,
-                                    schoolName = currentSchool.name,
-                                    studentName = studentNameParsed,
-                                    studentId = studentIdParsed
-                                )
-                            }
+                        if (bindingCheck.alreadyBound) {
                             proceedToMain(userManager, studentNameParsed, cookieStr)
                             return@runOnUiThread
                         }
@@ -363,6 +418,7 @@ class LoginActivity : ComponentActivity() {
                         bindingStudentId = studentIdParsed
                         bindingMaxStudents = maxStudents
                         bindingUsedNames = bindingCheck.usedNames
+                        bindingUsedCount = bindingCheck.usedCount
                         pendingCookie = cookieStr
                         showBindingDialog = true
 
@@ -377,6 +433,32 @@ class LoginActivity : ComponentActivity() {
                 }
             }
         })
+    }
+
+    private fun finishAcademicLogin(currentSchool: SchoolConfig, cookieStr: String, parsedName: String, parsedId: String) {
+        val studentNameParsed = parsedName.ifBlank { "同学" }
+        val studentIdParsed = parsedId
+        val userManager = UserManager.getInstance()
+        userManager.studentName = studentNameParsed
+        if (studentIdParsed.isNotBlank()) userManager.studentId = studentIdParsed
+        val bindingCheck = com.tyust.course.manager.StudentLimitManager.checkCanUseStudent(
+            context = this, schoolId = currentSchool.id,
+            studentName = studentNameParsed, studentId = studentIdParsed
+        )
+        runOnUiThread {
+            isLoading = false
+            if (!bindingCheck.allowed) {
+                errorMessage = bindingCheck.reason; discardPendingPasswordLogin(); return@runOnUiThread
+            }
+            if (bindingCheck.alreadyBound) {
+                proceedToMain(userManager, studentNameParsed, cookieStr)
+            } else {
+                bindingStudentName = studentNameParsed; bindingStudentId = studentIdParsed
+                bindingMaxStudents = com.tyust.course.activation.ActivationManager.getMaxStudents(this)
+                bindingUsedNames = bindingCheck.usedNames; bindingUsedCount = bindingCheck.usedCount
+                pendingCookie = cookieStr; showBindingDialog = true
+            }
+        }
     }
     
     /**
@@ -498,6 +580,16 @@ class LoginActivity : ComponentActivity() {
                     errorMessage = message
                     discardPendingPasswordLogin()
                     Log.e(TAG, "onError called: $message")
+                }
+            }
+
+            override fun onWebLoginRequired(message: String) {
+                runOnUiThread {
+                    isLoading = false
+                    errorMessage = message
+                    UserManager.getInstance().updateSchoolConfig(school)
+                    discardPendingPasswordLogin()
+                    openWebView()
                 }
             }
         })

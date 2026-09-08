@@ -79,6 +79,7 @@ android {
         versionCode code
         versionName name
         buildConfigField "String", "FEEDBACK_SIGNING_SECRET", quoteForBuildConfig(feedbackSigningSecret)
+        buildConfigField "boolean", "UI_PREVIEW", "false"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -106,7 +107,24 @@ android {
             minifyEnabled false
             debuggable true
         }
+        uiPreview {
+            initWith debug
+            applicationIdSuffix '.uipreview'
+            versionNameSuffix '-ui-preview'
+            matchingFallbacks = ['debug']
+            signingConfig signingConfigs.debug
+            buildConfigField "boolean", "UI_PREVIEW", "true"
+        }
+        benchmark {
+            initWith release
+            applicationIdSuffix '.benchmark'
+            versionNameSuffix '-benchmark'
+            matchingFallbacks = ['release']
+            signingConfig signingConfigs.debug
+            buildConfigField "boolean", "UI_PREVIEW", "true"
+        }
     }
+    testBuildType providers.gradleProperty('uiTestBuildType').getOrElse('debug')
     
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -154,6 +172,7 @@ dependencies {
     // Compose Debug Tools
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+    uiPreviewImplementation 'androidx.compose.ui:ui-test-manifest'
     
     // Legacy Material (for transition period)
     implementation 'com.google.android.material:material:1.11.0'
@@ -205,6 +224,8 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation composeBom
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'

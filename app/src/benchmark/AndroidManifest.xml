@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="正方教务助手 · 性能验证" tools:replace="android:label">
+        <profileable android:shell="true" />
+    </application>
+</manifest>

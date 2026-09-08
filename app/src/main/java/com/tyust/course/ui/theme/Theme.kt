@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.tyust.course.ui.system.GlassPressIndication
 import com.tyust.course.ui.system.LocalWallpaperAppearanceColors
+import com.tyust.course.ui.system.ProvideWallpaperAppearance
 import com.tyust.course.ui.system.rememberWallpaperRegionAppearance
 import com.tyust.course.manager.AppearanceSettingsManager
 import com.tyust.course.manager.WallpaperRegion
@@ -147,7 +148,7 @@ fun CourseSelectorTheme(
             colorScheme = colorScheme,
             typography = Typography,
             shapes = AppShapes,
-            content = content
+            content = { ProvideWallpaperAppearance(rootWallpaperColors, content) }
         )
     }
 }

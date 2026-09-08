@@ -1,9 +1,19 @@
 package com.tyust.course.ui.system
 
 import android.provider.Settings
+import android.app.Activity
+import android.app.Application
+import android.database.ContentObserver
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 
 /**
@@ -56,28 +66,57 @@ data class GlassAccessibilityMode(
 
 @Composable
 fun rememberGlassAccessibilityMode(): GlassAccessibilityMode {
-    val context = LocalContext.current
-    return remember(context) {
-        val resolver = context.contentResolver
-        val animatorScale = runCatching {
-            Settings.Global.getFloat(
-                resolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f
-            )
-        }.getOrDefault(1f)
-        val highContrast = runCatching {
-            Settings.Secure.getInt(
-                resolver,
-                "high_text_contrast_enabled",
-                0
-            ) == 1
-        }.getOrDefault(false)
+    val application = LocalContext.current.applicationContext as Application
+    val observer = remember(application) { GlassAccessibilityObserver.get(application) }
+    DisposableEffect(observer) {
+        observer.retain()
+        onDispose { observer.release() }
+    }
+    return observer.mode
+}
 
-        GlassAccessibilityMode(
-            reduceMotion = animatorScale <= 0f,
-            highContrast = highContrast
+private class GlassAccessibilityObserver(private val application: Application) : Application.ActivityLifecycleCallbacks {
+    private var users = 0
+    var mode by mutableStateOf(read())
+        private set
+    private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { mode = read() }
+    }
+
+    private fun read(): GlassAccessibilityMode {
+        val resolver = application.contentResolver
+        return GlassAccessibilityMode(
+            runCatching { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) <= 0f }.getOrDefault(false),
+            runCatching { Settings.Secure.getInt(resolver, "high_text_contrast_enabled", 0) == 1 }.getOrDefault(false)
         )
+    }
+
+    fun retain() {
+        if (users++ != 0) return
+        mode = read()
+        application.contentResolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        application.contentResolver.registerContentObserver(Settings.Secure.getUriFor("high_text_contrast_enabled"), false, observer)
+        application.registerActivityLifecycleCallbacks(this)
+    }
+
+    fun release() {
+        if (--users != 0) return
+        application.contentResolver.unregisterContentObserver(observer)
+        application.unregisterActivityLifecycleCallbacks(this)
+    }
+
+    override fun onActivityResumed(activity: Activity) { mode = read() }
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+    override fun onActivityStarted(activity: Activity) = Unit
+    override fun onActivityPaused(activity: Activity) = Unit
+    override fun onActivityStopped(activity: Activity) = Unit
+    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+    override fun onActivityDestroyed(activity: Activity) = Unit
+
+    companion object {
+        private var instance: GlassAccessibilityObserver? = null
+        fun get(application: Application): GlassAccessibilityObserver =
+            instance ?: GlassAccessibilityObserver(application).also { instance = it }
     }
 }
 

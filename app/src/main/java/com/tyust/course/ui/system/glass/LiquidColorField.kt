@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,6 +110,9 @@ fun LiquidColorField(
         )
     }
 
+    LaunchedEffect(accessibility.reduceMotion, dragAnimation) {
+        dragAnimation.setReducedMotion(accessibility.reduceMotion, saturation)
+    }
     val fieldBackdrop = rememberLayerBackdrop()
     val scaledFieldBackdrop = rememberBackdrop(fieldBackdrop) { drawFieldBackdrop ->
         val progress = dragAnimation.pressProgress

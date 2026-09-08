@@ -95,6 +95,7 @@ fun LiquidSlider(
     val density = LocalDensity.current
 
     val animationScope = rememberCoroutineScope()
+    val accessibility = rememberGlassAccessibilityMode()
     // 手势期间外部值不许再驱动动画：调用方会把我们刚发出的值原路送回来，
     // 两条路径同时对一个 Animatable 发 animateTo 会互相抢占，胶囊就卡住。
     var isDragging by remember { mutableStateOf(false) }
@@ -112,6 +113,9 @@ fun LiquidSlider(
         )
     }
 
+    LaunchedEffect(accessibility.reduceMotion, dampedDragAnimation) {
+        dampedDragAnimation.setReducedMotion(accessibility.reduceMotion, value())
+    }
     LaunchedEffect(dampedDragAnimation) {
         snapshotFlow { value() }
             .collectLatest { current ->

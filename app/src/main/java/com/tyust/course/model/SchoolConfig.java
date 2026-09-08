@@ -9,6 +9,13 @@ public class SchoolConfig {
     public String protocol;
     public String description;
 
+    // Optional protocol adapter. legacy_zf preserves the historical CourseApiClient path.
+    public String academicSystem = "legacy_zf";
+    public String detectionSource = "legacy";
+    public String pageCharset = "UTF-8";
+    public java.util.ArrayList<String> allowedAcademicHosts = new java.util.ArrayList<>();
+    public int academicConfigVersion = 1;
+
     // gnmkdm 参数配置 (可自定义)
     public String gradeGnmkdm = "N305005";
     public String courseGnmkdm = "N253512";
@@ -144,6 +151,13 @@ public class SchoolConfig {
             json.put("name", name);
             json.put("domain", domain);
             json.put("protocol", protocol);
+            json.put("academicSystem", academicSystem);
+            json.put("detectionSource", detectionSource);
+            json.put("pageCharset", pageCharset);
+            org.json.JSONArray academicHosts = new org.json.JSONArray();
+            for (String host : allowedAcademicHosts) academicHosts.put(host);
+            json.put("allowedAcademicHosts", academicHosts);
+            json.put("academicConfigVersion", academicConfigVersion);
             json.put("basePath", basePath);
             json.put("gradeGnmkdm", gradeGnmkdm);
             json.put("courseGnmkdm", courseGnmkdm);
@@ -176,6 +190,19 @@ public class SchoolConfig {
                     json.optString("name", ""),
                     json.optString("domain", ""),
                     json.optString("protocol", "https"));
+            config.academicSystem = json.optString("academicSystem", "legacy_zf");
+            config.detectionSource = json.optString("detectionSource", "legacy");
+            config.pageCharset = json.optString("pageCharset", "UTF-8");
+            config.academicConfigVersion = json.optInt("academicConfigVersion", 1);
+            org.json.JSONArray academicHosts = json.optJSONArray("allowedAcademicHosts");
+            if (academicHosts != null) {
+                for (int i = 0; i < academicHosts.length(); i++) {
+                    String host = academicHosts.optString(i, "").trim();
+                    if (!host.isEmpty() && !config.allowedAcademicHosts.contains(host)) {
+                        config.allowedAcademicHosts.add(host);
+                    }
+                }
+            }
             config.basePath = json.optString("basePath", "/jwglxt");
             config.gradeGnmkdm = json.optString("gradeGnmkdm", "N305005");
             config.courseGnmkdm = json.optString("courseGnmkdm", "N253512");

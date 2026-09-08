@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
@@ -52,6 +53,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.error
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -69,20 +72,22 @@ private val GlassCardShape = RoundedCornerShape(24.dp)
 private val GlassRowShape = RoundedCornerShape(16.dp)
 
 @Composable
-private fun glassSurfaceColor(): Color {
-    return if (!rememberGlassDarkTheme()) {
-        Color.White.copy(alpha = 0.62f)
+internal fun glassSurfaceColor(): Color {
+    val highContrast = rememberGlassAccessibilityMode().highContrast
+    return if (LocalWallpaperAppearanceColors.current.usesDarkForeground) {
+        Color.White.copy(alpha = if (highContrast) 0.92f else 0.62f)
     } else {
-        Color(0xFF1C1C1E).copy(alpha = 0.55f)
+        Color(0xFF1C1C1E).copy(alpha = if (highContrast) 0.92f else 0.55f)
     }
 }
 
 @Composable
-private fun glassBorderColor(): Color {
-    return if (!rememberGlassDarkTheme()) {
-        Color.White.copy(alpha = 0.55f)
+internal fun glassBorderColor(): Color {
+    val highContrast = rememberGlassAccessibilityMode().highContrast
+    return if (LocalWallpaperAppearanceColors.current.usesDarkForeground) {
+        if (highContrast) MaterialTheme.colorScheme.outline else Color.White.copy(alpha = 0.55f)
     } else {
-        Color.White.copy(alpha = 0.12f)
+        Color.White.copy(alpha = if (highContrast) 0.45f else 0.12f)
     }
 }
 
@@ -105,16 +110,18 @@ fun GlassStatChip(
     ) {
         Text(
             text = value,
-            fontSize = 24.sp,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = valueColor,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
+            maxLines = 2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
 }
@@ -222,7 +229,7 @@ fun InsetGroupedRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (enabled) titleColor else titleColor.copy(alpha = 0.45f),
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!subtitle.isNullOrBlank()) {
@@ -230,7 +237,7 @@ fun InsetGroupedRow(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -283,7 +290,7 @@ fun GlassProgressBar(
             .height(height)
             .clip(RoundedCornerShape(percent = 50))
             .background(
-                if (!rememberGlassDarkTheme()) Color.White.copy(alpha = 0.45f)
+                if (LocalWallpaperAppearanceColors.current.usesDarkForeground) Color.White.copy(alpha = 0.45f)
                 else Color.White.copy(alpha = 0.14f)
             )
     ) {
@@ -343,40 +350,46 @@ fun GlassTextField(
     enabled: Boolean = true,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
-    minHeight: Dp = 46.dp
+    minHeight: Dp = 48.dp,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    isError: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     val borderAlpha by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
         animationSpec = MotionSpring.liquidTap(),
         label = "glassFieldFocus"
     )
     val shape = GlassRowShape
-    val textColor = MaterialTheme.colorScheme.onSurface
+    val textColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f)
+    val highContrast = rememberGlassAccessibilityMode().highContrast
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier
+            .semantics { if (isError) error("请检查输入内容") }
             .heightIn(min = minHeight)
             .clip(shape)
             .background(
-                if (isLightTheme) Color.White.copy(alpha = 0.55f)
+                if (highContrast) glassSurfaceColor()
+                else if (isLightTheme) Color.White.copy(alpha = 0.55f)
                 else Color.White.copy(alpha = 0.10f)
             )
             .border(
                 width = if (isFocused) 1.5.dp else 0.5.dp,
                 color = androidx.compose.ui.graphics.lerp(
                     glassBorderColor(),
-                    NeuPrimary.copy(alpha = 0.85f),
-                    borderAlpha
+                    if (isError) MaterialTheme.colorScheme.error else NeuPrimary.copy(alpha = 0.85f),
+                    if (isError) 1f else borderAlpha
                 ),
                 shape = shape
             ),
         enabled = enabled,
         singleLine = singleLine,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         visualTransformation = visualTransformation,
         interactionSource = interactionSource,
         textStyle = LocalTextStyle.current.copy(
@@ -406,8 +419,9 @@ fun GlassTextField(
                         Text(
                             text = placeholder,
                             style = LocalTextStyle.current.copy(fontSize = 15.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                            maxLines = 1
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                            maxLines = if (singleLine) 1 else Int.MAX_VALUE,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     innerTextField()
@@ -437,7 +451,7 @@ fun GlassLoadingIndicator(
         ),
         label = "glassLoadingRotation"
     )
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     Box(
         modifier = modifier
             .size(size)

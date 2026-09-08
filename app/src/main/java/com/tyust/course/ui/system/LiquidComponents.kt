@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -440,7 +441,7 @@ fun LiquidSwitch(
             visibilityThreshold = 0.001f,
             initialScale = 1f,
             pressedScale = 1.5f,
-            onDragStarted = {},
+            onDragStarted = { didDrag = false; fraction = if (latestChecked) 1f else 0f },
             onDragStopped = {
                 if (!enabled) return@DampedDragAnimation
                 fraction = if (didDrag) {
@@ -462,8 +463,13 @@ fun LiquidSwitch(
                     (fraction - delta).fastCoerceIn(0f, 1f)
                 }
                 updateValue(fraction)
-            }
+            },
+            onDragCancelled = { didDrag = false; fraction = if (latestChecked) 1f else 0f }
         )
+    }
+
+    LaunchedEffect(accessibility.reduceMotion, dragAnimation) {
+        dragAnimation.setReducedMotion(accessibility.reduceMotion, if (latestChecked) 1f else 0f)
     }
 
     // value 只允许一条驱动路径：手势内走 updateValue（直接操纵），
@@ -780,6 +786,7 @@ fun AnimatedIconButton(
 
     Box(
         modifier = modifier
+            .minimumInteractiveComponentSize()
             .size(buttonSize)
             .then(chipModifier)
             .clickable(

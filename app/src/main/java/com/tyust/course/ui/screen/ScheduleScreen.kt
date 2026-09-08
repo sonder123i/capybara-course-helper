@@ -235,7 +235,9 @@ fun ScheduleScreen(
     onSettingsClick: () -> Unit = {},
     onExportClick: () -> Unit = {},
     isNextSemester: Boolean = false,
-    onToggleSemester: () -> Unit = {}
+    onToggleSemester: () -> Unit = {},
+    errorMessage: String = "",
+    onRetry: () -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
     val maxWeeks = 25
@@ -323,6 +325,14 @@ fun ScheduleScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     GlassLoadingState(text = "正在同步课表…")
+                }
+            }
+
+            errorMessage.isNotBlank() -> {
+                Box(Modifier.fillMaxSize().padding(paddingValues).padding(24.dp), contentAlignment = Alignment.Center) {
+                    com.tyust.course.ui.system.SystemEmptyState(title = "课表同步失败", message = errorMessage) {
+                        com.tyust.course.ui.system.SystemSecondaryButton(text = "重新同步", onClick = onRetry)
+                    }
                 }
             }
 
@@ -1045,7 +1055,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = nameFontSize,
-                    maxLines = 6,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = (nameFontSize.value + 1.5).sp,
                     letterSpacing = (-0.2).sp
@@ -1058,7 +1068,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f),
                         fontWeight = FontWeight.Normal,
                         fontSize = locationFontSize,
-                        maxLines = 5,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         lineHeight = (locationFontSize.value + 1.5).sp
                     )

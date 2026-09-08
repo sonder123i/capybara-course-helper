@@ -151,3 +151,11 @@ promo_hyperframes
 .npm-cache
 promo-video
 .superpowers
+
+# Tool caches & debug artifacts
+.gradle-user/
+.playwright-cli/
+.playwright-mcp/
+/artifacts/
+/screenshot_domain_error.png
+/ui.xml

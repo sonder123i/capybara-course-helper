@@ -21,6 +21,7 @@ object PasswordLoginGatewayFactory {
     fun create(school: SchoolConfig): PasswordLoginGateway =
         if (school.id == TYUST_SCHOOL_ID) TyustSsoLoginManager()
         else if (school.id == ZJUT_SCHOOL_ID) ZjutSsoLoginManager()
+        else if (com.tyust.course.academic.AcademicGatewayFactory.supports(school)) com.tyust.course.academic.AcademicPasswordLoginGateway(school)
         else PasswordLoginManager()
 
     private const val TYUST_SCHOOL_ID = "tyust"

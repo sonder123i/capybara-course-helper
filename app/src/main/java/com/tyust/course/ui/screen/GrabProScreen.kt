@@ -2,6 +2,10 @@ package com.tyust.course.ui.screen
 
 import com.tyust.course.ui.system.GlassToaster
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -32,6 +36,7 @@ import androidx.compose.material.icons.filled.AlarmAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
@@ -49,9 +54,12 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -134,15 +142,20 @@ fun GrabProScreen(
     onFuzzyMatchModeChange: ((Boolean) -> Unit)? = null,
     fuzzyMatchTarget: String? = null,
     onStartFuzzyMatch: (() -> Unit)? = null,
-    onClearFuzzyMatchTarget: (() -> Unit)? = null
+    onClearFuzzyMatchTarget: (() -> Unit)? = null,
+    supportsScheduling: Boolean = true,
+    supportsParallel: Boolean = true,
+    supportsManualAdd: Boolean = true,
+    supportsImmediateManual: Boolean = false,
+    systemNotice: String = ""
 ) {
     val context = LocalContext.current
     val scrollState = rememberLazyListState()
-    var localScheduledMode by remember { mutableStateOf(isScheduledMode) }
+    var localScheduledMode by remember { mutableStateOf(isScheduledMode && supportsScheduling) }
     var showWarningDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isScheduledMode) {
-        localScheduledMode = isScheduledMode
+    LaunchedEffect(isScheduledMode, supportsScheduling) {
+        localScheduledMode = isScheduledMode && supportsScheduling
     }
 
     if (showWarningDialog) {
@@ -162,13 +175,13 @@ fun GrabProScreen(
         )
     }
 
-    // 折叠进度随滚动偏移连续变化（约 96px 行程），全程跟手
-    val headerCollapse by remember {
+    val collapseTravel = with(LocalDensity.current) { 96.dp.toPx() }
+    val headerCollapse by remember(collapseTravel) {
         derivedStateOf {
             if (scrollState.firstVisibleItemIndex > 0) {
                 1f
             } else {
-                (scrollState.firstVisibleItemScrollOffset / 96f).coerceIn(0f, 1f)
+                (scrollState.firstVisibleItemScrollOffset / collapseTravel).coerceIn(0f, 1f)
             }
         }
     }
@@ -199,6 +212,9 @@ fun GrabProScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (systemNotice.isNotBlank()) item {
+                Text(systemNotice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             item {
                 RuntimeStatusCard(
                     isRunning = isRunning,
@@ -210,7 +226,7 @@ fun GrabProScreen(
                 )
             }
 
-            item {
+            if (supportsScheduling) item {
                 SystemSegmentedControl(
                     options = listOf("即时执行", "定时任务"),
                     selectedIndex = if (localScheduledMode) 1 else 0,
@@ -258,7 +274,7 @@ fun GrabProScreen(
                             isRunning = isRunning,
                             onStart = {
                                 val manualCourses = queue.filter { it.classId.isNullOrEmpty() }
-                                if (manualCourses.isNotEmpty()) {
+                                if (!supportsImmediateManual && manualCourses.isNotEmpty() && targetCourseName.isNullOrBlank()) {
                                     GlassToaster.show("包含 ${manualCourses.size} 门手动添加课程，即时模式暂不支持这些条目")
                                 } else {
                                     onStart()
@@ -278,18 +294,14 @@ fun GrabProScreen(
             }
 
             item {
-                SystemCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant,
-                    contentPadding = PaddingValues(16.dp)
-                ) {
+                Column(Modifier.fillMaxWidth()) {
                     GrabQueueHeader(
                         queueSize = queue.size,
                         isParallelMode = isParallelMode,
                         onParallelModeChange = { onParallelModeChange?.invoke(it) },
                         onClearQueue = { onQueueClear?.invoke() },
                         isRunning = isRunning,
+                        supportsParallel = supportsParallel,
                         showMode = showQueueModeLabels,
                         isExactModeGlobal = isExactModeGlobal,
                         onToggleAllMode = onQueueToggleAllMode
@@ -308,7 +320,8 @@ fun GrabProScreen(
                 onRemoveItem = { onQueueRemoveItem?.invoke(it) },
                 onAddCourse = { onAddCourse?.invoke() },
                 onToggleMode = { onQueueToggleMode?.invoke(it) },
-                showMode = showQueueModeLabels
+                showMode = showQueueModeLabels,
+                supportsManualAdd = supportsManualAdd
             )
 
             item {
@@ -336,17 +349,13 @@ private fun RuntimeStatusCard(
         else -> "已就绪" to SystemTone.Neutral
     }
 
-    SystemCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant
-    ) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = "运行状态",
                     style = MaterialTheme.typography.titleMedium,
@@ -395,14 +404,10 @@ private fun ImmediateGrabForm(
     onStartFuzzyMatch: (() -> Unit)? = null,
     onClearFuzzyMatchTarget: (() -> Unit)? = null
 ) {
-    SystemCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant
-    ) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SystemSectionHeader(
             title = "即时执行",
-            subtitle = if (isFuzzyMatchMode) "持续监控课程组人数变化" else "执行当前目标或队列任务"
+            subtitle = null
         )
 
         if (onFuzzyMatchModeChange != null) {
@@ -418,15 +423,15 @@ private fun ImmediateGrabForm(
             primaryText = when {
                 isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> fuzzyMatchTarget
                 !isFuzzyMatchMode && !targetCourseName.isNullOrBlank() -> targetCourseName
-                !isFuzzyMatchMode && queueSize > 0 -> "队列模式已就绪"
+                !isFuzzyMatchMode && queueSize > 0 -> "已选择 $queueSize 门课程"
                 else -> "未设置目标"
             },
             secondaryText = when {
-                isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> "将监控该课程组的可选人数变化"
-                isFuzzyMatchMode -> "请在课程页对课程组使用“监控”操作"
+                isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> "课程组监控"
+                isFuzzyMatchMode -> "暂无监控目标"
                 !isFuzzyMatchMode && !targetCourseName.isNullOrBlank() -> "教师：${targetCourseTeacher ?: "未知"}"
-                !isFuzzyMatchMode && queueSize > 0 -> "将按队列顺序尝试 ${queueSize} 门课程"
-                else -> "请在课程页设置目标课程或添加队列"
+                !isFuzzyMatchMode && queueSize > 0 -> "按队列顺序执行"
+                else -> "队列为空"
             },
             tone = when {
                 isFuzzyMatchMode -> SystemTone.Warning
@@ -439,24 +444,6 @@ private fun ImmediateGrabForm(
                 else -> null
             }
         )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            NumericField(
-                value = interval,
-                onValueChange = onIntervalChange,
-                label = "轮询间隔 (ms)",
-                modifier = Modifier.weight(1f)
-            )
-            NumericField(
-                value = maxRetry,
-                onValueChange = onMaxRetryChange,
-                label = "最大重试次数",
-                modifier = Modifier.weight(1f)
-            )
-        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -489,6 +476,24 @@ private fun ImmediateGrabForm(
                 }
             )
         }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            NumericField(
+                value = interval,
+                onValueChange = onIntervalChange,
+                label = "轮询间隔 (ms)",
+                modifier = Modifier.weight(1f)
+            )
+            NumericField(
+                value = maxRetry,
+                onValueChange = onMaxRetryChange,
+                label = "最大重试次数",
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
@@ -507,14 +512,10 @@ private fun ScheduledTaskForm(
     onStop: (() -> Unit)? = null,
     onCreateTask: () -> Unit
 ) {
-    SystemCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant
-    ) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SystemSectionHeader(
             title = "定时任务",
-            subtitle = if (hasTask) "任务已创建，等待触发" else "设定未来时间自动开始抢课"
+            subtitle = if (hasTask) "等待触发" else null
         )
 
         Row(
@@ -577,7 +578,7 @@ private fun ScheduledTaskForm(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = dateTime.ifBlank { "点击选择启动时间" },
+                        text = dateTime.ifBlank { "尚未设置" },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = if (dateTime.isBlank()) FontWeight.Normal else FontWeight.Medium
@@ -795,22 +796,28 @@ private fun LogConsole(
     onClearLog: () -> Unit
 ) {
     val scrollState = rememberScrollState()
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var followTail by remember { mutableStateOf(true) }
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "logChevron")
+    val lastLine = remember(logText) { logText.lineSequence().lastOrNull { it.isNotBlank() } }
 
-    LaunchedEffect(logText) {
-        scrollState.animateScrollTo(scrollState.maxValue)
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (!scrollState.isScrollInProgress) {
+            followTail = scrollState.value >= scrollState.maxValue - 8
+        }
+    }
+    LaunchedEffect(logText, expanded, scrollState.maxValue) {
+        if (expanded && followTail) scrollState.animateScrollTo(scrollState.maxValue)
     }
 
-    SystemCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant
-    ) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
+                modifier = Modifier.weight(1f).clickable { expanded = !expanded }.padding(vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -826,37 +833,48 @@ private fun LogConsole(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Icon(Icons.Default.KeyboardArrowDown, null,
+                    modifier = Modifier.size(18.dp).rotate(rotation))
             }
-            IconButton(onClick = onClearLog) {
-                Icon(
-                    imageVector = Icons.Default.DeleteSweep,
-                    contentDescription = "清空日志",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            com.tyust.course.ui.system.SystemIconButton(
+                onClick = onClearLog, icon = Icons.Default.DeleteSweep,
+                contentDescription = "清空日志", enabled = logText.isNotBlank()
+            )
         }
 
+        if (!expanded) {
+            Text(lastLine ?: "暂无运行记录", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().clickable { expanded = true })
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = Color(0xFF16181D).copy(alpha = 0.88f),
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.10f))
+            color = com.tyust.course.ui.system.glassSurfaceColor(),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(0.5.dp, com.tyust.course.ui.system.glassBorderColor())
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
+                    .height(if (logText.isBlank()) 96.dp else 200.dp)
                     .padding(14.dp)
             ) {
                 Text(
-                    text = logText.ifBlank { "[system] waiting for next action..." },
+                    text = logText.ifBlank { "暂无运行记录" },
                     modifier = Modifier.verticalScroll(scrollState),
-                    color = Color(0xFFA8D08D),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
                 )
             }
+        }
         }
     }
 }

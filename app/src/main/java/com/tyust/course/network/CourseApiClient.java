@@ -20,12 +20,15 @@ import android.content.Intent;
 import android.content.Context;
 import com.tyust.course.model.SchoolConfig;
 import com.tyust.course.manager.UserManager;
+import com.tyust.course.manager.SessionToken;
+import com.tyust.course.manager.SessionStateStore;
 
 public class CourseApiClient {
         private static final String TAG = "CourseApiClient";
         private static final String DEFAULT_ACCOUNT_STORAGE_KEY = "default";
         private static final String INTERNAL_ACCOUNT_HEADER = "X-Course-Account-Storage-Key";
         private static final ThreadLocal<String> REQUEST_ACCOUNT_STORAGE_KEY = new ThreadLocal<>();
+        private static final ThreadLocal<SessionToken> REQUEST_SESSION_TOKEN = new ThreadLocal<>();
         private static final ThreadLocal<String> ACCOUNT_OVERRIDE_STORAGE_KEY = new ThreadLocal<>();
         private static volatile CourseApiClient instance;
         private final OkHttpClient client;
@@ -34,6 +37,7 @@ public class CourseApiClient {
 
         public static final String ACTION_COOKIE_EXPIRED = "com.tyust.course.ACTION_COOKIE_EXPIRED";
         public static final String EXTRA_ACCOUNT_STORAGE_KEY = "extra_account_storage_key";
+        public static final String EXTRA_SESSION_GENERATION = "extra_session_generation";
 
         public interface AccountScopedOperation<T> {
                 T run();
@@ -74,10 +78,12 @@ public class CourseApiClient {
                                 .addInterceptor(chain -> {
                                         Request request = chain.request();
                                         String requestAccountStorageKey = getRequestAccountStorageKey(request);
+                                        SessionToken requestSession = request.tag(SessionToken.class);
                                         request = request.newBuilder()
                                                         .removeHeader(INTERNAL_ACCOUNT_HEADER)
                                                         .build();
                                         REQUEST_ACCOUNT_STORAGE_KEY.set(requestAccountStorageKey);
+                                        REQUEST_SESSION_TOKEN.set(requestSession);
                                         try {
                                         
                                         // 🔒 【防盗架构深层哨兵】缓存一致性与签名校验拦截层
@@ -115,7 +121,7 @@ public class CourseApiClient {
                                         if (!isOriginalLogin && isFinalLogin) {
                                                 Log.e(TAG, "🚨 [检测到重定向登录] Cookie 已过期! 原URL: " + originalUrl + " -> 最终URL: " + finalUrl);
                                                 if (appContext != null) {
-                                                        notifyCookieExpired(requestAccountStorageKey);
+                                                        notifyCookieExpired(requestSession);
                                                 }
                                         }
 
@@ -156,7 +162,7 @@ public class CourseApiClient {
                                                                         Log.e(TAG, "🚨 [确认失效] 拦截器确认 Cookie 已过期! URL: "
                                                                                         + currentUrl);
                                                                         if (appContext != null) {
-                                                                                notifyCookieExpired(requestAccountStorageKey);
+                                                                                notifyCookieExpired(requestSession);
                                                                         }
                                                                 } else {
                                                                         Log.d(TAG, "🔍 [拦截误报] 虽然包含登录特征，但成功解析到姓名 ["
@@ -181,7 +187,7 @@ public class CourseApiClient {
                                                                         || (_jb.contains("\"code\"") && _jb.contains("\"401\""))) {
                                                                         Log.e(TAG, "[Cookie\u8fc7\u671f] JSON\u68c0\u6d4b\u5230\u672a\u767b\u5f55: " + response.request().url());
                                                                         if (appContext != null) {
-                                                                                notifyCookieExpired(requestAccountStorageKey);
+                                                                                notifyCookieExpired(requestSession);
                                                                         }
                                                                 }
                                                         }
@@ -190,6 +196,7 @@ public class CourseApiClient {
                                         return response;
                                         } finally {
                                                 REQUEST_ACCOUNT_STORAGE_KEY.remove();
+                                                REQUEST_SESSION_TOKEN.remove();
                                         }
                                 });
 
@@ -263,8 +270,11 @@ public class CourseApiClient {
         }
 
         private Request.Builder accountAwareRequestBuilder() {
+                String account = getCurrentAccountStorageKeySafely();
+                SessionToken token = UserManager.getInstance().getSessionState().getToken();
                 return new Request.Builder()
-                                .header(INTERNAL_ACCOUNT_HEADER, getCurrentAccountStorageKeySafely());
+                                .header(INTERNAL_ACCOUNT_HEADER, account)
+                                .tag(SessionToken.class, account.equals(token.getAccountStorageKey()) ? token : null);
         }
 
         private String displayParamsCacheKey(String xkkzId) {
@@ -272,18 +282,29 @@ public class CourseApiClient {
         }
 
         public void notifyCookieExpired(String accountStorageKey) {
-                if (appContext == null) return;
-                Intent intent = new Intent(ACTION_COOKIE_EXPIRED);
-                intent.setPackage(appContext.getPackageName());
-                if (accountStorageKey != null && !accountStorageKey.isEmpty()) {
-                        intent.putExtra(EXTRA_ACCOUNT_STORAGE_KEY, accountStorageKey);
+                SessionToken token = UserManager.getInstance().getSessionState().getToken();
+                if (accountStorageKey == null || accountStorageKey.isEmpty() || accountStorageKey.equals(token.getAccountStorageKey())) {
+                        notifyCookieExpired(token);
                 }
-                appContext.sendBroadcast(intent);
+        }
 
-                String currentAccountStorageKey = getCurrentAccountStorageKeySafely();
-                if (accountStorageKey == null || accountStorageKey.isEmpty() || accountStorageKey.equals(currentAccountStorageKey)) {
-                        UserManager.getInstance().setLoggedIn(false);
-                }
+        public void notifyCookieExpired(SessionToken token) {
+                if (appContext == null || token == null) return;
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        UserManager user = UserManager.getInstance();
+                        if (!user.getSessionState().expire(token)) return;
+                        user.setLoggedIn(false);
+                        Intent intent = new Intent(ACTION_COOKIE_EXPIRED).setPackage(appContext.getPackageName());
+                        intent.putExtra(EXTRA_ACCOUNT_STORAGE_KEY, token.getAccountStorageKey());
+                        intent.putExtra(EXTRA_SESSION_GENERATION, token.getGeneration());
+                        appContext.sendBroadcast(intent);
+                });
+        }
+
+        public static boolean isCurrentSessionEvent(Intent intent) {
+                SessionToken token = UserManager.getInstance().getSessionState().getToken();
+                return token.getAccountStorageKey().equals(intent.getStringExtra(EXTRA_ACCOUNT_STORAGE_KEY))
+                        && token.getGeneration() == intent.getLongExtra(EXTRA_SESSION_GENERATION, -1);
         }
 
         // ============= Display参数缓存方法 =============
@@ -371,21 +392,20 @@ public class CourseApiClient {
         }
 
         // 验证 Cookie 是否有效（尝试获取学生信息页面）
-        public void validateCookie(SchoolConfig school, Callback callback) {
+        public Call validateCookie(SchoolConfig school, Callback callback) {
                 String url = school.getStudentInfoUrl();
                 Log.d(TAG, "Validating cookie with URL: " + url);
 
                 Request request = createRequestBuilder(school)
                                 .url(url)
                                 .build();
-                client.newCall(request).enqueue(callback);
+                Call call = client.newCall(request);
+                call.enqueue(callback);
+                return call;
         }
 
-        public void validateCookie(SchoolConfig school, String accountStorageKey, Callback callback) {
-                runWithAccount(accountStorageKey, () -> {
-                        validateCookie(school, callback);
-                        return null;
-                });
+        public Call validateCookie(SchoolConfig school, String accountStorageKey, Callback callback) {
+                return runWithAccount(accountStorageKey, () -> validateCookie(school, callback));
         }
 
         // 轻量服务器健康检查：复用账号 Cookie、SSL 兼容和统一请求头，探测真实教务路径。
@@ -875,7 +895,12 @@ public class CourseApiClient {
 
                 @Override
                 public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
-                        saveFromResponse(url, cookies, requestAccountStorageKey());
+                        SessionStateStore sessions = UserManager.getInstance().getSessionState();
+                        synchronized (sessions) {
+                                SessionToken token = REQUEST_SESSION_TOKEN.get();
+                                if (token != null && !sessions.isCurrent(token)) return;
+                                saveFromResponse(url, cookies, requestAccountStorageKey());
+                        }
                 }
 
                 public void saveFromResponse(HttpUrl url, List<Cookie> cookies, String accountStorageKey) {

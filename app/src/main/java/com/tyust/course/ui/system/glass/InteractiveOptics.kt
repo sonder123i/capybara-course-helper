@@ -158,6 +158,7 @@ class InteractiveOptics(
                 pressAnimation.animateTo(1f, PressDownSpring)
             }
 
+            try {
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull { it.id == pointerId }
@@ -181,6 +182,7 @@ class InteractiveOptics(
                 pointerId = change.id
             }
 
+            } finally {
             pressedState = false
             // 位移、按压能量、速度三者在同一时刻一起回落，这样折射收缩、
             // 形变回弹和高光归位是同一个动作，而不是三段先后播放的动画。
@@ -207,6 +209,7 @@ class InteractiveOptics(
                 ) {
                     velocityState = value
                 }
+            }
             }
         }
     }
@@ -356,6 +359,7 @@ fun GraphicsLayerScope.applyChipContentDeformation(
     translationY = travel.y
 
     val p = optics.pressProgress.coerceIn(0f, 1f)
+    translationY += travelPx * 0.3f * p
     val (sx, sy) = anisotropy(travel, travelPx, stretch * damping)
     scaleX = (1f - pressDepth * 0.5f * p) * (1f + sx)
     scaleY = (1f - pressDepth * p) * (1f + sy)

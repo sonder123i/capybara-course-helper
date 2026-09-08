@@ -22,11 +22,16 @@ import com.tyust.course.model.Course
 import com.tyust.course.model.SchoolConfig
 import com.tyust.course.network.CourseApiClient
 import com.tyust.course.utils.CourseNameKit
+import com.tyust.course.utils.SessionRenewer
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
 import org.json.JSONArray
 import java.io.IOException
+import com.tyust.course.academic.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class GrabService : Service() {
     
@@ -51,6 +56,7 @@ class GrabService : Service() {
         const val EXTRA_PARALLEL_MODE = "parallel_mode"  // 并行模式
         const val EXTRA_ACCOUNT_KEY = "account_key"
         const val EXTRA_ACCOUNT_STORAGE_KEY = "account_storage_key"
+        const val EXTRA_ACADEMIC_TARGET = "academic_target"
         
         // Broadcast action for updates
         const val BROADCAST_UPDATE = "com.tyust.course.GRAB_UPDATE"
@@ -139,11 +145,14 @@ class GrabService : Service() {
     
     private val handler = Handler(Looper.getMainLooper())
     private var grabRunnable: Runnable? = null
+    private val academicScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var academicJob: Job? = null
     
     // 🔧 全局 Cookie 失效广播接收器
     private val cookieExpiredReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == com.tyust.course.network.CourseApiClient.ACTION_COOKIE_EXPIRED) {
+                if (!CourseApiClient.isCurrentSessionEvent(intent)) return
                 val eventAccountStorageKey = intent.getStringExtra(CourseApiClient.EXTRA_ACCOUNT_STORAGE_KEY).orEmpty()
                 if (eventAccountStorageKey.isNotEmpty()
                     && serviceAccountStorageKey.isNotEmpty()
@@ -380,6 +389,11 @@ class GrabService : Service() {
                 }
                 return START_STICKY
             }
+            val school = currentSchool
+            if (school != null && AcademicGatewayFactory.supports(school)) {
+                startAcademicQueue(intent)
+                return START_STICKY
+            }
         }
 
         when (intent?.action) {
@@ -524,10 +538,114 @@ class GrabService : Service() {
         return START_STICKY
     }
     
+    private fun startAcademicQueue(intent: Intent) {
+        if (isRunning) return
+        val school = currentSchool ?: return
+        val account = serviceAccountStorageKey
+        val store = AcademicGrabQueueStore(this)
+        val targetOnly = intent.getBooleanExtra(EXTRA_ACADEMIC_TARGET, false)
+        val items = (if (targetOnly) listOfNotNull(store.target(account)) else store.items(account))
+            .filter { it.enabled && it.schoolId == school.id }
+        if (items.isEmpty()) {
+            startForeground(NOTIFICATION_ID, createNotification("抢课队列为空"))
+            broadcastLog("当前账号的抢课队列为空")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        val policy = GrabRunPolicy(
+            intervalMillis = intent.getIntExtra(EXTRA_INTERVAL, 1500).coerceAtLeast(500).toLong(),
+            maxAttempts = intent.getIntExtra(EXTRA_MAX_RETRY, 100).coerceIn(1, 1000)
+        )
+        val system = AcademicSystem.fromId(school.academicSystem)
+        val workers = if (system?.serial == false && intent.getBooleanExtra(EXTRA_PARALLEL_MODE, false)) 2 else 1
+        val currentUser = UserManager.getInstance()
+        AcademicGatewayFactory.importCookie(school, account, currentUser.savedCookie, replace = false,
+            username = currentUser.username.ifBlank { currentUser.studentId.orEmpty() })
+        isRunning = true
+        store.resetStatuses(account, items)
+        successCount = 0; failCount = 0; retryCount = 0
+        startForeground(NOTIFICATION_ID, createNotification("教务抢课：${items.size} 门课程"))
+        broadcastLog("开始教务抢课：${items.size} 门课程，$workers 个执行任务")
+        academicJob = academicScope.launch {
+            val semaphore = Semaphore(workers)
+            val queueHalted = java.util.concurrent.atomic.AtomicBoolean(false)
+            try {
+                coroutineScope {
+                    items.map { item -> launch {
+                        semaphore.withPermit {
+                            if (queueHalted.get()) return@withPermit
+                            val adapter = AcademicGatewayFactory.create(school, account)
+                            ProtocolGrabRunner(adapter, canContinue = { !queueHalted.get() }) {
+                                val active = UserManager.getInstance()
+                                if (active.currentAccountStorageKey != account || !SessionRenewer.canRenew()) false
+                                else kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+                                    SessionRenewer.renew(this@GrabService) { renewed ->
+                                        if (continuation.isActive) continuation.resumeWith(Result.success(
+                                            renewed && UserManager.getInstance().currentAccountStorageKey == account))
+                                    }
+                                }
+                            }.runUntilDone(item, policy) { event ->
+                                if (event is GrabRunEvent.Attempt && queueHalted.get()) throw CancellationException("Queue requires attention")
+                                if (event is GrabRunEvent.Paused && event.status.blocksFurtherSelections()) queueHalted.set(true)
+                                handler.post {
+                                    when (event) {
+                                        is GrabRunEvent.Attempt -> { store.setStatus(account, item, "GRABBING"); retryCount++; broadcastLog("正在尝试：${item.courseName} (${event.number})") }
+                                        is GrabRunEvent.Success -> {
+                                            successCount++
+                                            store.setStatus(account, item, "SUCCESS")
+                                            if (targetOnly) store.setTarget(account, null) else store.remove(item)
+                                            broadcastQueueUpdate(item.courseName, "success", item.stableCourseId)
+                                            broadcastLog("选课成功：${item.courseName}")
+                                        }
+                                        is GrabRunEvent.Waiting -> { store.setStatus(account, item, "WAITING"); broadcastLog("等待重试：${item.courseName}，${event.message}") }
+                                        is GrabRunEvent.Paused -> {
+                                            failCount++
+                                            store.setStatus(account, item, "FAILED")
+                                            broadcastLog("任务已暂停：${item.courseName}，${event.message}")
+                                            updateNotification("需要处理：${item.courseName}")
+                                            postAcademicAttention(item.courseName, event.message)
+                                        }
+                                        is GrabRunEvent.Exhausted -> { store.setStatus(account, item, "FAILED"); failCount++; broadcastLog("已达尝试次数：${item.courseName}") }
+                                    }
+                                }
+                            }
+                        }
+                    } }.joinAll()
+                }
+                handler.post {
+                    isRunning = false
+                    broadcastLog(if (queueHalted.get()) "教务队列已停止，请处理提示后重新启动" else "教务队列执行结束")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handler.post {
+                    isRunning = false
+                    broadcastLog("教务任务已暂停：${e.message.orEmpty()}")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun postAcademicAttention(courseName: String, message: String) {
+        if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("抢课任务需要处理")
+            .setContentText(courseName + "：" + message).setContentIntent(open).setAutoCancel(true).build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID + 1, notification)
+    }
     
     override fun onDestroy() {
         stopGrabbing()
+        academicScope.cancel()
         // 🔧 注销监听
         try {
             unregisterReceiver(cookieExpiredReceiver)
@@ -1101,7 +1219,11 @@ class GrabService : Service() {
     }
     
     private fun stopGrabbing() {
+        academicJob?.cancel()
+        academicJob = null
         isRunning = false
+        if (currentSchool?.let(AcademicGatewayFactory::supports) == true)
+            AcademicGrabRuntimeStore.update(serviceAccountStorageKey, AcademicGrabRuntime(false, successCount, failCount, retryCount))
         isParallelTaskPoolRunning = false
         pendingGrabTasks.clear()
         activeGrabTasks.values.forEach { it.cancelled = true }
@@ -2230,6 +2352,8 @@ class GrabService : Service() {
     
     private fun broadcastUpdate(logMessage: String) {
         Log.d(TAG, logMessage)
+        if (currentSchool?.let(AcademicGatewayFactory::supports) == true)
+            AcademicGrabRuntimeStore.update(serviceAccountStorageKey, AcademicGrabRuntime(isRunning, successCount, failCount, retryCount))
         
         val intent = Intent(BROADCAST_UPDATE).apply {
             putExtra(EXTRA_LOG_MESSAGE, logMessage)
@@ -2283,8 +2407,8 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
     
     private fun broadcastLog(message: String) {
         Log.d(TAG, message)
-        broadcastUpdate(message)
         saveLogForAccount(serviceAccountStorageKey, message)
+        broadcastUpdate(message)
     }
 
     private fun broadcastLogForAccount(accountStorageKey: String, message: String) {

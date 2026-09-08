@@ -120,6 +120,9 @@ fun GlassGradientSlider(
         )
     }
 
+    LaunchedEffect(accessibility.reduceMotion, dragAnimation) {
+        dragAnimation.setReducedMotion(accessibility.reduceMotion, value)
+    }
     LaunchedEffect(value) {
         val target = value.fastCoerceIn(0f, 1f)
         if (!isDragging && abs(target - dragAnimation.targetValue) > 0.001f) {

@@ -78,11 +78,12 @@ fun LazyListScope.grabQueueItems(
     onRemoveItem: (index: Int) -> Unit,
     onAddCourse: () -> Unit,
     onToggleMode: (index: Int) -> Unit = {}, // 🔧 切换精确/智能模式
-    showMode: Boolean = true // 🔧 控制是否显示模式标签和切换
+    showMode: Boolean = true, // 🔧 控制是否显示模式标签和切换
+    supportsManualAdd: Boolean = true
 ) {
     if (queue.isEmpty()) {
         item {
-            GrabQueueEmptyState(onAddCourse)
+            GrabQueueEmptyState(onAddCourse, supportsManualAdd)
         }
     } else {
         itemsIndexed(
@@ -97,7 +98,8 @@ fun LazyListScope.grabQueueItems(
             val currentExactMode = course.useExactMatch
             
             // 用课程名+老师+时间组合获取状态
-            val courseKey = "${course.name ?: ""}_${course.teacher ?: ""}_${course.time ?: ""}"
+            val courseKey = course.completeParams["academic_queue_key"]
+                ?: "${course.name ?: ""}_${course.teacher ?: ""}_${course.time ?: ""}"
             val status = itemStatuses[courseKey] ?: GrabQueueItemStatus.WAITING
             
             // 用 Box 包裹并应用动画
@@ -119,7 +121,7 @@ fun LazyListScope.grabQueueItems(
             Spacer(modifier = Modifier.height(8.dp))
         }
         
-        item {
+        if (supportsManualAdd) item {
             // 添加课程按钮
             SystemSecondaryButton(
                 text = "添加课程",
@@ -150,7 +152,8 @@ fun GrabQueueHeader(
     showMode: Boolean = false, // 🔧 是否显示模式切换控制
     isExactModeGlobal: Boolean = true, // 🔧 全局模式状态 (从父组件传入)
     onToggleAllMode: ((Boolean) -> Unit)? = null, // 🔧 一键设置所有模式
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    supportsParallel: Boolean = true
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         // 顶部工具栏
@@ -190,7 +193,7 @@ fun GrabQueueHeader(
             )
         }
 
-        if (queueSize > 1) {
+        if (supportsParallel && queueSize > 1) {
             SystemCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -223,13 +226,13 @@ fun GrabQueueHeader(
 }
 
 @Composable
-fun GrabQueueEmptyState(onAddCourse: () -> Unit) {
+fun GrabQueueEmptyState(onAddCourse: () -> Unit, supportsManualAdd: Boolean = true) {
     SystemCard(modifier = Modifier.fillMaxWidth()) {
         SystemEmptyState(
             title = "队列为空",
-            message = "在课程列表长按课程添加到队列，或在此手动添加"
+            message = if (supportsManualAdd) "在课程列表长按课程添加到队列，或在此手动添加" else "暂无待执行课程"
         ) {
-            SystemSecondaryButton(
+            if (supportsManualAdd) SystemSecondaryButton(
                 text = "手动添加",
                 onClick = onAddCourse,
                 modifier = Modifier.fillMaxWidth(0.62f)

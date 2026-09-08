@@ -41,6 +41,7 @@ import com.tyust.course.manager.AppearanceSettingsManager
 import com.tyust.course.manager.ScheduleSettingsManager
 import com.tyust.course.manager.ScheduleSettingsManager.PeriodTime
 import com.tyust.course.ui.system.DialogHost
+import com.tyust.course.ui.system.GlassWindowHost
 import com.tyust.course.ui.system.GlassCircleButton
 import com.tyust.course.ui.system.GlassDatePickerDialog
 import com.tyust.course.ui.system.GlassOptionWheelDialog
@@ -128,35 +129,12 @@ fun ScheduleSettingsScreen(
         entranceSettled = true
     }
 
-    val wallpaperBackdrop = if (isBackdropSupported()) rememberLayerBackdrop() else null
-    val dialogHostState = rememberDialogHostState()
     // 顶栏会 reportNoticeAnchor()，不隔离的话本窗口顶栏的底边会被写进主窗口的
     // 锚点状态，关掉设置页后主窗口的悬浮通知会停在一个错误的落点上。
     val noticeAnchorState = remember { NoticeAnchorState() }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (wallpaperBackdrop != null) {
-                        Modifier.layerBackdrop(wallpaperBackdrop)
-                    } else {
-                        Modifier
-                    }
-                )
-        ) {
-            // 在绘制 lambda 内部读 state：图片壁纸的位图异步到位时这一层才会重绘
-            drawWallpaperPattern(AppearanceSettingsManager.style)
-        }
-
+    GlassWindowHost(modifier = Modifier.fillMaxSize()) {
         CompositionLocalProvider(
-            LocalAppBackdrop provides wallpaperBackdrop,
-            LocalControlBackdrop provides wallpaperBackdrop,
-            // 主窗口那一层跨窗口不可用，必须一起覆盖掉：否则 backdrop 不支持时
-            // SystemDialog 的默认取值链会一路落到主窗口的 LocalModalBackdrop 上。
-            LocalModalBackdrop provides wallpaperBackdrop,
-            LocalDialogHost provides dialogHostState,
             LocalFloatingNotice provides null,
             LocalNoticeAnchor provides noticeAnchorState,
             // 主窗口给的是 96dp（底栏高度），Dialog 沿用父 composition 会把它带进来，
@@ -344,7 +322,6 @@ fun ScheduleSettingsScreen(
             }
         }
 
-        DialogHost(state = dialogHostState, modifier = Modifier.fillMaxSize())
     }
 }
 

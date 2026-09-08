@@ -89,6 +89,17 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -144,7 +155,7 @@ private val PickerItemHeight = 40.dp
 private val PickerItemGap = 3.dp
 private val PickerBodyVerticalPadding = 6.dp
 private val PickerBodyHorizontalPadding = 10.dp
-private val PickerMaxBodyHeight = 184.dp
+private val PickerMaxBodyHeight = 240.dp
 private val PickerCornerRadius = 20.dp
 private val PickerExpandedGap = 12.dp
 private val PickerOpeningOverlap = 16.dp
@@ -285,7 +296,7 @@ private fun PickerLensLayer(
     forceBlurFallback: Boolean = false
 ) {
     val accessibility = rememberGlassAccessibilityMode()
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     val hasRealLens = isRuntimeLensEnabled() && !forceBlurFallback
     // API 31/32：自家 ES 2.0 折射。用 App 全局区域 —— 头部/主体采样的
     // `glassBackdrop` 就是 `LocalControlBackdrop`，在 App 根上等于那层壁纸，
@@ -402,7 +413,7 @@ fun LiquidSegmentedControl(
     val useGlass = glassBackdrop != null
     // 真 lens（API33+）折射色散；API31/32 固定 blur 毛玻璃
     val hasRealLens = isRuntimeLensEnabled()
-    val isLightTheme = !rememberGlassDarkTheme()
+    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     val trackShape = RoundedCornerShape(percent = 50)
     val indicatorShape = RoundedCornerShape(percent = 50)
     // 隐藏内容层与环境层合成为选中透镜的采样源：折射要看得见，
@@ -427,6 +438,7 @@ fun LiquidSegmentedControl(
     }
     val latestSelectedIndex by rememberUpdatedState(clampedSelectedIndex)
     val latestOnSelect by rememberUpdatedState(onSelect)
+    val haptics = LocalHapticFeedback.current
 
     // 折射锚点在 BoxWithConstraints 内部创建（要用到 constraints 算出的尺寸），
     // 但必须挂在这一层 —— 所以用一个 State 把它带出来，下一帧生效。
@@ -473,9 +485,14 @@ fun LiquidSegmentedControl(
             )
         }
 
+        LaunchedEffect(accessibility.reduceMotion, dragAnimation) {
+            dragAnimation.setReducedMotion(accessibility.reduceMotion, latestSelectedIndex.toFloat())
+        }
+
         val requestSelection: (Int) -> Unit = { requestedIndex ->
             if (enabled) {
                 val targetIndex = requestedIndex.coerceIn(0, optionCount - 1)
+                if (targetIndex != latestSelectedIndex) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
                 latestOnSelect(targetIndex)
                 dragAnimation.animateToValue(targetIndex.toFloat())
                 animationScope.launch {
@@ -561,15 +578,17 @@ fun LiquidSegmentedControl(
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .selectableGroup()
                 .padding(horizontal = horizontalPadding, vertical = verticalPadding)
                 .pointerInput(enabled, optionCount, segmentWidthPx) {
                     if (!enabled) return@pointerInput
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        down.consume()
                         val startValue = dragAnimation.value
                         val touchSlop = viewConfiguration.touchSlop
                         val tappedIndex =
-                            ((down.position.x - horizontalPaddingPx) / segmentWidthPx)
+                            (down.position.x / segmentWidthPx)
                                 .toInt()
                                 .coerceIn(0, optionCount - 1)
                         var totalDragX = 0f
@@ -581,14 +600,20 @@ fun LiquidSegmentedControl(
 
                         try {
                             while (true) {
-                                val event = awaitPointerEvent()
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull { it.id == pointerId }
                                     ?: break
-                                if (change.changedToUpIgnoreConsumed()) {
-                                    completed = true
-                                    if (dragging) change.consume()
+                                if (event.changes.count { it.pressed } > 1) {
+                                    event.changes.forEach { it.consume() }
                                     break
                                 }
+                                if (change.isConsumed) break
+                                if (change.changedToUpIgnoreConsumed()) {
+                                    completed = true
+                                    change.consume()
+                                    break
+                                }
+                                if (!dragging && abs(change.position.y - down.position.y) > touchSlop && abs(totalDragX) <= touchSlop) break
 
                                 val dragAmount = change.positionChange()
                                 if (dragAmount != Offset.Zero) {
@@ -608,7 +633,7 @@ fun LiquidSegmentedControl(
                             }
                         } finally {
                             when {
-                                !completed -> dragAnimation.release()
+                                !completed -> dragAnimation.animateToValue(latestSelectedIndex.toFloat())
                                 dragging -> requestSelection(dragAnimation.targetValue.roundToInt())
                                 else -> requestSelection(tappedIndex)
                             }
@@ -637,15 +662,23 @@ fun LiquidSegmentedControl(
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(indicatorShape)
-                        .semantics(mergeDescendants = true) {
-                            selected = index == clampedSelectedIndex
-                            role = Role.Tab
-                            onClick {
+                        .focusable(enabled)
+                        .onKeyEvent { event ->
+                            if (enabled && event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
                                 requestSelection(index)
                                 true
+                            } else {
+                                false
                             }
-                            if (!enabled) disabled()
-                        },
+                        }
+                        .selectable(
+                            selected = index == clampedSelectedIndex,
+                            enabled = enabled,
+                            role = Role.Tab,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { requestSelection(index) }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -1008,14 +1041,18 @@ fun LiquidPicker(
     leadingIcon: ImageVector? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
-    backdrop: Backdrop? = LocalControlBackdrop.current
+    backdrop: Backdrop? = LocalControlBackdrop.current,
+    maxLabelLines: Int = 1
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var portalBodySpace by remember { mutableStateOf(PickerMaxBodyHeight) }
+    var portalOpensUp by remember { mutableStateOf(false) }
     var highlightedRow by remember { mutableStateOf<Int?>(null) }
     val regionState = rememberWallpaperRegionState()
     val appearance = rememberWallpaperRegionAppearance(regionState)
     val validSelectedIndex = selectedIndex?.takeIf { it in options.indices }
     val selectedLabel = validSelectedIndex?.let { options[it].label }
+    val haptics = LocalHapticFeedback.current
     val hasAction = !actionLabel.isNullOrBlank() && onAction != null
     val rowCount = options.size + if (hasAction) 1 else 0
     val hasAvailableOption = options.any { it.enabled }
@@ -1031,15 +1068,20 @@ fun LiquidPicker(
     val headerPressed by headerInteraction.collectIsPressedAsState()
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
+    val labelLines = maxLabelLines.coerceIn(1, 3)
+    val headerHeight = maxOf(PickerHeaderHeight,
+        with(density) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() } * labelLines.toFloat() + 16.dp)
+    val itemHeight = maxOf(PickerItemHeight, 48.dp,
+        with(density) { MaterialTheme.typography.bodyMedium.lineHeight.toDp() } * labelLines.toFloat() + 16.dp)
 
     val bodyContentHeight = if (rowCount == 0) {
         0.dp
     } else {
         PickerBodyVerticalPadding * 2f +
-            PickerItemHeight * rowCount.toFloat() +
+            itemHeight * rowCount.toFloat() +
             PickerItemGap * (rowCount - 1).toFloat()
     }
-    val bodyHeight = minOf(bodyContentHeight, PickerMaxBodyHeight)
+    val bodyHeight = minOf(bodyContentHeight, PickerMaxBodyHeight, portalBodySpace)
     val motion = remember { PickerMotionState(initialPosition = 0f) }
     LaunchedEffect(expanded, reduceMotion) {
         motion.animateTo(
@@ -1073,12 +1115,12 @@ fun LiquidPicker(
     // exists only while the smooth-min field is still one connected zero-level set.
     val bodyTravelProgress = motionProgress.coerceIn(-0.08f, 1.12f)
     val bodyOverlap = if (expanded) PickerOpeningOverlap else PickerClosingOverlap
-    val bodyOffset = PickerHeaderHeight - bodyOverlap +
+    val bodyOffset = headerHeight - bodyOverlap +
         (bodyOverlap + PickerExpandedGap) * bodyTravelProgress
     val visualBodyHeight = bodyHeight * heightProgress
     val actualBodyBottom = bodyOffset + visualBodyHeight
     val layoutHeight = maxOf(
-        PickerHeaderHeight,
+        headerHeight,
         actualBodyBottom
     )
     // The surface itself never fades. It begins fully inside the header, grows out as one mass,
@@ -1087,10 +1129,10 @@ fun LiquidPicker(
     val bodyExtendsBeyondHeader = LiquidPickerLayerPolicy.bodyExtendsBeyondHeader(
         bodyActive = bodyActive,
         actualBodyBottom = actualBodyBottom.value,
-        headerBottom = PickerHeaderHeight.value,
+        headerBottom = headerHeight.value,
         threshold = 0.5f
     )
-    val bodySeparated = bodyExtendsBeyondHeader && bodyOffset >= PickerHeaderHeight + 0.5.dp
+    val bodySeparated = bodyExtendsBeyondHeader && bodyOffset >= headerHeight + 0.5.dp
     val layerPolicy = LiquidPickerLayerPolicy.resolve(
         bodyActive = bodyActive,
         bodyExtendsBeyondHeader = bodyExtendsBeyondHeader,
@@ -1132,7 +1174,7 @@ fun LiquidPicker(
             ?.takeIf { it in 0 until rowCount }
             ?.let { index ->
                 PickerBodyVerticalPadding +
-                    (PickerItemHeight + PickerItemGap) * index.toFloat()
+                    (itemHeight + PickerItemGap) * index.toFloat()
             }
             ?: PickerBodyVerticalPadding,
         animationSpec = if (reduceMotion) {
@@ -1174,11 +1216,11 @@ fun LiquidPicker(
                 withFrameNanos { }
                 val rowTop = with(density) {
                     (PickerBodyVerticalPadding +
-                        (PickerItemHeight + PickerItemGap) * validSelectedIndex.toFloat())
+                        (itemHeight + PickerItemGap) * validSelectedIndex.toFloat())
                         .roundToPx()
                 }
                 val viewport = with(density) { bodyHeight.roundToPx() }
-                val itemHeight = with(density) { PickerItemHeight.roundToPx() }
+                val itemHeight = with(density) { itemHeight.roundToPx() }
                 val centered = rowTop - (viewport - itemHeight) / 2
                 scrollState.scrollTo(centered.coerceIn(0, scrollState.maxValue))
             }
@@ -1194,15 +1236,20 @@ fun LiquidPicker(
         )
     }
     val resolvedLayoutHeight = layoutHeight.coerceAtLeast(48.dp)
+    val headerOffset = if (portalOpensUp && bodyActive) resolvedLayoutHeight - headerHeight else 0.dp
+    val renderedBodyOffset = if (portalOpensUp && bodyActive) resolvedLayoutHeight - actualBodyBottom else bodyOffset
+    val headerTopFraction = headerOffset.value / resolvedLayoutHeight.value
     val headerHeightFraction =
-        (PickerHeaderHeight.value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
+        (headerHeight.value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
     val bodyTopFraction =
-        (bodyOffset.value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
+        (renderedBodyOffset.value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
     val bodyBottomFraction =
-        (actualBodyBottom.value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
-    val bodyCornerToHeaderRatio = PickerCornerRadius.value / PickerHeaderHeight.value
-    val mergeSmoothnessToHeaderRatio = mergeSmoothnessDp / PickerHeaderHeight.value
+        ((renderedBodyOffset + visualBodyHeight).value / resolvedLayoutHeight.value).coerceIn(0f, 1f)
+    val bodyCornerToHeaderRatio = PickerCornerRadius.value / headerHeight.value
+    val mergeSmoothnessToHeaderRatio = mergeSmoothnessDp / headerHeight.value
     val surfaceShape = remember(
+        headerTopFraction,
+        portalOpensUp,
         headerHeightFraction,
         bodyTopFraction,
         bodyBottomFraction,
@@ -1213,28 +1260,25 @@ fun LiquidPicker(
         GenericShape { size, _ ->
             val headerHeightPx = (size.height * headerHeightFraction)
                 .coerceIn(0f, size.height)
+            val headerTopPx = size.height * headerTopFraction
             val bodyTopPx = (size.height * bodyTopFraction)
                 .coerceIn(0f, size.height)
             val bodyBottomPx = (size.height * bodyBottomFraction)
                 .coerceIn(0f, size.height)
             val bodyCornerPx = headerHeightPx * bodyCornerToHeaderRatio
-            val bodyVisible = bodyExtendsBeyondHeader && bodyBottomPx > headerHeightPx + 0.5f
+            val bodyVisible = bodyExtendsBeyondHeader && bodyBottomPx > bodyTopPx + 0.5f
             val implicitContour = if (bodyVisible) {
+                val headerBox = RoundedRectMergeGeometry.RoundedBox(
+                    left = 0f, top = headerTopPx, right = size.width,
+                    bottom = headerTopPx + headerHeightPx, radius = headerHeightPx / 2f
+                )
+                val bodyBox = RoundedRectMergeGeometry.RoundedBox(
+                    left = 0f, top = bodyTopPx, right = size.width,
+                    bottom = bodyBottomPx, radius = bodyCornerPx
+                )
                 RoundedRectMergeGeometry.mergedVerticalOutline(
-                    header = RoundedRectMergeGeometry.RoundedBox(
-                        left = 0f,
-                        top = 0f,
-                        right = size.width,
-                        bottom = headerHeightPx,
-                        radius = headerHeightPx / 2f
-                    ),
-                    body = RoundedRectMergeGeometry.RoundedBox(
-                        left = 0f,
-                        top = bodyTopPx,
-                        right = size.width,
-                        bottom = bodyBottomPx,
-                        radius = bodyCornerPx
-                    ),
+                    header = if (portalOpensUp) bodyBox else headerBox,
+                    body = if (portalOpensUp) headerBox else bodyBox,
                     smoothness = headerHeightPx * mergeSmoothnessToHeaderRatio,
                     stationCount = 44
                 )
@@ -1247,9 +1291,9 @@ fun LiquidPicker(
             } else {
                 addPickerRoundedContour(
                     left = 0f,
-                    top = 0f,
+                    top = headerTopPx,
                     right = size.width,
-                    bottom = headerHeightPx,
+                    bottom = headerTopPx + headerHeightPx,
                     radius = headerHeightPx / 2f
                 )
                 if (bodyVisible) {
@@ -1297,9 +1341,20 @@ fun LiquidPicker(
             .border(0.75.dp, appearance.border, surfaceShape)
     }
 
+    AnchoredGlassPortal(
+        active = bodyActive,
+        anchorHeight = headerHeight,
+        renderedHeight = resolvedLayoutHeight,
+        desiredBodyHeight = minOf(bodyContentHeight, PickerMaxBodyHeight),
+        onDismiss = { expanded = false },
+        onSpaceAvailable = { space, up ->
+            portalBodySpace = with(density) { space.toDp() }
+            portalOpensUp = up
+        },
+        modifier = modifier.fillMaxWidth()
+    ) {
     Box(
-        modifier = modifier
-            .fillMaxWidth()
+        modifier = Modifier.fillMaxWidth()
             .height(resolvedLayoutHeight)
             .wallpaperRegion(regionState)
     ) {
@@ -1321,8 +1376,9 @@ fun LiquidPicker(
                         // The persistent header lens owns the complete outer capsule. Restrict the
                         // temporary generic blur to the newly emerged body so its different edge
                         // sampling cannot flash a second ring around the header during hand-off.
-                        val clipTop = PickerHeaderHeight.toPx().coerceAtMost(size.height)
-                        clipRect(top = clipTop) {
+                        val clipTop = if (portalOpensUp) 0f else headerHeight.toPx().coerceAtMost(size.height)
+                        val clipBottom = if (portalOpensUp) headerOffset.toPx() else size.height
+                        clipRect(top = clipTop, bottom = clipBottom) {
                             this@drawWithContent.drawContent()
                         }
                     },
@@ -1338,8 +1394,9 @@ fun LiquidPicker(
             )
             PickerLensLayer(
                 modifier = Modifier
+                    .offset(y = headerOffset)
                     .fillMaxWidth()
-                    .height(PickerHeaderHeight)
+                    .height(headerHeight)
                     .graphicsLayer {
                         transformOrigin = TransformOrigin(0.5f, 0f)
                         scaleX = headerScale * collisionScaleX
@@ -1348,7 +1405,7 @@ fun LiquidPicker(
                     },
                 backdrop = glassBackdrop,
                 shape = headerShape,
-                cornerRadius = PickerHeaderHeight / 2f,
+                cornerRadius = headerHeight / 2f,
                 motionVelocity = 0f,
                 pressProgress = layerPolicy.perimeterInteractionProgress,
                 enabled = contentEnabled
@@ -1356,7 +1413,7 @@ fun LiquidPicker(
             if (bodyPrecomposed) {
                 PickerLensLayer(
                     modifier = Modifier
-                        .offset(y = bodyOffset)
+                        .offset(y = renderedBodyOffset)
                         .fillMaxWidth()
                         .height(visualBodyHeight.coerceAtLeast(1.dp))
                         .graphicsLayer {
@@ -1387,8 +1444,9 @@ fun LiquidPicker(
 
         Row(
             modifier = Modifier
+                .offset(y = headerOffset)
                 .fillMaxWidth()
-                .height(PickerHeaderHeight)
+                .height(headerHeight)
                 .graphicsLayer {
                     transformOrigin = TransformOrigin(0.5f, 0f)
                     scaleX = headerScale * collisionScaleX
@@ -1493,7 +1551,7 @@ fun LiquidPicker(
                             primaryContentColor
                         },
                         textAlign = if (descriptorPresent) TextAlign.End else TextAlign.Start,
-                        maxLines = 1,
+                        maxLines = labelLines,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1512,7 +1570,7 @@ fun LiquidPicker(
         if (bodyPrecomposed) {
             Box(
                 modifier = Modifier
-                    .offset(y = bodyOffset)
+                    .offset(y = renderedBodyOffset)
                     .fillMaxWidth()
                     .height(visualBodyHeight.coerceAtLeast(1.dp))
                     .graphicsLayer {
@@ -1534,7 +1592,7 @@ fun LiquidPicker(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(PickerItemHeight)
+                                .height(itemHeight)
                                 .graphicsLayer {
                                     translationY = highlightedOffset.value.toPx()
                                     alpha = highlightedAlpha
@@ -1552,6 +1610,8 @@ fun LiquidPicker(
                             options.forEachIndexed { index, option ->
                                 MorphingPickerRow(
                                     label = option.label,
+                                    height = itemHeight,
+                                    maxLines = labelLines,
                                     expanded = expanded,
                                     revealProgress = rowRevealProgress(index),
                                     enabled = option.enabled,
@@ -1560,6 +1620,7 @@ fun LiquidPicker(
                                     onHighlight = { highlightedRow = index },
                                     onClick = {
                                         highlightedRow = index
+                                        if (index != validSelectedIndex) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
                                         onSelect(index)
                                         expanded = false
                                     }
@@ -1569,6 +1630,8 @@ fun LiquidPicker(
                             if (hasAction) {
                                 MorphingPickerRow(
                                     label = actionLabel.orEmpty(),
+                                    height = itemHeight,
+                                    maxLines = labelLines,
                                     expanded = expanded,
                                     revealProgress = rowRevealProgress(options.size),
                                     enabled = true,
@@ -1589,9 +1652,13 @@ fun LiquidPicker(
     }
 }
 
+}
+
 @Composable
 private fun MorphingPickerRow(
     label: String,
+    height: Dp,
+    maxLines: Int,
     expanded: Boolean,
     revealProgress: Float,
     enabled: Boolean,
@@ -1610,7 +1677,7 @@ private fun MorphingPickerRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(PickerItemHeight)
+            .height(height)
             .graphicsLayer {
                 val progress = revealProgress.coerceIn(0f, 1f)
                 alpha = progress * if (enabled) 1f else 0.38f
@@ -1642,7 +1709,7 @@ private fun MorphingPickerRow(
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
-            maxLines = 1,
+            maxLines = maxLines,
             overflow = TextOverflow.Ellipsis
         )
         if (selected) {

@@ -99,6 +99,7 @@ fun SettingsRoute(
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showAcademicSupport by remember { mutableStateOf(false) }
     var showCreditsDialog by remember { mutableStateOf(false) }
     var showQuotaDialog by remember { mutableStateOf(false) }
     var showAccountManagerDialog by remember { mutableStateOf(false) }
@@ -294,6 +295,7 @@ fun SettingsRoute(
         }
 
         val requestAccountKey = userManager.currentAccountStorageKey
+        val requestSession = userManager.sessionState.token
         val requestSchoolId = school.id
         val requestUsername = userManager.username
         val requestPassword = userManager.accountPassword
@@ -304,7 +306,8 @@ fun SettingsRoute(
 
             private fun isRequestCurrent(): Boolean {
                 val currentSchool = userManager.currentSchool
-                return userManager.currentAccountStorageKey == requestAccountKey &&
+                return userManager.sessionState.isCurrent(requestSession) &&
+                    userManager.currentAccountStorageKey == requestAccountKey &&
                     currentSchool?.id == requestSchoolId &&
                     userManager.username == requestUsername
             }
@@ -315,7 +318,7 @@ fun SettingsRoute(
                         isRefreshingCookie = false
                         if (!hasNotifiedCancellation) {
                             hasNotifiedCancellation = true
-                            GlassToaster.show("账号已切换，本次 Cookie 更新已取消")
+                            GlassToaster.show("登录状态已更新，本次 Cookie 更新已取消")
                         }
                         return@post
                     }
@@ -326,8 +329,7 @@ fun SettingsRoute(
             override fun onSuccess(cookie: String) {
                 gateway.clearSensitiveState()
                 postToUi {
-                    userManager.savePasswordLogin(requestUsername, cookie, requestPassword)
-                    userManager.refreshRuntimeForCurrentAccount()
+                    userManager.saveCookie(cookie)
                     isRefreshingCookie = false
                     refreshAccountUiState()
                     GlassToaster.show("Cookie 已更新")
@@ -369,10 +371,9 @@ fun SettingsRoute(
     }
     
     if (showSchoolAdaptation) {
-        SchoolAdaptationFlow(
-            onNavigateBack = { showSchoolAdaptation = false }
-        )
-        return
+        com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSchoolAdaptation = false }) { close ->
+            SchoolAdaptationFlow(onNavigateBack = close)
+        }
     }
 
     // Update Dialog
@@ -421,8 +422,12 @@ fun SettingsRoute(
         isSuper = isSuper,
         quotaInfo = quotaInfo,
         canRefreshCookie = canRefreshCookie,
-        isRefreshingCookie = isRefreshingCookie
+        isRefreshingCookie = isRefreshingCookie,
+        academicSystemName = com.tyust.course.academic.AcademicCapabilities.name(UserManager.getInstance().currentSchool?.academicSystem),
+        onAcademicSupport = { showAcademicSupport = true }
     )
+    if (showAcademicSupport) com.tyust.course.ui.screen.AcademicSupportDialog(
+        UserManager.getInstance().currentSchool?.academicSystem, onDismiss = { showAcademicSupport = false })
     
     if (showWallpaperDialog) {
         com.tyust.course.ui.screen.WallpaperSettingsDialog(
@@ -609,6 +614,7 @@ fun SettingsRoute(
     
     if (showQuotaDialog) {
         QuotaStatusDialog(
+            deviceId = deviceId,
             isSuper = isSuper,
             usedCount = quotaUsedCount,
             maxCount = quotaMaxCount,
@@ -731,6 +737,7 @@ fun SettingsRoute(
 
 @Composable
 private fun QuotaStatusDialog(
+    deviceId: String,
     isSuper: Boolean,
     usedCount: Int,
     maxCount: Int,
@@ -814,6 +821,10 @@ private fun QuotaStatusDialog(
             }
 
             SystemDivider(alpha = 0.5f)
+
+            Text("设备 ID：${deviceId.ifBlank { "未获取" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -926,7 +937,7 @@ private fun QuotaStatusDialog(
             }
 
             Text(
-                text = "说明：同一设备仅允许绑定同一学校账号，普通配额最多 3 个；切换账号会同步切换 Cookie 与本地账号上下文。",
+                text = "说明：同一设备可绑定不同学校的学生账号，所有学校合计最多 3 个；切换账号会同步切换 Cookie 与本地账号上下文。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 18.sp

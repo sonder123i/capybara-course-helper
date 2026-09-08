@@ -33,7 +33,7 @@
                 android:layout_height="40dp"
                 android:src="@android:drawable/stat_notify_sync"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="@color/white"/>
+                app:tint="@color/white"/>
         </LinearLayout>
 
         <!-- Tab Layout for switching between semester grades and overall grades -->

@@ -9,6 +9,15 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +57,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tyust.course.ui.system.PageDataViewModel
+import com.tyust.course.ui.system.LocalPageDataState
+import com.tyust.course.ui.system.NavScrollIntent
+import com.tyust.course.ui.system.AppSymbolSpec
+import com.tyust.course.ui.system.GlassOverlayHost
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -131,6 +148,9 @@ class MainActivity : FragmentActivity() {
         UserManager.getInstance().init(this)
 
         val userManager = UserManager.getInstance()
+        if (BuildConfig.UI_PREVIEW) {
+            userManager.startDemoSession(com.tyust.course.demo.DemoData.school())
+        }
         if (userManager.hasSavedCookie() && userManager.currentSchool != null) {
             com.tyust.course.network.CourseApiClient.getInstance().setCookie(
                 userManager.currentSchool.baseUrl,
@@ -188,14 +208,15 @@ class MainActivity : FragmentActivity() {
 
 sealed class BottomNavItem(
     val route: String,
-    val icon: ImageVector,
+    val symbol: AppSymbolSpec,
     val label: String
 ) {
-    object Courses : BottomNavItem("courses", Icons.AutoMirrored.Filled.List, "课程")
-    object Schedule : BottomNavItem("schedule", Icons.Default.DateRange, "课表")
-    object Grab : BottomNavItem("grab", Icons.Default.PlayArrow, "抢课")
-    object Grades : BottomNavItem("grades", Icons.Default.Star, "成绩")
-    object Settings : BottomNavItem("settings", Icons.Default.Settings, "设置")
+    val icon: ImageVector get() = symbol.outline
+    object Courses : BottomNavItem("courses", AppSymbolSpec.Courses, "课程")
+    object Schedule : BottomNavItem("schedule", AppSymbolSpec.Schedule, "课表")
+    object Grab : BottomNavItem("grab", AppSymbolSpec.Grab, "抢课")
+    object Grades : BottomNavItem("grades", AppSymbolSpec.Grades, "成绩")
+    object Settings : BottomNavItem("settings", AppSymbolSpec.Settings, "设置")
 }
 
 @Composable
@@ -213,27 +234,22 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var currentAccountStorageKey by remember { mutableStateOf(UserManager.getInstance().currentAccountStorageKey) }
     val accessibility = rememberGlassAccessibilityMode()
-    var hasDisplayedInitialTab by remember { mutableStateOf(false) }
-    var tabEnterDirection by remember { mutableIntStateOf(1) }
-    val animateCurrentTab = remember(selectedTab) {
-        hasDisplayedInitialTab && !accessibility.reduceMotion
-    }
-    val tabEnterProgress = remember(selectedTab) {
-        Animatable(if (animateCurrentTab) 0f else 1f)
-    }
-    var tabEnterLayerActive by remember(selectedTab) {
-        mutableStateOf(animateCurrentTab)
-    }
-    val items = listOf(
+    val pageDataViewModel: PageDataViewModel = viewModel()
+    val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
+    val dialogHostState = rememberDialogHostState()
+    val density = LocalDensity.current
+    val pageTravelPx = with(density) { 8.dp.roundToPx() }
+    val items = remember { listOf(
         BottomNavItem.Courses,
         BottomNavItem.Schedule,
         BottomNavItem.Grab,
         BottomNavItem.Grades,
         BottomNavItem.Settings
-    )
+    ) }
     val updateState = rememberUpdateState()
-    var isTokenExpired by remember { mutableStateOf(false) }
-    var isRenewingSession by remember { mutableStateOf(false) }
+    val sessionStore = UserManager.getInstance().sessionState
+    val session by sessionStore.state.collectAsState()
+    var isTokenExpired by remember(session.token) { mutableStateOf(false) }
 
     // 底栏滚动最小化：捕获页面内任意滚动的方向（nested scroll 冒泡，页面零改动）
     var navBarMinimized by remember { mutableStateOf(false) }
@@ -249,18 +265,20 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             null
         }
     }
-    val navBarScrollConnection = remember {
+    val navScrollIntent = remember { NavScrollIntent() }
+    val navBarScrollConnection = remember(density, dialogHostState) {
         object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput) {
-                    if (available.y < -8f) {
-                        navBarMinimized = true
-                    } else if (available.y > 8f) {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && dialogHostState.currentDialog == null) {
+                    if (consumed.y == 0f && available.y > 0f) {
                         navBarMinimized = false
+                        navScrollIntent.reset()
+                    } else if (kotlin.math.abs(consumed.y) > kotlin.math.abs(consumed.x)) {
+                        navScrollIntent.scroll(consumed.y / density.density)?.let { navBarMinimized = it }
                     }
                 }
                 // 惯性滑行（source == SideEffect）也要算：手指离开后页面还在动
-                if (available.y != 0f) {
+                if (consumed.y != 0f) {
                     lensFreshness?.onScroll()
                 }
                 return Offset.Zero
@@ -269,23 +287,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     }
     LaunchedEffect(selectedTab) {
         navBarMinimized = false
-        if (!hasDisplayedInitialTab) {
-            hasDisplayedInitialTab = true
-            return@LaunchedEffect
-        }
-        if (!animateCurrentTab) {
-            tabEnterLayerActive = false
-            return@LaunchedEffect
-        }
-        tabEnterProgress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = 160,
-                easing = MotionEasing.FastOutSlowIn
-            )
-        )
-        // 动画结束后移除整页 RenderNode，稳态不保留额外全屏图层。
-        tabEnterLayerActive = false
+        navScrollIntent.reset()
     }
 
     LaunchedEffect(Unit) {
@@ -303,53 +305,24 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         if (shouldShowStarDialog) showStarDialog = true
     }
 
-    DisposableEffect(fragmentActivity) {
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-                if (intent?.action == com.tyust.course.network.CourseApiClient.ACTION_COOKIE_EXPIRED) {
-                    val eventAccountKey = intent.getStringExtra(com.tyust.course.network.CourseApiClient.EXTRA_ACCOUNT_STORAGE_KEY).orEmpty()
-                    val currentAccountKey = UserManager.getInstance().currentAccountStorageKey
-                    if (eventAccountKey.isNotEmpty() && eventAccountKey != currentAccountKey) return
-                    // 先试静默续期，横幅是最后手段：密码已加密存在本机，多数情况下
-                    // 用户完全不需要知道会话失效过。SessionRenewer 内部单飞，
-                    // 连环 401 不会打出多次登录请求。
-                    if (com.tyust.course.utils.SessionRenewer.canRenew()) {
-                        if (!isRenewingSession) {
-                            isRenewingSession = true
-                            GlassToaster.show("登录状态已失效，正在自动续期…")
-                        }
-                        com.tyust.course.utils.SessionRenewer.renew(fragmentActivity) { renewed ->
-                            isRenewingSession = false
-                            if (renewed) {
-                                isTokenExpired = false
-                                GlassToaster.show("登录状态已恢复")
-                                // 看门狗在失败分支里把自己停了，续上之后重新挂起来
-                                com.tyust.course.utils.CookieWatchdog.start(fragmentActivity)
-                            } else {
-                                isTokenExpired = true
-                            }
-                        }
-                    } else {
-                        isTokenExpired = true
-                    }
-                }
+    LaunchedEffect(session.token, session.expired) {
+        if (!session.expired) return@LaunchedEffect
+        if (com.tyust.course.utils.SessionRenewer.canRenew()) {
+            GlassToaster.show("登录状态已失效，正在自动续期…")
+            com.tyust.course.utils.SessionRenewer.renew(fragmentActivity) { renewed ->
+                if (sessionStore.isCurrent(session.token)) isTokenExpired = !renewed
             }
+        } else {
+            isTokenExpired = true
         }
-        val filter = android.content.IntentFilter(com.tyust.course.network.CourseApiClient.ACTION_COOKIE_EXPIRED)
-        ContextCompat.registerReceiver(
-            fragmentActivity,
-            receiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        // 启动全局 Cookie 定期检查
-        val school = com.tyust.course.manager.UserManager.getInstance().currentSchool
-        if (!isDemoMode && school != null && com.tyust.course.manager.UserManager.getInstance().isLoggedIn) {
+    }
+
+    DisposableEffect(fragmentActivity, session.token) {
+        if (!isDemoMode && UserManager.getInstance().currentSchool != null && !session.expired) {
             com.tyust.course.utils.CookieWatchdog.start(fragmentActivity)
         }
         onDispose {
             com.tyust.course.utils.CookieWatchdog.stop()
-            fragmentActivity.unregisterReceiver(receiver)
         }
     }
 
@@ -369,14 +342,14 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    GlassOverlayHost(modifier = Modifier.fillMaxSize()) {
         val useGlass = isBackdropSupported()
         // debug 平铺水印的开关。**它绝不能进任何 backdrop 捕获层**，见文件末尾
         // debugPiracyWatermark 的注释——落在采样层里会让 debug 包的折射永远看起来正常。
         val showPiracyTiles = (
             LocalContext.current.applicationInfo.flags and
                 ApplicationInfo.FLAG_DEBUGGABLE
-            ) != 0
+            ) != 0 && !BuildConfig.UI_PREVIEW
         val tokenExpiredNotice = if (isTokenExpired) {
             FloatingNotice(
                 message = "登录状态已失效",
@@ -404,7 +377,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             null
         }
 
-        val dialogHostState = rememberDialogHostState()
         // 顶栏把底边写进这里，通知覆盖层据此落位，避免压住顶栏按钮
         val noticeAnchorState = remember { NoticeAnchorState() }
         // 内容要避开的底栏高度【由底栏自己算】。原先这里写死 96dp，是照手势条量的；
@@ -473,6 +445,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             LocalModalBackdrop provides navBarBackdrop,
             LocalAppOverlayBottomInset provides navBarContentInset,
             LocalDialogHost provides dialogHostState,
+            LocalPageDataState provides pageData,
             LocalFloatingNotice provides tokenExpiredNotice,
             LocalNoticeAnchor provides noticeAnchorState,
             com.tyust.course.ui.system.glass.LocalGlassLensAnchor provides appLensAnchor,
@@ -525,31 +498,25 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                             .weight(1f)
                             .nestedScroll(navBarScrollConnection)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(
-                                    if (tabEnterLayerActive) {
-                                        Modifier.graphicsLayer {
-                                            val remaining = 1f - tabEnterProgress.value
-                                            translationX =
-                                                tabEnterDirection * 14.dp.toPx() * remaining
-                                            val scale = 1f - (0.004f * remaining)
-                                            scaleX = scale
-                                            scaleY = scale
-                                            alpha = 1f - (0.035f * remaining)
-                                            transformOrigin = TransformOrigin.Center
-                                            // 避免淡入触发整页离屏缓冲，只调制绘制指令透明度。
-                                            compositingStrategy = CompositingStrategy.ModulateAlpha
-                                        }
+                        key(currentAccountStorageKey) {
+                            val savedPages = rememberSaveableStateHolder()
+                            AnimatedContent(
+                                targetState = selectedTab,
+                                modifier = Modifier.fillMaxSize(),
+                                transitionSpec = {
+                                    if (accessibility.reduceMotion) {
+                                        EnterTransition.None togetherWith ExitTransition.None
                                     } else {
-                                        Modifier
+                                        val direction = if (targetState > initialState) 1 else -1
+                                        ((fadeIn(tween(180)) + slideInHorizontally(tween(180)) { direction * pageTravelPx }) togetherWith
+                                            (fadeOut(tween(120)) + slideOutHorizontally(tween(180)) { -direction * pageTravelPx }))
+                                            .using(SizeTransform(clip = false))
                                     }
-                                )
-                        ) {
-                            // 旧页立即释放，只让新页做轻量入场；底栏液态动画完全独立。
-                            key(currentAccountStorageKey, selectedTab) {
-                                when (selectedTab) {
+                                },
+                                label = "mainPage"
+                            ) { page ->
+                              savedPages.SaveableStateProvider(items[page].route) {
+                                when (page) {
                                     0 -> com.tyust.course.ui.route.CourseListRoute()
                                     1 -> com.tyust.course.ui.route.ScheduleRoute()
                                     2 -> com.tyust.course.ui.route.GrabProRoute()
@@ -562,6 +529,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                     )
                                     else -> com.tyust.course.ui.route.CourseListRoute()
                                 }
+                              }
                             }
                         }
                     }
@@ -576,7 +544,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 selectedTab = selectedTab,
                 onTabSelect = { targetTab ->
                     if (targetTab != selectedTab) {
-                        tabEnterDirection = if (targetTab > selectedTab) 1 else -1
                         selectedTab = targetTab
                     }
                 },

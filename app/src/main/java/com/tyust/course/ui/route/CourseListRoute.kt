@@ -228,6 +228,11 @@ private fun loadFilterCategoriesFromRuntimeSource(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseListRoute() {
+    val academicSchool = UserManager.getInstance().currentSchool
+    if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
+        AcademicCourseListRoute(academicSchool)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
@@ -1543,6 +1548,7 @@ fun CourseListRoute() {
                                 GlassToaster.show("演示捡漏目标：$courseName")
                             } else {
                                 SmartSelector.getInstance().setFuzzyMatchTarget(courseId, courseName, xkkzId, kklxdm)
+                                GlassToaster.show("已设为监控目标：$courseName")
                             }
                         },
                         isMultiSelectMode = isMultiSelectMode,

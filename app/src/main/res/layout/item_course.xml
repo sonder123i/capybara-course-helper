@@ -36,7 +36,7 @@
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:src="@android:drawable/ic_menu_myplaces"
-                android:tint="@color/text_secondary"/>
+                app:tint="@color/text_secondary"/>
 
             <TextView
                 android:id="@+id/tvTeacher"
@@ -57,7 +57,7 @@
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:src="@android:drawable/ic_menu_compass"
-                android:tint="@color/text_secondary"/>
+                app:tint="@color/text_secondary"/>
 
             <TextView
                 android:id="@+id/tvLocation"
@@ -82,7 +82,7 @@
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:src="@android:drawable/ic_menu_recent_history"
-                android:tint="@color/text_secondary"/>
+                app:tint="@color/text_secondary"/>
 
             <TextView
                 android:id="@+id/tvTime"

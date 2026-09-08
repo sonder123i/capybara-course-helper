@@ -4,12 +4,14 @@ import com.tyust.course.ui.system.GlassToaster
 import android.content.Intent
 import android.util.Log
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.tyust.course.ui.system.rememberPageData
 import androidx.compose.ui.platform.LocalContext
 import com.tyust.course.demo.DemoData
 import com.tyust.course.manager.UserManager
+import com.tyust.course.manager.SessionToken
 import com.tyust.course.model.SchoolConfig
 import com.tyust.course.network.CourseApiClient
-import com.tyust.course.utils.SessionRenewer
 import com.tyust.course.ui.screen.ExamItemUi
 import com.tyust.course.ui.screen.GradeItemUi
 import com.tyust.course.ui.screen.GradesScreen
@@ -27,24 +29,34 @@ import java.util.regex.Pattern
 
 @Composable
 fun GradesRoute() {
+    val academicSchool = UserManager.getInstance().currentSchool
+    if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
+        AcademicGradesRoute(academicSchool)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
     
     // State
-    var currentTab by remember { mutableIntStateOf(0) }
+    var currentTab by rememberSaveable { mutableIntStateOf(0) }
+    var currentSemester by rememberSaveable { mutableStateOf("") }
     
-    var semesterGrades by remember { mutableStateOf<List<GradeItemUi>>(emptyList()) }
+    var semesterGrades by rememberPageData<List<GradeItemUi>>("grades.semester.$currentSemester") { emptyList() }
+    var semesterLoaded by rememberPageData("grades.semester.loaded.$currentSemester") { false }
     var semesters by remember { mutableStateOf<List<String>>(emptyList()) }
-    var currentSemester by remember { mutableStateOf("") }
     var semesterIsLoading by remember { mutableStateOf(false) }
 
-    var overallGrades by remember { mutableStateOf<List<GradeItemUi>>(emptyList()) }
-    var overallStats by remember { mutableStateOf(OverallStatsUi("0.0", "0", 0, 0, 0, 0, 0)) }
+    var overallGrades by rememberPageData<List<GradeItemUi>>("grades.overall") { emptyList() }
+    var overallStats by rememberPageData("grades.stats") { OverallStatsUi("0.0", "0", 0, 0, 0, 0, 0) }
+    var overallLoaded by rememberPageData("grades.overall.loaded") { false }
     var overallIsLoading by remember { mutableStateOf(false) }
 
     // 考试安排状态
-    var examList by remember { mutableStateOf<List<ExamItemUi>>(emptyList()) }
+    var examList by rememberPageData<List<ExamItemUi>>("grades.exams") { emptyList() }
+    var examsLoaded by rememberPageData("grades.exams.loaded") { false }
     var examIsLoading by remember { mutableStateOf(false) }
 
     // Init semesters
@@ -64,7 +76,7 @@ fun GradesRoute() {
             }
         }
         semesters = list
-        if (list.isNotEmpty()) currentSemester = list[0]
+        if (list.isNotEmpty() && currentSemester !in list) currentSemester = list[0]
     }
 
     // Handlers
@@ -72,46 +84,13 @@ fun GradesRoute() {
         android.os.Handler(android.os.Looper.getMainLooper()).post(action)
     }
 
-    fun isCurrentAccount(accountKey: String): Boolean {
-        return UserManager.getInstance().currentAccountStorageKey == accountKey
+    fun isCurrentAccount(accountKey: SessionToken): Boolean {
+        return sessions.isCurrent(accountKey)
     }
 
-    fun runOnUiThreadForAccount(accountKey: String, action: () -> Unit) {
+    fun runOnUiThreadForAccount(accountKey: SessionToken, action: () -> Unit) {
         runOnUiThread {
             if (isCurrentAccount(accountKey)) action()
-        }
-    }
-
-    // 检测到登录状态失效时，先尝试静默续期，续不上才提示用户
-    fun handleExpiredCookie(requestAccountKey: String, retryAction: () -> Unit) {
-        if (!isCurrentAccount(requestAccountKey)) return
-        val sendExpiredBroadcast = {
-            val intent = Intent(CourseApiClient.ACTION_COOKIE_EXPIRED).apply {
-                setPackage(context.packageName)
-                putExtra(CourseApiClient.EXTRA_ACCOUNT_STORAGE_KEY, requestAccountKey)
-            }
-            context.sendBroadcast(intent)
-        }
-
-        if (SessionRenewer.canRenew()) {
-            runOnUiThread {
-                GlassToaster.show("登录状态已失效，正在自动续期…")
-            }
-            SessionRenewer.renew(context) { renewed ->
-                if (!isCurrentAccount(requestAccountKey)) return@renew
-                if (renewed) {
-                    Log.d("GradesRoute", "自动续期成功，重试操作")
-                    retryAction()
-                } else {
-                    GlassToaster.show("登录状态已失效，请重新登录")
-                    sendExpiredBroadcast()
-                }
-            }
-        } else {
-            runOnUiThread {
-                GlassToaster.show("登录状态已失效，请重新登录")
-                sendExpiredBroadcast()
-            }
         }
     }
 
@@ -122,16 +101,16 @@ fun GradesRoute() {
     }
 
     // Logic for Semester Grades
-    var loadSemesterGrades by remember { mutableStateOf<(() -> Unit)?>(null) }
-    loadSemesterGrades = loadSemesterGrades@{
+    fun loadSemesterGrades() {
         if (isDemoMode) {
             semesterGrades = DemoData.semesterGrades()
+            semesterLoaded = true
             semesterIsLoading = false
-            return@loadSemesterGrades
+            return
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = userManager.currentAccountStorageKey
+        val requestAccountKey = sessions.token
         val requestSemester = currentSemester
         if (school != null && requestSemester.isNotEmpty()) {
 
@@ -150,7 +129,7 @@ fun GradesRoute() {
                     // 检测Cookie过期
                     if (isLoginPageHtml(json)) {
                         runOnUiThreadForAccount(requestAccountKey) { semesterIsLoading = false }
-                        handleExpiredCookie(requestAccountKey) { loadSemesterGrades?.invoke() }
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
                         return
                     }
 
@@ -161,6 +140,7 @@ fun GradesRoute() {
                         runOnUiThreadForAccount(requestAccountKey) {
                             semesterIsLoading = false
                             semesterGrades = emptyList()
+                            semesterLoaded = true
                         }
                     } else {
                         // 始终请求接口A获取完整分项详情
@@ -173,6 +153,7 @@ fun GradesRoute() {
                                 runOnUiThreadForAccount(requestAccountKey) {
                                     semesterIsLoading = false
                                     semesterGrades = fallbackItems
+                                    semesterLoaded = true
                                 }
                             }
 
@@ -183,6 +164,7 @@ fun GradesRoute() {
                                 runOnUiThreadForAccount(requestAccountKey) {
                                     semesterIsLoading = false
                                     semesterGrades = merged
+                                    semesterLoaded = true
                                 }
                             }
                         })
@@ -193,26 +175,26 @@ fun GradesRoute() {
     }
     
     // Trigger load on semester change
-    LaunchedEffect(currentSemester) {
-        if (currentSemester.isNotEmpty()) loadSemesterGrades?.invoke()
+    LaunchedEffect(currentSemester, session.token) {
+        semesterIsLoading = false
+        if (currentSemester.isNotEmpty() && !semesterLoaded) loadSemesterGrades()
     }
 
     // Logic for Overall Grades
-    var loadOverallGrades by remember { mutableStateOf<(() -> Unit)?>(null) }
-    loadOverallGrades = loadOverallGrades@{
+    fun loadOverallGrades() {
         if (isDemoMode) {
             overallGrades = DemoData.overallGrades()
             overallStats = DemoData.overallStats
+            overallLoaded = true
             overallIsLoading = false
-            return@loadOverallGrades
+            return
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = userManager.currentAccountStorageKey
+        val requestAccountKey = sessions.token
         if (school != null && !overallIsLoading) {
 
             overallIsLoading = true
-            overallGrades = emptyList() // Clear
 
             CourseApiClient.getInstance().fetchOverallGradesIndex(school, object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -228,7 +210,7 @@ fun GradesRoute() {
                     // Parse Index Logic
                     if (isLoginPageHtml(html)) {
                         runOnUiThreadForAccount(requestAccountKey) { overallIsLoading = false }
-                        handleExpiredCookie(requestAccountKey) { loadOverallGrades?.invoke() }
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
                         return
                     }
 
@@ -246,7 +228,7 @@ fun GradesRoute() {
                     val cjlrxq = doc.selectFirst("input[name=cjlrxq]")?.attr("value") ?: ""
 
                     if (xfyqjdIds.isEmpty()) {
-                        runOnUiThreadForAccount(requestAccountKey) { overallIsLoading = false }
+                        runOnUiThreadForAccount(requestAccountKey) { overallIsLoading = false; overallLoaded = true }
                         return
                     }
                     
@@ -257,6 +239,7 @@ fun GradesRoute() {
                              runOnUiThreadForAccount(requestAccountKey) {
                                  overallIsLoading = false
                                  overallGrades = resultGrades
+                                 overallLoaded = true
                                  overallStats = GradesLogic.calculateStats(resultGrades, gpa, credits, count)
                              }
                         }
@@ -267,20 +250,19 @@ fun GradesRoute() {
     }
 
     // Logic for Exam Schedule
-    var loadExamSchedule by remember { mutableStateOf<(() -> Unit)?>(null) }
-    loadExamSchedule = loadExamSchedule@{
+    fun loadExamSchedule() {
         if (isDemoMode) {
             examList = DemoData.exams()
+            examsLoaded = true
             examIsLoading = false
-            return@loadExamSchedule
+            return
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = userManager.currentAccountStorageKey
+        val requestAccountKey = sessions.token
         if (school != null && !examIsLoading) {
 
             examIsLoading = true
-            examList = emptyList()
 
             // 计算当前学年学期参数 (与课表一致的逻辑)
             val calendar = Calendar.getInstance()
@@ -303,7 +285,7 @@ fun GradesRoute() {
                     // 检测Cookie过期
                     if (isLoginPageHtml(json)) {
                         runOnUiThreadForAccount(requestAccountKey) { examIsLoading = false }
-                        handleExpiredCookie(requestAccountKey) { loadExamSchedule?.invoke() }
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
                         return
                     }
 
@@ -311,19 +293,26 @@ fun GradesRoute() {
                     runOnUiThreadForAccount(requestAccountKey) {
                         examIsLoading = false
                         examList = items
+                        examsLoaded = true
                     }
                 }
             })
         }
     }
 
+    LaunchedEffect(session.token) {
+        overallIsLoading = false
+        examIsLoading = false
+    }
+    LaunchedEffect(currentTab, session.token) {
+        if (currentTab == 1 && !overallLoaded) loadOverallGrades()
+        if (currentTab == 2 && !examsLoaded) loadExamSchedule()
+    }
+
     GradesScreen(
         currentTab = currentTab,
         onTabChange = { 
             currentTab = it
-            if (it == 0 && semesterGrades.isEmpty() && currentSemester.isNotEmpty()) loadSemesterGrades?.invoke()
-            if (it == 1 && overallGrades.isEmpty()) loadOverallGrades?.invoke()
-            if (it == 2 && examList.isEmpty()) loadExamSchedule?.invoke()
         },
         semesterGrades = semesterGrades,
         semesters = semesters,
@@ -337,9 +326,9 @@ fun GradesRoute() {
         examIsLoading = examIsLoading,
         onRefresh = {
             when (currentTab) {
-                0 -> loadSemesterGrades?.invoke()
-                1 -> loadOverallGrades?.invoke()
-                2 -> loadExamSchedule?.invoke()
+                0 -> loadSemesterGrades()
+                1 -> loadOverallGrades()
+                2 -> loadExamSchedule()
             }
         },
         onExportGrades = { grades ->

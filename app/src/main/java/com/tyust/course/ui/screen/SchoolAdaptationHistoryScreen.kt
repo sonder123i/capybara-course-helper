@@ -50,6 +50,7 @@ import com.tyust.course.ui.system.SystemStatusBadge
 import com.tyust.course.ui.system.SystemTone
 import com.tyust.course.ui.system.SystemIconButton
 import com.tyust.course.ui.system.SystemTopBar
+import com.tyust.course.ui.system.GlassPageScaffold
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -97,29 +98,19 @@ fun SchoolAdaptationHistoryScreen(
         loadRequests()
     }
 
-    Scaffold(
-        topBar = {
-            SystemTopBar(
-                title = "统一登录适配",
-                subtitle = "查看申请状态和作者回复",
-                navigationIcon = {
-                    SystemIconButton(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        onClick = onNavigateBack
-                    )
+    GlassPageScaffold(
+        title = "学校适配",
+        subtitle = "已适配学校与申请进度",
+        onBack = onNavigateBack,
+        actions = {
+            SystemIconButton(
+                icon = Icons.Default.Refresh,
+                contentDescription = "刷新适配进度",
+                onClick = {
+                    scope.launch { loadCatalog() }
+                    scope.launch { loadRequests() }
                 },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            scope.launch { loadCatalog() }
-                            scope.launch { loadRequests() }
-                        },
-                        enabled = !isLoading && !isCatalogLoading
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                }
+                enabled = !isLoading && !isCatalogLoading
             )
         }
     ) { padding ->

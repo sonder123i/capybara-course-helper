@@ -3,122 +3,119 @@ package com.tyust.course.utils
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.tyust.course.academic.*
+import com.tyust.course.manager.SessionToken
 import com.tyust.course.manager.UserManager
 import com.tyust.course.model.SchoolConfig
 import com.tyust.course.network.CourseApiClient
+import kotlinx.coroutines.*
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
 import java.io.IOException
 
-/**
- * 全局 Cookie 有效性定期检查器
- * 每隔固定间隔请求学生信息页，检测 Cookie 是否过期
- * 过期时发送 ACTION_COOKIE_EXPIRED 广播
- */
+/** One cancellable check and one timer per session; lifecycle state belongs to the main thread. */
 object CookieWatchdog {
-    private const val TAG = "CookieWatchdog"
-    private const val DEFAULT_INTERVAL_MS = 5 * 60 * 1000L // 5 分钟
-
+    private const val DEFAULT_INTERVAL_MS = 5 * 60 * 1000L
     private val handler = Handler(Looper.getMainLooper())
-    private var running = false
-    private var intervalMs = DEFAULT_INTERVAL_MS
-    private var context: Context? = null
+    private val academicScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var academicCheck: Job? = null
+    private var legacyCheck: Call? = null
+    private var watchedSession: SessionToken? = null
     private var watchedSchool: SchoolConfig? = null
-    private var watchedAccountStorageKey: String = ""
+    private var context: Context? = null
+    private var intervalMs = DEFAULT_INTERVAL_MS
+    private var runId = 0L
 
-    private val checkRunnable = object : Runnable {
-        override fun run() {
-            if (!running) return
-            val userManager = UserManager.getInstance()
-            val school = watchedSchool ?: userManager.currentSchool
-            val requestAccountStorageKey = watchedAccountStorageKey.ifBlank { userManager.currentAccountStorageKey }
-            if (school != null) {
-                check(school, requestAccountStorageKey)
-            } else {
-                Log.w(TAG, "No school configured, skipping check")
-                scheduleNext()
-            }
-        }
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post(block)
     }
 
     @JvmStatic
-    fun start(ctx: Context, intervalMs: Long = DEFAULT_INTERVAL_MS) {
-        if (running) return
-        this.context = ctx.applicationContext
+    fun start(ctx: Context, intervalMs: Long = DEFAULT_INTERVAL_MS): Unit = onMain {
+        val user = UserManager.getInstance()
+        val token = user.sessionState.token
+        if (watchedSession == token) return@onMain
+        stop()
+        watchedSchool = user.currentSchool ?: return@onMain
+        watchedSession = token
+        context = ctx.applicationContext
         this.intervalMs = intervalMs
-        val userManager = UserManager.getInstance()
-        this.watchedSchool = userManager.currentSchool
-        this.watchedAccountStorageKey = userManager.currentAccountStorageKey
-        this.running = true
-        Log.d(TAG, "Watchdog started, interval=${intervalMs}ms")
-        // 首次检查延迟 30 秒（避免刚登录就检查）
         handler.postDelayed(checkRunnable, 30_000L)
     }
 
     @JvmStatic
-    fun stop() {
-        running = false
+    fun stop(): Unit = onMain {
+        runId++
         handler.removeCallbacks(checkRunnable)
+        academicCheck?.cancel()
+        legacyCheck?.cancel()
+        academicCheck = null
+        legacyCheck = null
+        watchedSession = null
         watchedSchool = null
-        watchedAccountStorageKey = ""
-        Log.d(TAG, "Watchdog stopped")
     }
 
-    private fun check(school: SchoolConfig, requestAccountStorageKey: String) {
-        Log.d(TAG, "Checking cookie validity...")
-        CourseApiClient.getInstance().validateCookie(school, requestAccountStorageKey, object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                Log.w(TAG, "Check failed (network error): ${e.message}")
-                scheduleNext()
-            }
+    private fun ownsCheck(id: Long, token: SessionToken): Boolean =
+        runId == id && watchedSession == token && UserManager.getInstance().sessionState.isCurrent(token)
 
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val html = response.body?.string() ?: ""
-                    val isExpired = html.contains("用户登录") ||
-                            html.contains("登 录") ||
-                            html.contains("slogin.html") ||
-                            html.contains("notLogin") ||
-                            html.contains("name=\"yhm\"")
+    private fun scheduleNext(id: Long, token: SessionToken): Unit {
+        if (!ownsCheck(id, token)) return
+        handler.removeCallbacks(checkRunnable)
+        handler.postDelayed(checkRunnable, intervalMs)
+    }
 
-                    if (isExpired) {
-                        Log.w(TAG, "Cookie expired, trying silent renewal first")
-                        val ctx = context
-                        if (ctx != null && SessionRenewer.canRenew()) {
-                            SessionRenewer.renew(ctx) { renewed ->
-                                if (renewed) {
-                                    // 续期成功就继续巡检 —— 原先这里把 running 永久关掉，
-                                    // 一次过期之后整个看门狗就再也不工作了
-                                    Log.d(TAG, "Cookie renewed, keep watching")
-                                    scheduleNext()
-                                } else {
-                                    Log.e(TAG, "Renewal failed, notifying expiry")
-                                    CourseApiClient.getInstance().notifyCookieExpired(requestAccountStorageKey)
-                                    running = false
-                                    handler.removeCallbacks(checkRunnable)
-                                }
-                            }
-                        } else {
-                            Log.e(TAG, "Cookie expired and cannot renew, notifying expiry")
-                            CourseApiClient.getInstance().notifyCookieExpired(requestAccountStorageKey)
-                            running = false
-                        }
-                        return
-                    }
-                    Log.d(TAG, "Cookie valid")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Check response error: ${e.message}")
+    private fun complete(id: Long, token: SessionToken, expired: Boolean): Unit = onMain {
+        if (!ownsCheck(id, token)) return@onMain
+        if (!expired) { scheduleNext(id, token); return@onMain }
+        val ctx = context
+        if (ctx != null && SessionRenewer.canRenew()) {
+            SessionRenewer.renew(ctx) { renewed ->
+                if (renewed && runId == id && UserManager.getInstance().currentAccountStorageKey == token.accountStorageKey) {
+                    start(ctx, intervalMs)
+                } else if (ownsCheck(id, token)) {
+                    CourseApiClient.getInstance().notifyCookieExpired(token)
+                    stop()
                 }
-                scheduleNext()
             }
-        })
+        } else {
+            CourseApiClient.getInstance().notifyCookieExpired(token)
+            stop()
+        }
     }
 
-    private fun scheduleNext() {
-        if (running) {
-            handler.postDelayed(checkRunnable, intervalMs)
+    private val checkRunnable: Runnable = Runnable {
+        val token = watchedSession ?: return@Runnable
+        val school = watchedSchool ?: return@Runnable
+        val id = runId
+        if (!ownsCheck(id, token)) return@Runnable
+        if (AcademicGatewayFactory.supports(school)) {
+            val user = UserManager.getInstance()
+            val cookie = user.savedCookie
+            val username = user.username.ifBlank { user.studentId.orEmpty() }
+            academicCheck = academicScope.launch {
+                val result = try {
+                    AcademicGatewayFactory.importCookie(school, token.accountStorageKey, cookie, replace = false, username = username)
+                    AcademicGatewayFactory.create(school, token.accountStorageKey).validateSession().status
+                } catch (e: CancellationException) { throw e }
+                catch (e: AcademicException) { e.status }
+                catch (_: Exception) { AcademicStatus.NETWORK_RETRYABLE }
+                complete(id, token, result == AcademicStatus.SESSION_EXPIRED)
+            }
+        } else {
+            legacyCheck = CourseApiClient.getInstance().validateCookie(school, token.accountStorageKey, object : Callback {
+                override fun onFailure(call: Call, e: IOException) = complete(id, token, false)
+                override fun onResponse(call: Call, response: Response) {
+                    val expired = response.use {
+                        runCatching {
+                            val html = it.body?.string().orEmpty()
+                            html.contains("用户登录") || html.contains("登 录") || html.contains("slogin.html") ||
+                                html.contains("notLogin") || html.contains("name=\"yhm\"")
+                        }.getOrDefault(false)
+                    }
+                    complete(id, token, expired)
+                }
+            })
         }
     }
 }

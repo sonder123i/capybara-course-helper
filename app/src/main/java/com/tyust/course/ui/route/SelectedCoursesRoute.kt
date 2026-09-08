@@ -16,6 +16,11 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun SelectedCoursesRoute() {
+    val academicSchool = UserManager.getInstance().currentSchool
+    if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
+        AcademicSelectedCoursesRoute(academicSchool)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     

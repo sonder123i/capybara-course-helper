@@ -24,7 +24,7 @@ object MotionDuration {
     const val Slow = 400
 
     /** Tab switching transitions */
-    const val TabTransition = 220
+    const val TabTransition = 180
 
     /** Dialog enter/exit animations */
     const val DialogEnter = 400

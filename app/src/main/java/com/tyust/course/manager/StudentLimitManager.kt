@@ -8,9 +8,10 @@ import org.json.JSONObject
 
 /**
  * 学生数量限制管理器
- * 本地记录该设备上绑定过的学校与学生身份，用于限制跨校混用和同校账号数量。
+ * 各版本统一按设备统计学生账号，允许跨学校，合计最多 3 个。
  */
 object StudentLimitManager {
+    const val MAX_STUDENTS = 3
     private const val TAG = "StudentLimitManager"
     private const val PREFS_NAME = "student_limit_prefs"
     private const val KEY_USED_NAMES = "used_student_names"
@@ -118,7 +119,7 @@ object StudentLimitManager {
                         add(record)
                     }
                 }
-            }
+            }.distinctBy { it.schoolId to it.identity }
         } catch (e: Exception) {
             Log.e(TAG, "读取绑定记录失败: ${e.message}")
             emptyList()
@@ -138,68 +139,60 @@ object StudentLimitManager {
     }
 
     /**
-     * 获取当前学校已绑定的学生姓名列表。
+     * 获取当前设备所有学校的绑定记录，学校名称用于区分同名学生。
      */
     fun getUsedStudentNames(context: Context): Set<String> {
-        return getCurrentSchoolBoundStudents(context)
-            .map { it.displayName }
+        return getBoundStudents(context)
+            .map { "${it.schoolName.ifBlank { it.schoolId }} · ${it.displayName}" }
             .toSet()
     }
 
     fun checkCanUseStudent(
         context: Context,
         schoolId: String,
-        schoolName: String,
         studentName: String,
-        studentId: String,
-        maxStudents: Int
-    ): BindingCheck {
-        val records = getBoundStudents(context)
-        val currentIdentity = normalizeIdentity(studentName, studentId)
-        val sameSchoolRecords = records
-            .filter { it.schoolId == schoolId }
-            .distinctBy { it.identity }
-        val usedNames = sameSchoolRecords.map { it.displayName }.toSet()
+        studentId: String
+    ): BindingCheck = evaluateBinding(getBoundStudents(context), schoolId, studentName, studentId)
 
-        if (currentIdentity.isBlank()) {
+    internal fun evaluateBinding(
+        boundRecords: List<BoundStudentRecord>,
+        schoolId: String,
+        studentName: String,
+        studentId: String
+    ): BindingCheck {
+        val records = boundRecords.filter { it.schoolId.isNotBlank() && it.identity.isNotBlank() }
+            .distinctBy { it.schoolId to it.identity }
+        val currentIdentity = normalizeIdentity(studentName, studentId)
+        val usedNames = records.map { "${it.schoolName.ifBlank { it.schoolId }} · ${it.displayName}" }.toSet()
+
+        if (schoolId.isBlank() || currentIdentity.isBlank()) {
             return BindingCheck(
                 allowed = false,
                 alreadyBound = false,
                 reason = "无法识别当前账号身份，请重新登录后再试",
                 usedNames = usedNames,
-                usedCount = sameSchoolRecords.size
+                usedCount = records.size
             )
         }
 
-        val otherSchool = records.firstOrNull { it.schoolId.isNotBlank() && it.schoolId != schoolId }
-        if (otherSchool != null) {
-            return BindingCheck(
-                allowed = false,
-                alreadyBound = false,
-                reason = "该设备已绑定 ${otherSchool.schoolName.ifBlank { "其他学校" }} 的账号，不能再绑定 $schoolName 的账号",
-                usedNames = usedNames,
-                usedCount = sameSchoolRecords.size
-            )
-        }
-
-        val alreadyBound = sameSchoolRecords.any { it.identity == currentIdentity }
-        if (alreadyBound || maxStudents <= 0) {
+        val alreadyBound = records.any { it.schoolId == schoolId && it.identity == currentIdentity }
+        if (alreadyBound) {
             return BindingCheck(
                 allowed = true,
                 alreadyBound = alreadyBound,
                 reason = "",
                 usedNames = usedNames,
-                usedCount = sameSchoolRecords.size
+                usedCount = records.size
             )
         }
 
-        if (sameSchoolRecords.size >= maxStudents) {
+        if (records.size >= MAX_STUDENTS) {
             return BindingCheck(
                 allowed = false,
                 alreadyBound = false,
-                reason = "该设备已绑定 ${sameSchoolRecords.size} 个同校账号，已达上限（最多 $maxStudents 个）",
+                reason = "该设备已绑定 ${records.size} 个学生账号，已达上限（所有学校合计最多 $MAX_STUDENTS 个）",
                 usedNames = usedNames,
-                usedCount = sameSchoolRecords.size
+                usedCount = records.size
             )
         }
 
@@ -208,7 +201,7 @@ object StudentLimitManager {
             alreadyBound = false,
             reason = "",
             usedNames = usedNames,
-            usedCount = sameSchoolRecords.size
+            usedCount = records.size
         )
     }
 
@@ -233,11 +226,10 @@ object StudentLimitManager {
         schoolName: String,
         studentName: String,
         studentId: String
-    ) {
+    ): Boolean = synchronized(this) {
         val identity = normalizeIdentity(studentName, studentId)
-        if (schoolId.isBlank() || identity.isBlank()) return
-
         val records = getBoundStudents(context).toMutableList()
+        if (!evaluateBinding(records, schoolId, studentName, studentId).allowed) return@synchronized false
         val exists = records.any { it.schoolId == schoolId && it.identity == identity }
         if (!exists) {
             records.add(
@@ -258,30 +250,29 @@ object StudentLimitManager {
         } else {
             Log.d(TAG, "学生 $studentName 已存在记录中")
         }
+        true
     }
 
     /**
      * 检查是否可以使用新的学生姓名。
-     * 保留旧调用入口，按当前学校规则判断。
+     * 保留旧调用入口，按设备总配额判断。
      */
-    fun canUseStudent(context: Context, studentName: String, maxStudents: Int): Boolean {
+    fun canUseStudent(context: Context, studentName: String): Boolean {
         val school = UserManager.getInstance().currentSchool ?: return false
         val result = checkCanUseStudent(
             context = context,
             schoolId = school.id,
-            schoolName = school.name,
             studentName = studentName,
-            studentId = UserManager.getInstance().studentId.orEmpty(),
-            maxStudents = maxStudents
+            studentId = UserManager.getInstance().studentId.orEmpty()
         )
         return result.allowed
     }
 
     /**
-     * 获取当前学校已使用数量。
+     * 获取当前设备所有学校合计已使用数量。
      */
     fun getUsedCount(context: Context): Int {
-        return getCurrentSchoolBoundStudents(context).size
+        return getBoundStudents(context).size
     }
 
     /**

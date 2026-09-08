@@ -1,14 +1,22 @@
 package com.tyust.course.ui.system
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,41 +29,56 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
-private const val EXIT_ANIM_DURATION_MS = 190L
+enum class DialogPresentation { Center, Bottom, Page }
+class DialogHandle internal constructor()
+
+internal class HostedDialog(
+    val handle: DialogHandle,
+    val onDismiss: () -> Unit,
+    val presentation: DialogPresentation,
+    val content: @Composable () -> Unit
+) {
+    val visibility = MutableTransitionState(false).apply { targetState = true }
+    var notifyOnClose = true
+}
 
 class DialogHostState {
-    var currentDialog: (@Composable () -> Unit)? by mutableStateOf(null)
-        private set
-    var isVisible: Boolean by mutableStateOf(false)
-        private set
-    private var dismissCallback: (() -> Unit)? = null
+    internal val dialogs = mutableStateListOf<HostedDialog>()
+    val currentDialog: (@Composable () -> Unit)? get() = dialogs.lastOrNull()?.content
+    val isVisible: Boolean get() = dialogs.lastOrNull()?.visibility?.targetState == true
 
-    fun show(onDismiss: () -> Unit, content: @Composable () -> Unit) {
-        dismissCallback = onDismiss
-        currentDialog = content
-        isVisible = true
+    fun show(
+        onDismiss: () -> Unit,
+        presentation: DialogPresentation = DialogPresentation.Center,
+        content: @Composable () -> Unit
+    ): DialogHandle = DialogHandle().also { dialogs.add(HostedDialog(it, onDismiss, presentation, content)) }
+
+    fun dismiss(handle: DialogHandle? = dialogs.lastOrNull()?.handle, notify: Boolean = true) {
+        val dialog = dialogs.firstOrNull { it.handle === handle } ?: return
+        dialog.notifyOnClose = dialog.notifyOnClose && notify
+        dialog.visibility.targetState = false
     }
 
-    fun dismiss() {
-        isVisible = false
-    }
-
-    internal fun clearAfterAnimation() {
-        val cb = dismissCallback
-        dismissCallback = null
-        currentDialog = null
-        cb?.invoke()
+    internal fun finishDismissal(handle: DialogHandle) {
+        val dialog = dialogs.firstOrNull { it.handle === handle } ?: return
+        if (dialog.visibility.targetState) return
+        dialogs.remove(dialog)
+        if (dialog.notifyOnClose) dialog.onDismiss()
     }
 }
 
@@ -65,105 +88,69 @@ fun rememberDialogHostState(): DialogHostState = remember { DialogHostState() }
 val LocalDialogHost = compositionLocalOf<DialogHostState?> { null }
 
 @Composable
-fun DialogHost(
-    state: DialogHostState,
-    modifier: Modifier = Modifier
-) {
-    val dialogContent = state.currentDialog
-    val accessibility = rememberGlassAccessibilityMode()
-    val exitDurationMillis = if (accessibility.reduceMotion) 0L else EXIT_ANIM_DURATION_MS
-
-    LaunchedEffect(state.isVisible, exitDurationMillis) {
-        if (!state.isVisible && state.currentDialog != null) {
-            delay(exitDurationMillis)
-            state.clearAfterAnimation()
-        }
-    }
-
-    val enterTransition = if (accessibility.reduceMotion) {
-        androidx.compose.animation.EnterTransition.None
-    } else {
-        // 进入用 spring：低阻尼让卡片冲过 1.0 再回落，是"被弹出来"而不是"被拉大"。
-        // 起始 0.86 比原来的 0.92 更小，过冲才有行程可走。
-        fadeIn(animationSpec = tween(120)) +
-            scaleIn(
-                initialScale = 0.86f,
-                animationSpec = spring(dampingRatio = 0.66f, stiffness = 400f)
-            )
-    }
-    val exitTransition = if (accessibility.reduceMotion) {
-        androidx.compose.animation.ExitTransition.None
-    } else {
-        // 退出反过来：先慢后快地抽离，缩得比进入起点更狠，
-        // 加上加速 easing，观感是被"吸走"而不是匀速淡掉。
-        fadeOut(animationSpec = tween(EXIT_ANIM_DURATION_MS.toInt(), easing = FastOutLinearInEasing)) +
-            scaleOut(
-                targetScale = 0.84f,
-                animationSpec = tween(EXIT_ANIM_DURATION_MS.toInt(), easing = FastOutLinearInEasing)
-            )
-    }
-
-    if (dialogContent != null) {
-        // 内容先挂载、下一帧再置为可见，否则 AnimatedVisibility 的首帧就是终态，
-        // 弹窗会直接"跳"出来而没有淡入缩放过渡。
-        var cardVisible by remember(dialogContent) { mutableStateOf(false) }
-        LaunchedEffect(dialogContent, state.isVisible) {
-            if (state.isVisible) {
-                withFrameNanos { }
-                cardVisible = true
-            } else {
-                cardVisible = false
+fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
+    val reducedMotion = rememberGlassAccessibilityMode().reduceMotion
+    state.dialogs.forEach { dialog ->
+        key(dialog.handle) {
+            val visibility = dialog.visibility
+            LaunchedEffect(visibility.isIdle, visibility.currentState, visibility.targetState) {
+                if (visibility.isIdle && !visibility.currentState && !visibility.targetState) {
+                    state.finishDismissal(dialog.handle)
+                }
             }
-        }
-
-        BackHandler { state.dismiss() }
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { state.dismiss() }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            // 背景压暗：弹窗要"浮在页面之上"就必须有一层把页面推远的介质，
-            // 否则卡片再怎么加阴影都还是贴在同一平面上。遮罩淡入比卡片慢一拍，
-            // 卡片弹出时才有"先出现、后压暗"的纵深顺序。
-            AnimatedVisibility(
-                visible = cardVisible,
-                enter = fadeIn(animationSpec = tween(200)),
-                exit = fadeOut(animationSpec = tween(EXIT_ANIM_DURATION_MS.toInt()))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.22f))
-                )
+            val bottom = dialog.presentation == DialogPresentation.Bottom
+            val page = dialog.presentation == DialogPresentation.Page
+            val backProgress = remember { Animatable(0f) }
+            val scope = rememberCoroutineScope()
+            PredictiveBackHandler(enabled = state.dialogs.lastOrNull() === dialog && visibility.targetState) { events ->
+                try {
+                    events.collect { if (!reducedMotion && (page || bottom)) backProgress.snapTo(it.progress) }
+                    state.dismiss(dialog.handle)
+                } catch (_: CancellationException) {
+                    scope.launch { backProgress.animateTo(0f, spring(0.9f, 500f)) }
+                }
             }
-            AnimatedVisibility(
-                visible = cardVisible,
-                enter = enterTransition,
-                exit = exitTransition
-            ) {
+            val enter = when {
+                reducedMotion -> EnterTransition.None
+                page -> slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(180))
+                bottom -> fadeIn(tween(120)) + slideInVertically(spring(0.80f, 420f)) { it / 3 }
+                else -> fadeIn(tween(120)) + scaleIn(initialScale = 0.94f, animationSpec = spring(0.80f, 420f))
+            }
+            val exit = when {
+                reducedMotion -> ExitTransition.None
+                page -> slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(180))
+                bottom -> fadeOut(tween(190)) + slideOutVertically(tween(190)) { it / 3 }
+                else -> fadeOut(tween(190)) + scaleOut(targetScale = 0.94f, animationSpec = tween(190))
+            }
+            AnimatedVisibility(visibleState = visibility, enter = EnterTransition.None, exit = ExitTransition.None) {
                 Box(
-                    modifier = Modifier
-                        // 安全区必须在这一层：卡片没有任何限高，内容一长（几个弹窗的
-                        // 正文是 heightIn(max = 420.dp)）整张卡就有 580dp 以上，
-                        // 640dp 的屏幕上"完成"按钮会落到系统导航栏底下。
-                        // 从外面把可用高钳住，正文自带的 verticalScroll 会接管溢出。
-                        //
-                        // 用 systemBars 而不是 safeDrawing：Manifest 是 adjustResize，
-                        // 窗口本身已经被键盘缩过一次，再叠一次 IME inset 会压两遍。
-                        .windowInsetsPadding(WindowInsets.systemBars)
-                        .padding(vertical = 12.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {}
-                        )
+                    modifier.fillMaxSize().clickable(
+                        interactionSource = remember { MutableInteractionSource() }, indication = null,
+                        onClick = { state.dismiss(dialog.handle) }
+                    ),
+                    contentAlignment = if (bottom) Alignment.BottomCenter else Alignment.Center
                 ) {
-                    dialogContent()
+                    Box(Modifier.fillMaxSize().animateEnterExit(
+                        enter = if (reducedMotion) EnterTransition.None else fadeIn(tween(180)),
+                        exit = if (reducedMotion) ExitTransition.None else fadeOut(tween(190))
+                    ).background(Color.Black.copy(alpha = 0.22f)))
+                    Box(
+                        Modifier.animateEnterExit(enter = enter, exit = exit)
+                            .graphicsLayer {
+                                val progress = backProgress.value
+                                translationX = if (page) size.width * 0.18f * progress else 0f
+                                translationY = if (bottom) size.height * 0.18f * progress else 0f
+                                alpha = 1f - 0.12f * progress
+                            }
+                            .then(if (page) Modifier.fillMaxSize() else Modifier.windowInsetsPadding(WindowInsets.systemBars).padding(vertical = 12.dp))
+                            .semantics { paneTitle = "对话框" }
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                    ) { dialog.content() }
+                    if (!visibility.targetState) {
+                        Box(Modifier.fillMaxSize().clickable(
+                            interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}
+                        ).clearAndSetSemantics {})
+                    }
                 }
             }
         }

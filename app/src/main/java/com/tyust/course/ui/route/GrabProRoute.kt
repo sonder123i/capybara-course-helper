@@ -51,6 +51,11 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun GrabProRoute() {
+    val academicSchool = UserManager.getInstance().currentSchool
+    if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
+        AcademicGrabQueueRoute(academicSchool)
+        return
+    }
     val context = LocalContext.current
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val demoScope = rememberCoroutineScope()
@@ -857,40 +862,40 @@ fun GrabProRoute() {
             content = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // 课程名（必填）
-                    androidx.compose.material3.OutlinedTextField(
+                    com.tyust.course.ui.screen.SchoolFormField(
                         value = inputCourseName,
                         onValueChange = { inputCourseName = it },
-                        label = { Text("课程名 *") },
-                        placeholder = { Text("例如: 高等数学") },
+                        label = "课程名称",
+                        placeholder = "例如：高等数学",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     
                     // 教师（选填）
-                    androidx.compose.material3.OutlinedTextField(
+                    com.tyust.course.ui.screen.SchoolFormField(
                         value = inputTeacher,
                         onValueChange = { inputTeacher = it },
-                        label = { Text("教师（选填）") },
-                        placeholder = { Text("例如: 张老师") },
+                        label = "教师（选填）",
+                        placeholder = "例如：张老师",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     
                     // 时间选择（选填）
-                    Text("上课时间（选填）", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("上课时间（选填）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SystemPicker(
                             options = weekdays.map { it.ifBlank { "不限" } },
                             selectedIndex = weekdays.indexOf(selectedWeekday).takeIf { it >= 0 },
                             onSelect = { index -> selectedWeekday = weekdays[index] },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             label = "周几"
                         )
                         SystemPicker(
                             options = periods.map { it.ifBlank { "不限" } },
                             selectedIndex = periods.indexOf(selectedPeriod).takeIf { it >= 0 },
                             onSelect = { index -> selectedPeriod = periods[index] },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             label = "节次"
                         )
                     }

@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
 
 /**
  * 应用统一的流体壁纸绘制：底色 + 高光 + 多彩光斑 + 暗角 + 微纹理；
- * 用户上传了图片时改画图片 + 模糊 + 蒙版，微纹理照样补在最上面。
+ * 用户图片保留原有纹理，不额外叠加微斜纹。
  * 主界面、登录页、引导页与课表设置共用，保证玻璃采样层次一致。
  *
  * 参数是解析后的 [WallpaperStyle] 而不是预设枚举——用户自定义的底色/图片要走同一条路径。
@@ -82,7 +82,7 @@ fun DrawScope.drawWallpaperPattern(style: WallpaperStyle, microTexture: Boolean 
         )
     }
 
-    if (microTexture) drawWallpaperMicroTexture()
+    if (microTexture && image == null) drawWallpaperMicroTexture()
 }
 
 /**
@@ -99,7 +99,7 @@ private const val MicroTextureTilePx = 12
 /**
  * 微纹理强度。**这是唯一的旋钮**：看着像噪点或摩尔纹就往下调，置 0 即整层关闭。
  */
-private const val WallpaperMicroTextureAlpha = 0.055f
+private const val WallpaperMicroTextureAlpha = 0.015f
 
 /**
  * 壁纸微纹理的平铺 tile。

@@ -50,6 +50,9 @@ fun EditSchoolConfigDialog(
     var domain by remember { mutableStateOf(school.domain) }
     var protocol by remember { mutableStateOf(school.protocol) }
     var basePath by remember { mutableStateOf(school.basePath) }
+    var academicSystem by remember { mutableStateOf(school.academicSystem) }
+    var pageCharset by remember { mutableStateOf(school.pageCharset) }
+    var allowedHosts by remember { mutableStateOf(school.allowedAcademicHosts.joinToString(", ")) }
     var courseGnmkdm by remember { mutableStateOf(school.courseGnmkdm) }
     var gradeGnmkdm by remember { mutableStateOf(school.gradeGnmkdm) }
     var scheduleGnmkdm by remember { mutableStateOf(school.scheduleGnmkdm) }
@@ -65,55 +68,13 @@ fun EditSchoolConfigDialog(
     var selectCoursePath by remember { mutableStateOf(school.selectCoursePath) }
     var schedulePath by remember { mutableStateOf(school.schedulePath) }
     var gradesPath by remember { mutableStateOf(school.gradesPath) }
+    val supportsZfModulePaths = academicSystem in setOf("auto", "legacy_zf", "zf")
 
-    // Smart URL parsing function
     fun parseUrl(url: String) {
-        if (url.isBlank()) return
-
-        var cleanUrl = url.trim()
-
-        // Extract protocol
-        when {
-            cleanUrl.startsWith("https://") -> {
-                protocol = "https"
-                cleanUrl = cleanUrl.removePrefix("https://")
-            }
-            cleanUrl.startsWith("http://") -> {
-                protocol = "http"
-                cleanUrl = cleanUrl.removePrefix("http://")
-            }
-        }
-
-        // Extract domain and base path
-        val pathStart = cleanUrl.indexOf('/')
-        if (pathStart > 0) {
-            domain = cleanUrl.substring(0, pathStart)
-            val pathPart = cleanUrl.substring(pathStart)
-
-            // Find common base paths like /jwglxt, /jwxt, /jw
-            val commonPaths = listOf("/jwglxt", "/jwxt", "/jwxs", "/jw", "/xk")
-            for (commonPath in commonPaths) {
-                if (pathPart.startsWith(commonPath)) {
-                    val endIndex = pathPart.indexOf('/', commonPath.length)
-                    basePath = if (endIndex > 0) {
-                        pathPart.substring(0, endIndex)
-                    } else {
-                        commonPath
-                    }
-                    break
-                }
-            }
-
-            // If no common path found, try to extract first path segment
-            if (basePath == school.basePath && pathPart.length > 1) {
-                val secondSlash = pathPart.indexOf('/', 1)
-                if (secondSlash > 1) {
-                    basePath = pathPart.substring(0, secondSlash)
-                }
-            }
-        } else {
-            domain = cleanUrl.split("?")[0]
-        }
+        val parsed = com.tyust.course.academic.AcademicAddress.parse(url) ?: return
+        protocol = parsed.protocol
+        domain = parsed.domain
+        basePath = parsed.basePath
     }
 
     SystemDialog(
@@ -131,7 +92,10 @@ fun EditSchoolConfigDialog(
                 text = "保存",
                 onClick = {
                     // Create updated config
-                    val updatedSchool = SchoolConfig(school.id, name, domain, protocol).apply {
+                    val updatedSchool = SchoolConfig.fromJson(school.toJson()).apply {
+                        this.name = name
+                        this.domain = domain
+                        this.protocol = protocol
                         this.basePath = basePath
                         this.courseGnmkdm = courseGnmkdm
                         this.gradeGnmkdm = gradeGnmkdm
@@ -142,6 +106,11 @@ fun EditSchoolConfigDialog(
                         this.selectCoursePath = selectCoursePath
                         this.schedulePath = schedulePath
                         this.gradesPath = gradesPath
+                        this.academicSystem = academicSystem
+                        this.detectionSource = if (academicSystem == school.academicSystem) school.detectionSource else "manual"
+                        this.pageCharset = pageCharset
+                        this.allowedAcademicHosts = java.util.ArrayList(allowedHosts.split(',', '，', '\n').map(String::trim).filter(String::isNotBlank))
+                        this.academicConfigVersion = school.academicConfigVersion
                     }
                     onSave(updatedSchool)
                 },
@@ -185,6 +154,20 @@ fun EditSchoolConfigDialog(
 
             SchoolFormSectionTitle("基本配置")
 
+            val systems = listOf("auto" to "自动识别（四类教务）", "legacy_zf" to "新正方（兼容流程）", "zf" to "新正方", "zf_old" to "旧正方", "qz" to "新强智", "qz_old" to "旧强智")
+            Text("教务系统类型", style = MaterialTheme.typography.labelMedium)
+            com.tyust.course.ui.system.SystemPicker(
+                options = systems.map { it.second },
+                selectedIndex = systems.indexOfFirst { it.first == academicSystem }.takeIf { it >= 0 },
+                onSelect = { academicSystem = systems[it].first },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            com.tyust.course.academic.AcademicCapabilities.support(academicSystem)?.let { support ->
+                Text(support.login, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(support.limits, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
             SchoolFormField(
                 label = "学校名称",
                 value = name,
@@ -227,31 +210,32 @@ fun EditSchoolConfigDialog(
                 helper = "如 /jwglxt 或 /jwxt"
             )
 
-            SchoolFormSectionTitle("模块代码（gnmkdm）")
+            if (supportsZfModulePaths) {
+                SchoolFormSectionTitle("正方模块代码")
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SchoolFormField(
+                        label = "选课",
+                        value = courseGnmkdm,
+                        onValueChange = { courseGnmkdm = it },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SchoolFormField(
+                        label = "成绩",
+                        value = gradeGnmkdm,
+                        onValueChange = { gradeGnmkdm = it },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 SchoolFormField(
-                    label = "选课",
-                    value = courseGnmkdm,
-                    onValueChange = { courseGnmkdm = it },
-                    modifier = Modifier.weight(1f)
-                )
-                SchoolFormField(
-                    label = "成绩",
-                    value = gradeGnmkdm,
-                    onValueChange = { gradeGnmkdm = it },
-                    modifier = Modifier.weight(1f)
+                    label = "课表",
+                    value = scheduleGnmkdm,
+                    onValueChange = { scheduleGnmkdm = it }
                 )
             }
-
-            SchoolFormField(
-                label = "课表",
-                value = scheduleGnmkdm,
-                onValueChange = { scheduleGnmkdm = it }
-            )
 
             AdvancedSectionToggle(
                 expanded = showAdvanced,
@@ -259,38 +243,41 @@ fun EditSchoolConfigDialog(
             )
 
             if (showAdvanced) {
-                SchoolFormSectionTitle("URL 路径配置")
-
-                SchoolFormField(
-                    label = "学生信息验证",
-                    value = studentInfoPath,
-                    onValueChange = { studentInfoPath = it }
-                )
-                SchoolFormField(
-                    label = "选课首页",
-                    value = courseIndexPath,
-                    onValueChange = { courseIndexPath = it }
-                )
-                SchoolFormField(
-                    label = "课程列表",
-                    value = courseListPath,
-                    onValueChange = { courseListPath = it }
-                )
-                SchoolFormField(
-                    label = "选课提交",
-                    value = selectCoursePath,
-                    onValueChange = { selectCoursePath = it }
-                )
-                SchoolFormField(
-                    label = "课表查询",
-                    value = schedulePath,
-                    onValueChange = { schedulePath = it }
-                )
-                SchoolFormField(
-                    label = "成绩查询",
-                    value = gradesPath,
-                    onValueChange = { gradesPath = it }
-                )
+                SchoolFormField(label = "页面字符集", value = pageCharset, onValueChange = { pageCharset = it }, helper = "通常为 UTF-8，旧站点可填写 GBK")
+                SchoolFormField(label = "额外允许访问的学校域名", value = allowedHosts, onValueChange = { allowedHosts = it }, helper = "统一认证域名可填在这里，多个域名以逗号分隔")
+                if (supportsZfModulePaths) {
+                    SchoolFormSectionTitle("URL 路径配置")
+                    SchoolFormField(
+                        label = "学生信息验证",
+                        value = studentInfoPath,
+                        onValueChange = { studentInfoPath = it }
+                    )
+                    SchoolFormField(
+                        label = "选课首页",
+                        value = courseIndexPath,
+                        onValueChange = { courseIndexPath = it }
+                    )
+                    SchoolFormField(
+                        label = "课程列表",
+                        value = courseListPath,
+                        onValueChange = { courseListPath = it }
+                    )
+                    SchoolFormField(
+                        label = "选课提交",
+                        value = selectCoursePath,
+                        onValueChange = { selectCoursePath = it }
+                    )
+                    SchoolFormField(
+                        label = "课表查询",
+                        value = schedulePath,
+                        onValueChange = { schedulePath = it }
+                    )
+                    SchoolFormField(
+                        label = "成绩查询",
+                        value = gradesPath,
+                        onValueChange = { gradesPath = it }
+                    )
+                }
             }
         }
     }

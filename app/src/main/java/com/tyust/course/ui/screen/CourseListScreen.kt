@@ -48,9 +48,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -73,6 +75,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.saveable.mapSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +91,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyust.course.model.Course
+import com.tyust.course.academic.catalogGroupKey
+import com.tyust.course.academic.catalogSelectionKey
 import com.tyust.course.utils.CourseParser
 import com.tyust.course.ui.system.GlassPullRefreshBox
 import com.tyust.course.ui.system.PagePadding
@@ -142,14 +148,20 @@ fun CourseListScreen(
     isFilterLoading: Boolean = false,
     isFilterOptionsLoading: Boolean = false,
     filterOptionsMessage: String = "筛选条件加载失败，请下拉刷新重试",
-    filterCategories: List<CourseParser.FilterCategory> = emptyList()
+    filterCategories: List<CourseParser.FilterCategory> = emptyList(),
+    showTargetAction: Boolean = true
 ) {
-    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+    val expandedGroups = rememberSaveable(saver = mapSaver(
+        save = { it.toMap() },
+        restore = { saved -> mutableStateMapOf<String, Boolean>().apply {
+            saved.forEach { (key, value) -> put(key, value as Boolean) }
+        } }
+    )) { mutableStateMapOf<String, Boolean>() }
     val loadingGroups = remember { mutableStateMapOf<String, Boolean>() }
     val loadedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     val groupedCourses = remember(courses) {
-        courses.groupBy { (it.courseId ?: "") to (it.name ?: "") }.toList()
+        courses.groupBy { it.catalogGroupKey() to it.name.orEmpty() }.toList()
     }
 
     // 课程列表的捕获层。筛选面板是列表的【兄弟】节点、不在这一层内，
@@ -241,29 +253,30 @@ fun CourseListScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             items(groupedCourses) { (key, classes) ->
-                                val courseId = key.first
+                                val courseId = classes.firstOrNull()?.courseId.orEmpty()
+                                val groupId = key.first
                                 val courseName = key.second
-                                val isExpanded = expandedGroups[courseId] == true
+                                val isExpanded = expandedGroups[groupId] == true
 
                                 CourseGroupItem(
                                     courseId = courseId,
                                     courseName = courseName,
                                     classes = classes,
                                     isExpanded = isExpanded,
-                                    isLoading = loadingGroups[courseId] == true,
+                                    isLoading = loadingGroups[groupId] == true,
                                     isDetailsReady = isDetailsReady,
                                     onExpandClick = {
-                                        if (!isExpanded && loadedGroups[courseId] != true) {
-                                            loadingGroups[courseId] = true
+                                        if (!isExpanded && loadedGroups[groupId] != true) {
+                                            loadingGroups[groupId] = true
                                             onFetchDetails(classes) { success ->
-                                                loadingGroups[courseId] = false
+                                                loadingGroups[groupId] = false
                                                 if (success) {
-                                                    loadedGroups[courseId] = true
-                                                    expandedGroups[courseId] = true
+                                                    loadedGroups[groupId] = true
+                                                    expandedGroups[groupId] = true
                                                 }
                                             }
                                         } else {
-                                            expandedGroups[courseId] = !isExpanded
+                                            expandedGroups[groupId] = !isExpanded
                                         }
                                     },
                                     isMultiSelectMode = isMultiSelectMode,
@@ -274,6 +287,7 @@ fun CourseListScreen(
                                     onAutoGrab = onAutoGrab,
                                     onAddToQueue = onAddToQueue,
                                     onSetTargetCourse = onSetTargetCourse,
+                                    showTargetAction = showTargetAction,
                                     onSetFuzzyMatchTarget = onSetFuzzyMatchTarget
                                 )
                             }
@@ -417,6 +431,7 @@ private fun PreloadBanner(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CourseGroupItem(
     courseId: String,
@@ -434,12 +449,15 @@ fun CourseGroupItem(
     onAutoGrab: (Course) -> Unit,
     onAddToQueue: (Course) -> Unit = {},
     onSetTargetCourse: (Course) -> Unit = {},
-    onSetFuzzyMatchTarget: ((String, String, String?, String?) -> Unit)? = null
+    onSetFuzzyMatchTarget: ((String, String, String?, String?) -> Unit)? = null,
+    showTargetAction: Boolean = true
 ) {
     val firstCourse = classes.firstOrNull()
     val credits = firstCourse?.credit ?: "0.0"
     val hasSelected = classes.any { it.isSelected }
-    val hasAvailableSeat = classes.any { !it.isSelected && (it.capacity <= 0 || it.selected < it.capacity) }
+    val hasUnknownCapacity = classes.any { it.completeParams["academic_capacity_known"] == "false" || it.completeParams["academic_selected_known"] == "false" }
+    val hasAvailableSeat = classes.any { !it.isSelected && it.completeParams["academic_capacity_known"] != "false" &&
+        it.completeParams["academic_selected_known"] != "false" && (it.capacity <= 0 || it.selected < it.capacity) }
     val cardBorderColor by animateColorAsState(
         targetValue = when {
             hasSelected -> SemanticSuccess.copy(alpha = 0.35f)
@@ -454,19 +472,13 @@ fun CourseGroupItem(
         modifier = Modifier.fillMaxWidth(),
         backgroundColor = MaterialTheme.colorScheme.surface,
         borderColor = cardBorderColor,
-        onClick = {
-            if (isDetailsReady) {
-                onExpandClick()
-            } else {
-                GlassToaster.show("正在准备课程数据…")
-            }
-        },
         contentPadding = PaddingValues(0.dp)
     ) {
         Column {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clickable(enabled = isDetailsReady && !isLoading, onClick = onExpandClick)
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -486,52 +498,42 @@ fun CourseGroupItem(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Row(
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            SystemStatusBadge(
-                                text = when {
-                                    hasSelected -> "已选"
-                                    hasAvailableSeat -> "可选"
-                                    else -> "紧张"
-                                },
-                                tone = when {
-                                    hasSelected -> SystemTone.Success
-                                    hasAvailableSeat -> SystemTone.Info
-                                    else -> SystemTone.Warning
-                                }
-                            )
-                            SystemStatusBadge(
-                                text = "$credits 学分",
-                                tone = SystemTone.Neutral
-                            )
-                            SystemStatusBadge(
-                                text = "${classes.size} 个教学班",
-                                tone = SystemTone.Neutral
+                            if (hasSelected || !hasAvailableSeat) {
+                                SystemStatusBadge(
+                                    text = when { hasSelected -> "已选"; hasUnknownCapacity -> "名额未公布"; else -> "紧张" },
+                                    tone = when { hasSelected -> SystemTone.Success; hasUnknownCapacity -> SystemTone.Neutral; else -> SystemTone.Warning }
+                                )
+                            }
+                            Text(
+                                text = "$credits 学分 · ${classes.size} 个教学班",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (onSetFuzzyMatchTarget != null && !hasSelected) {
-                            SystemActionButton(
-                                text = "监控",
+                            com.tyust.course.ui.system.SystemIconButton(
+                                icon = Icons.Default.MyLocation,
+                                contentDescription = "设为监控目标",
                                 onClick = {
-                                    val xkkzId = firstCourse?._xkkz_id
+                                    val xkkzId = firstCourse?.completeParams?.get("academic_scope_id") ?: firstCourse?._xkkz_id
                                     val kklxdm = firstCourse?.kklxdm
                                     onSetFuzzyMatchTarget(courseId, courseName, xkkzId, kklxdm)
-                                    GlassToaster.show("已设为监控目标：$courseName")
                                 }
                             )
                         }
 
-                        TextButton(onClick = onExpandClick) {
+                        IconButton(onClick = onExpandClick, enabled = isDetailsReady && !isLoading) {
                             if (isLoading) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
@@ -546,14 +548,12 @@ fun CourseGroupItem(
                                 )
                                 Icon(
                                     imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
+                                    contentDescription = if (isExpanded) "收起教学班" else "展开教学班",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier
                                         .size(18.dp)
                                         .rotate(arrowRotation)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (isExpanded) "收起" else "展开")
                             }
                         }
                     }
@@ -588,22 +588,24 @@ fun CourseGroupItem(
                 )
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 ) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                     classes.forEachIndexed { index, course ->
                         TeachingClassRow(
                             course = course,
                             isMultiSelectMode = isMultiSelectMode,
-                            isChecked = course.classId in selectedClassIds,
-                            onToggleSelection = { onToggleSelection(course.classId ?: "", it) },
-                            onLongClick = { onEnterMultiSelect(course.classId ?: "") },
+                            isChecked = course.catalogSelectionKey() in selectedClassIds,
+                            onToggleSelection = { onToggleSelection(course.catalogSelectionKey(), it) },
+                            onLongClick = { onEnterMultiSelect(course.catalogSelectionKey()) },
                             onClick = { onCourseSelect(course) },
                             onAutoGrab = { onAutoGrab(course) },
                             onAddToQueue = { onAddToQueue(course) },
-                            onSetTargetCourse = { onSetTargetCourse(course) }
+                            onSetTargetCourse = { onSetTargetCourse(course) },
+                            showTargetAction = showTargetAction
                         )
                         if (index < classes.size - 1) {
-                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                         }
                     }
                 }
@@ -612,7 +614,7 @@ fun CourseGroupItem(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun TeachingClassRow(
     course: Course,
@@ -623,188 +625,93 @@ fun TeachingClassRow(
     onClick: () -> Unit,
     onAutoGrab: () -> Unit,
     onAddToQueue: () -> Unit = {},
-    onSetTargetCourse: () -> Unit = {}
+    onSetTargetCourse: () -> Unit = {},
+    showTargetAction: Boolean = true
 ) {
-    val teacher = course.teacher.ifEmpty { "未提供教师" }
-    val time = course.time.ifEmpty { "未提供时间" }
-    val location = course.location.ifEmpty { "未提供地点" }
-    val displayName = course.jxbmc.ifEmpty { course.teacher.ifEmpty { "未命名教学班" } }
-    val isSelectedRow = course.isSelected
-    val isLightTheme = !rememberGlassDarkTheme()
-    val rowShape = RoundedCornerShape(18.dp)
-    val rowBackgroundColor = when {
-        isSelectedRow -> SemanticSuccess
-        isChecked -> NeuPrimary
-        isLightTheme -> Color.White
-        else -> Color(0xFF202228)
+    val teacher = course.teacher.ifBlank { "未提供教师" }
+    val displayName = course.jxbmc.ifBlank { teacher }
+    val capacityColor = when {
+        course.completeParams["academic_capacity_known"] == "false" || course.completeParams["academic_selected_known"] == "false" -> MaterialTheme.colorScheme.onSurfaceVariant
+        course.capacity > 0 && course.selected >= course.capacity -> SemanticDanger
+        course.capacity > 0 && course.selected.toFloat() / course.capacity >= 0.85f -> SemanticWarning
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val backgroundAlpha by animateFloatAsState(
+    val highlight by animateColorAsState(
         targetValue = when {
-            isSelectedRow -> 0.12f
-            isChecked -> 0.14f
-            isLightTheme -> 0.24f
-            else -> 0.18f
+            course.isSelected -> SemanticSuccess.copy(alpha = 0.08f)
+            isChecked -> NeuPrimary.copy(alpha = 0.10f)
+            else -> Color.Transparent
         },
-        animationSpec = MotionSpecs.standard(),
-        label = "classRowBackgroundAlpha"
+        label = "teachingClassSelection"
     )
-    val borderColor by animateColorAsState(
-        targetValue = when {
-            isSelectedRow -> SemanticSuccess.copy(alpha = 0.30f)
-            isChecked -> NeuPrimary.copy(alpha = 0.32f)
-            isLightTheme -> Color.White.copy(alpha = 0.50f)
-            else -> Color.White.copy(alpha = 0.12f)
-        },
-        animationSpec = MotionSpecs.standard(),
-        label = "classRowBorder"
-    )
-
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.5.dp, borderColor, rowShape)
-            .clip(rowShape)
-            .background(
-                if (isSelectedRow && backgroundAlpha > 0f) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            SemanticSuccess.copy(alpha = backgroundAlpha),
-                            SemanticSuccess.copy(alpha = backgroundAlpha * 0.1f)
-                        )
-                    )
-                } else {
-                    androidx.compose.ui.graphics.SolidColor(rowBackgroundColor.copy(alpha = backgroundAlpha))
-                }
-            )
+            .background(highlight)
             .combinedClickable(
                 onClick = {
                     if (isMultiSelectMode) {
                         if (!course.isSelected) onToggleSelection(isChecked)
-                    } else {
-                        onClick()
-                    }
+                    } else onClick()
                 },
                 onLongClick = {
-                    if (!isMultiSelectMode && !course.isSelected) {
-                        onLongClick()
-                    } else if (!isMultiSelectMode) {
-                        onAutoGrab()
-                    }
+                    if (!isMultiSelectMode && !course.isSelected) onLongClick()
                 }
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (isMultiSelectMode) {
-            Checkbox(
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (isMultiSelectMode) Checkbox(
                 checked = isChecked,
                 onCheckedChange = { onToggleSelection(isChecked) },
                 enabled = !course.isSelected,
-                colors = CheckboxDefaults.colors(checkedColor = NeuPrimary),
-                modifier = Modifier.padding(end = 14.dp)
+                colors = CheckboxDefaults.colors(checkedColor = NeuPrimary)
             )
-        } else if (isSelectedRow) {
-            Icon(
-                imageVector = Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = SemanticSuccess,
-                modifier = Modifier
-                    .padding(end = 10.dp)
-                    .size(18.dp)
-            )
-        }
-
-        Column(
-            modifier = Modifier.weight(1.2f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = displayName,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(modifier = Modifier.width(4.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = teacher,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                if (displayName != teacher) CourseDetailLine(Icons.Default.Person, teacher)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(Icons.Default.Group, contentDescription = null, modifier = Modifier.size(14.dp), tint = capacityColor)
+                    Text(
+                        (if (course.completeParams["academic_selected_known"] == "false") "--" else course.selected.toString()) + " / " +
+                            (if (course.completeParams["academic_capacity_known"] == "true" || course.capacity > 0) course.capacity.toString() else "--"),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = capacityColor
+                    )
+                }
             }
-
-            // 紧凑容量显示：内联文字替代独立进度条
-            val ratio = if (course.capacity > 0) course.selected.toFloat() / course.capacity else 0f
-            val capacityText = if (course.capacity > 0) "${course.selected}/${course.capacity}" else "${course.selected}/--"
-            val capacityColor = when {
-                course.capacity > 0 && course.selected >= course.capacity -> SemanticDanger
-                ratio >= 0.85f -> SemanticWarning
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Group, contentDescription = null, modifier = Modifier.size(12.dp), tint = capacityColor)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = capacityText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = capacityColor,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier.weight(1.1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CourseDetailLine(
-                icon = Icons.Default.Schedule,
-                text = time
-            )
-            CourseDetailLine(
-                icon = Icons.Default.Place,
-                text = location
-            )
-        }
-
-        Spacer(modifier = Modifier.width(10.dp))
-
-        if (!course.isSelected && !isMultiSelectMode) {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SystemActionButton(
-                    text = "入队",
-                    onClick = onAddToQueue,
-                    primary = true
-                )
-                SystemActionButton(
-                    text = "目标",
+            if (course.isSelected) {
+                SystemStatusBadge("已选", SystemTone.Success)
+            } else if (!isMultiSelectMode) {
+                if (showTargetAction) com.tyust.course.ui.system.SystemIconButton(
                     onClick = onSetTargetCourse,
-                    icon = Icons.Default.Flag
+                    icon = Icons.Default.Flag,
+                    contentDescription = "设为目标课程"
+                )
+                com.tyust.course.ui.system.SystemIconButton(
+                    onClick = onAddToQueue,
+                    icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                    contentDescription = "加入抢课队列",
+                    tint = NeuPrimary
                 )
             }
         }
-
-        if (course.isSelected) {
-            Spacer(modifier = Modifier.width(8.dp))
-            SystemStatusBadge(
-                text = "已选",
-                tone = SystemTone.Success
-            )
-        }
+        CourseDetailLine(Icons.Default.Schedule, course.time.ifBlank { "时间未安排" })
+        if (course.location.isNotBlank()) CourseDetailLine(Icons.Default.Place, course.location)
     }
 }
-
 @Composable
 private fun CourseDetailLine(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -824,8 +731,7 @@ private fun CourseDetailLine(
             text = text,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            modifier = Modifier.weight(1f)
         )
     }
 }

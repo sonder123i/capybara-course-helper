@@ -45,9 +45,9 @@ object ActivationManager {
     
     /**
      * 获取最大允许学生数
-     * 开源版默认允许同一学校绑定 3 个账号。
+     * Debug 和 Release 统一允许跨学校合计绑定 3 个学生账号。
      */
     fun getMaxStudents(context: Context): Int {
-        return 3
+        return com.tyust.course.manager.StudentLimitManager.MAX_STUDENTS
     }
 }

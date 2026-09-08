@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tyust.course.ui.system.GlassTextField
 import com.tyust.course.ui.system.glass.glassChip
@@ -44,7 +47,12 @@ internal fun SchoolFormField(
     helper: String? = null,
     error: String? = null,
     enabled: Boolean = true,
-    keyboardOptions: KeyboardOptions = KeyboardOptions.Default
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailing: @Composable (() -> Unit)? = null,
+    singleLine: Boolean = true,
+    minHeight: Dp = 48.dp
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -62,7 +70,13 @@ internal fun SchoolFormField(
             modifier = Modifier.fillMaxWidth(),
             placeholder = placeholder,
             enabled = enabled,
-            keyboardOptions = keyboardOptions
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
+            visualTransformation = visualTransformation,
+            trailing = trailing,
+            singleLine = singleLine,
+            minHeight = minHeight,
+            isError = error != null
         )
         val note = error ?: helper
         if (!note.isNullOrBlank()) {

@@ -33,6 +33,13 @@ class GrabAlarmReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_SCHEDULED_GRAB) return
 
         val userManager = UserManager.getInstance()
+        userManager.init(context.applicationContext)
+        val requestedStorageKey = intent.getStringExtra(EXTRA_ACCOUNT_STORAGE_KEY).orEmpty()
+        if (requestedStorageKey.isNotBlank()) {
+            context.getSharedPreferences("grab_pro_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(scopedKey("has_scheduled_task", requestedStorageKey), false)
+                .remove(scopedKey("scheduled_trigger", requestedStorageKey)).apply()
+        }
         val scheduledAccountKey = intent.getStringExtra(EXTRA_ACCOUNT_KEY).orEmpty()
         if (scheduledAccountKey.isNotBlank() && scheduledAccountKey != userManager.currentAccountKey) {
             val switched = userManager.switchToAccount(scheduledAccountKey)
@@ -115,4 +122,3 @@ class GrabAlarmReceiver : BroadcastReceiver() {
         prefs.edit().putString(logKey, newLog).apply()
     }
 }
-

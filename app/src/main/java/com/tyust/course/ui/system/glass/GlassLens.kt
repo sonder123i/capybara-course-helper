@@ -22,6 +22,8 @@ import com.tyust.course.BuildConfig
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.CanvasHolder
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import com.kyant.backdrop.Backdrop
 import com.tyust.course.manager.AppearanceSettingsManager
+import com.tyust.course.ui.system.LocalWallpaperAppearanceColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -131,6 +134,8 @@ class GlassLensAnchor internal constructor(
         private set
 
     private var hasRenderedFrame = false
+
+    internal var fallbackColor: Color = Color.White
 
     internal fun onPositioned(coords: LayoutCoordinates) {
         coordinates = coords
@@ -243,8 +248,9 @@ class GlassLensAnchor internal constructor(
      * ARGB_8888。这一次回读只在内容变化时发生，不是每帧。
      */
     private fun capture(coords: LayoutCoordinates, size: IntSize): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val picture = BackdropPicture(drawSource, coords, density, size)
-        val hw = Bitmap.createBitmap(picture) ?: return null
+        val hw = Bitmap.createBitmap(picture)
         return if (hw.config == Bitmap.Config.HARDWARE) {
             val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
             hw.recycle()
@@ -377,12 +383,14 @@ fun rememberGlassLensAnchor(
 ): GlassLensAnchor? {
     if (!isGlassLensApplicable()) return null
     val density = LocalDensity.current
+    val fallbackColor = LocalWallpaperAppearanceColors.current.solidSurface
     val anchor = remember(density) {
         GlassLensAnchor(drawSource, density, GlassLensSource(), tag)
     }
     // lambda 每次组合都是新实例，但 anchor 要保持同一个（它持有 GL 资源），
     // 所以逐次刷新引用而不是把 lambda 放进 remember 的 key
     anchor.drawSource = drawSource
+    anchor.fallbackColor = fallbackColor
     if (BuildConfig.DEBUG) {
         // 组合期自检：锚点忘了挂 Modifier.glassLensAnchor 是编码错误，但它的
         // 后果（元素无背景）只在区域内首个元素 draw 时才暴露；区域内暂时没有
@@ -640,6 +648,7 @@ private class GlassLensNode(
      * 再拉伸到自己的尺寸 —— 屏幕上是一条逐行相同的灰带。见 [GlassLensSource]。
      */
     private var target = GlassLensTarget(anchor.source)
+    private var targetReleased = false
 
     var anchor: GlassLensAnchor = anchor
         set(value) {
@@ -649,10 +658,17 @@ private class GlassLensNode(
             target.onFrameReady = null
             target.release()
             target = GlassLensTarget(value.source)
+            targetReleased = false
             if (isAttached) hookFrameReady()
         }
 
-    override fun onAttach() = hookFrameReady()
+    override fun onAttach() {
+        if (targetReleased) {
+            target = GlassLensTarget(anchor.source)
+            targetReleased = false
+        }
+        hookFrameReady()
+    }
 
     private fun hookFrameReady() {
         // 新帧就绪要主动请求重绘，否则静止时渲好的帧永远画不出去。
@@ -665,6 +681,7 @@ private class GlassLensNode(
     override fun onDetach() {
         target.onFrameReady = null
         target.release()
+        targetReleased = true
         mainHandler.removeCallbacksAndMessages(null)
     }
 
@@ -742,7 +759,7 @@ private class GlassLensNode(
         // 所以这里的原则是：**光学参数一律按实测尺寸夹一遍**。
         val radius = optics.cornerRadiusPx.coerceIn(0f, halfMin)
 
-        val frame = renderer.latest
+        val frame = if (renderer.failed) null else renderer.latest
         if (frame != null && !frame.isRecycled) {
             // 尺寸不一致时**拉伸**而不是丢弃：上一帧的尺寸在布局收敛或动画中经常
             // 与当前差几像素，严格相等的判断会把「差一帧」放大成「永远不画」。
@@ -760,12 +777,15 @@ private class GlassLensNode(
             drawContext.canvas.nativeCanvas.drawBitmap(frame, srcRect, dstRect, paint)
             anchor.onFrameDrawn()
         } else {
-            // 首帧间隙（提交 → GL 线程 → onFrameReady → 重绘，约一帧）：画兜底
-            // 底图上自己那块。调用方的 onDrawBackdrop 在锚点非 null 时已把背景
-            // 绘制让给了折射，这一帧不画东西就是整块空白 —— App 冷启动的底栏上
-            // 肉眼可见。已知接受的残余：兜底位图在首帧渲出后即被丢弃，此后**新
-            // 出现**的元素（如开弹窗）仍有 1 帧空白，有入场淡入遮掩，不值得为它
-            // 常驻一张全屏位图。
+            // New targets retain a theme surface until their own first frame arrives.
+            val fallbackWidth = w * t.scaleX
+            val fallbackHeight = h * t.scaleY
+            drawRoundRect(
+                color = anchor.fallbackColor,
+                topLeft = Offset((w - fallbackWidth) / 2f + t.translationX, (h - fallbackHeight) / 2f + t.translationY),
+                size = androidx.compose.ui.geometry.Size(fallbackWidth, fallbackHeight),
+                cornerRadius = CornerRadius(radius * t.scaleX, radius * t.scaleY)
+            )
             drawFallback(left, top, w, h, radius, t, optics.vibrancy)
         }
 

@@ -101,6 +101,7 @@ class SettingsFragment : Fragment() {
         
         val maxStudents = com.tyust.course.activation.ActivationManager.getMaxStudents(ctx)
         val usedNames = com.tyust.course.manager.StudentLimitManager.getUsedStudentNames(ctx)
+        val usedCount = com.tyust.course.manager.StudentLimitManager.getUsedCount(ctx)
         val isSuperUser = maxStudents <= 0
         
         val message = buildString {
@@ -109,7 +110,7 @@ class SettingsFragment : Fragment() {
                 append("✨ 身份：超级用户\n")
                 append("📈 配额：无限制\n")
             } else {
-                append("📈 配额：${usedNames.size} / $maxStudents\n")
+                append("📈 配额：$usedCount / $maxStudents（所有学校合计）\n")
             }
             append("━━━━━━━━━━━━━━━\n")
             if (usedNames.isNotEmpty()) {

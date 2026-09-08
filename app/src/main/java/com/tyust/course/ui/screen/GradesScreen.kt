@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,6 +140,16 @@ data class ExamItemUi(
     val examName: String,
     val teacher: String
 )
+
+internal fun semesterAverageGpa(grades: List<GradeItemUi>): String {
+    val graded = grades.mapNotNull { grade ->
+        val credit = grade.credits.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
+        val point = grade.gpa.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 } ?: return@mapNotNull null
+        credit to point
+    }
+    val credits = graded.sumOf { it.first }
+    return if (credits > 0) java.lang.String.format(java.util.Locale.ROOT, "%.2f", graded.sumOf { it.first * it.second } / credits) else "--"
+}
 
 data class OverallStatsUi(
     val gpa: String,
@@ -292,12 +304,15 @@ fun GradesScreen(
     examList: List<ExamItemUi>,
     examIsLoading: Boolean,
     onRefresh: () -> Unit,
-    onExportGrades: (List<GradeItemUi>) -> Unit = {}
+    onExportGrades: (List<GradeItemUi>) -> Unit = {},
+    semesterError: String = "",
+    overallError: String = "",
+    examError: String = ""
 ) {
-    val tabTitles = listOf("学期成绩", "总体成绩", "考试安排")
+    val tabTitles = listOf("学期", "总体", "考试")
     val isRefreshing = semesterIsLoading || overallIsLoading || examIsLoading
     val subtitle = when (currentTab) {
-        0 -> if (currentSemester.isBlank()) "按学期查看课程成绩" else currentSemester
+        0 -> "${semesterGrades.size} 门课程"
         1 -> "累计成绩与分布概览"
         else -> "近期考试安排"
     }
@@ -374,11 +389,12 @@ fun GradesScreen(
                 )
             }
         }
-    ) { _ ->
+    ) { padding ->
         // 内容铺满整屏、从顶栏底下穿过；留白由各自的 contentPadding 负责（见上）。
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .consumeWindowInsets(padding)
                 .then(
                     if (contentBackdrop != null) {
                         Modifier.layerBackdrop(contentBackdrop)
@@ -399,6 +415,7 @@ fun GradesScreen(
                         currentSemester = currentSemester,
                         onSemesterChange = onSemesterChange,
                         isLoading = semesterIsLoading,
+                        error = semesterError,
                         listState = semesterListState,
                         topInset = contentTopInset,
                         bottomInset = contentBottomInset
@@ -408,6 +425,7 @@ fun GradesScreen(
                         grades = overallGrades,
                         stats = overallStats,
                         isLoading = overallIsLoading,
+                        error = overallError,
                         listState = overallListState,
                         topInset = contentTopInset,
                         bottomInset = contentBottomInset
@@ -416,6 +434,7 @@ fun GradesScreen(
                     else -> ExamScheduleContent(
                         exams = examList,
                         isLoading = examIsLoading,
+                        error = examError,
                         listState = examListState,
                         topInset = contentTopInset,
                         bottomInset = contentBottomInset
@@ -699,12 +718,13 @@ private fun OverallGradesContent(
     grades: List<GradeItemUi>,
     stats: OverallStatsUi,
     isLoading: Boolean,
+    error: String,
     listState: LazyListState,
     topInset: Dp,
     bottomInset: Dp
 ) {
     when {
-        isLoading -> {
+        isLoading && grades.isEmpty() -> {
             Box(
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
                 contentAlignment = Alignment.Center
@@ -719,8 +739,8 @@ private fun OverallGradesContent(
                 contentAlignment = Alignment.Center
             ) {
                 SystemEmptyState(
-                    title = "暂无总体成绩",
-                    message = "点击刷新获取最新成绩"
+                    title = if (error.isNotBlank()) "总体成绩加载失败" else "暂无总体成绩",
+                    message = error.ifBlank { "点击刷新获取最新成绩" }
                 )
             }
         }
@@ -739,9 +759,10 @@ private fun OverallGradesContent(
             ) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        GradeRefreshStatus(isLoading, error)
                         SystemStatStrip(
                             items = listOf(
-                                "累计绩点" to stats.gpa.ifBlank { "0.00" },
+                                "累计绩点" to stats.gpa.ifBlank { "--" },
                                 "已修学分" to stats.credits.ifBlank { "0" },
                                 "总课程" to stats.courseCount.toString()
                             )
@@ -769,15 +790,13 @@ private fun SemesterGradesContent(
     currentSemester: String,
     onSemesterChange: (String) -> Unit,
     isLoading: Boolean,
+    error: String,
     listState: LazyListState,
     topInset: Dp,
     bottomInset: Dp
 ) {
-    val totalCredits = grades.sumOf { it.credits.toDoubleOrNull() ?: 0.0 }
-    val weightedGpa = grades.sumOf {
-        (it.credits.toDoubleOrNull() ?: 0.0) * (it.gpa.toDoubleOrNull() ?: 0.0)
-    }
-    val averageGpa = if (totalCredits > 0) weightedGpa / totalCredits else 0.0
+    val totalCredits = remember(grades) { grades.sumOf { it.credits.toDoubleOrNull() ?: 0.0 } }
+    val averageGpa = remember(grades) { semesterAverageGpa(grades) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -799,7 +818,8 @@ private fun SemesterGradesContent(
                 )
 
                 when {
-                    isLoading -> SystemLoadingState(text = "正在加载学期成绩…")
+                    isLoading && grades.isEmpty() -> SystemLoadingState(text = "正在加载学期成绩…")
+                    error.isNotBlank() && grades.isEmpty() -> SystemEmptyState(title = "学期成绩加载失败", message = error)
                     grades.isEmpty() -> SystemEmptyState(
                         title = "暂无学期成绩",
                         message = if (currentSemester.isBlank()) {
@@ -810,16 +830,17 @@ private fun SemesterGradesContent(
                     )
                     else -> {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            GradeRefreshStatus(isLoading, error)
                             SystemStatStrip(
                                 items = listOf(
-                                    "平均绩点" to String.format("%.2f", averageGpa),
+                                    "平均绩点" to averageGpa,
                                     "总学分" to String.format("%.1f", totalCredits),
                                     "课程数" to grades.size.toString()
                                 )
                             )
                             SystemSectionHeader(
                                 title = "课程明细",
-                                subtitle = currentSemester.ifBlank { null }
+                                subtitle = null
                             )
                         }
                     }
@@ -827,7 +848,7 @@ private fun SemesterGradesContent(
             }
         }
 
-        if (!isLoading && grades.isNotEmpty()) {
+        if (grades.isNotEmpty()) {
             items(grades) { item ->
                 GradeItemRow(item = item)
             }
@@ -835,10 +856,18 @@ private fun SemesterGradesContent(
     }
 }
 
-/**
- * 学期选择与登录、筛选场景共用同一套单体液态选择器：顶部始终锚定，菜单内容直接
- * 向下撑开布局，不再创建独立 Popup 或第二层玻璃表面。
- */
+@Composable
+private fun GradeRefreshStatus(isLoading: Boolean, error: String) {
+    if (isLoading) {
+        androidx.compose.material3.LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().height(2.dp)
+        )
+    } else if (error.isNotBlank()) {
+        Text(error, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error)
+    }
+}
+
 @Composable
 private fun SemesterSelector(
     semesters: List<String>,
@@ -919,7 +948,7 @@ private fun DistributionItem(
 private fun GradeItemRow(
     item: GradeItemUi
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable(item.courseCode, item.courseName) { mutableStateOf(false) }
     val gradeColor = getGradeColor(item.grade)
     val hasDetail = item.detail.isNotEmpty() || item.courseCode.isNotEmpty()
     // 一枚箭头旋转，而不是上下两个图标硬切换——后者在展开动画中途是一帧突变
@@ -931,7 +960,7 @@ private fun GradeItemRow(
 
     SystemCard(
         modifier = Modifier.fillMaxWidth(),
-        // 点击交给 SystemCard 自己的 0.97 按压缩放，不再外挂一个无反馈的 clickable
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         onClick = if (hasDetail) ({ expanded = !expanded }) else null
     ) {
         Column {
@@ -980,7 +1009,7 @@ private fun GradeItemRow(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = item.grade,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = gradeColor
                     )
@@ -1020,7 +1049,8 @@ private fun GradeItemRow(
                     SystemDivider(alpha = 0.5f)
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    if (item.detail.isNotEmpty()) {
+                    val components = parseGradeComponents(item.detail)
+                    if (components.isNotEmpty()) {
                         Text(
                             text = "成绩构成",
                             style = MaterialTheme.typography.labelMedium,
@@ -1028,7 +1058,6 @@ private fun GradeItemRow(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        val components = parseGradeComponents(item.detail)
                         components.forEachIndexed { index, comp ->
                             GradeComponentBar(
                                 label = comp.label,
@@ -1044,7 +1073,7 @@ private fun GradeItemRow(
                                 Spacer(modifier = Modifier.height(6.dp))
                             }
                         }
-                    } else {
+                    } else if (item.detail.isBlank()) {
                         // 无分项时展示基本信息
                         Text(
                             text = "暂无分项详情",
@@ -1052,6 +1081,9 @@ private fun GradeItemRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     }
+                    val notes = item.detail.split(Regex("\\s*[|；;]\\s*")).filter { it.isNotBlank() && parseGradeComponents(it).isEmpty() }
+                    if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     // 元信息落到小芯片上（复用筛选面板那一枚）：原先绩点根本没露过面，
                     // 教学班只在"无分项"那条分支里以裸文字出现。
@@ -1085,13 +1117,13 @@ private fun GradeItemRow(
 private data class GradeComponent(val label: String, val score: Float)
 
 private fun parseGradeComponents(detail: String): List<GradeComponent> {
-    return detail.split(" | ").mapNotNull { part ->
+    return detail.replace('：', ':').split(Regex("\\s*[|；;]\\s*")).mapNotNull { part ->
         // 格式: "平时(30%): 90" 或 "平时: 90"
         val colonIdx = part.lastIndexOf(':')
         if (colonIdx < 0) return@mapNotNull null
         val label = part.substring(0, colonIdx).trim()
         val scoreStr = part.substring(colonIdx + 1).trim()
-        val score = scoreStr.toFloatOrNull() ?: return@mapNotNull null
+        val score = scoreStr.toFloatOrNull()?.takeIf { it.isFinite() } ?: return@mapNotNull null
         GradeComponent(label, score)
     }
 }
@@ -1122,12 +1154,8 @@ private fun GradeComponentBar(
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
         ) {
-            // 展开时才涨条：这个 composable 只在展开区里被组合，
-            // 于是首帧从 0 起、随弹簧涨到目标，展开动作有了"结果被填出来"的读法。
-            var play by remember { mutableStateOf(false) }
-            LaunchedEffect(Unit) { play = true }
             val fill by animateFloatAsState(
-                targetValue = if (play) (score / maxScore).coerceIn(0f, 1f) else 0f,
+                targetValue = (score / maxScore).coerceIn(0f, 1f),
                 animationSpec = spring(dampingRatio = 0.9f, stiffness = 260f),
                 label = "gradeBarFill"
             )
@@ -1156,12 +1184,13 @@ private fun GradeComponentBar(
 private fun ExamScheduleContent(
     exams: List<ExamItemUi>,
     isLoading: Boolean,
+    error: String,
     listState: LazyListState,
     topInset: Dp,
     bottomInset: Dp
 ) {
     when {
-        isLoading -> {
+        isLoading && exams.isEmpty() -> {
             Box(
                 modifier = Modifier.fillMaxSize().padding(top = topInset),
                 contentAlignment = Alignment.Center
@@ -1176,8 +1205,8 @@ private fun ExamScheduleContent(
                 contentAlignment = Alignment.Center
             ) {
                 SystemEmptyState(
-                    title = "暂无考试安排",
-                    message = "点击刷新获取最新考试信息"
+                    title = if (error.isNotBlank()) "考试安排加载失败" else "暂无考试安排",
+                    message = error.ifBlank { "点击刷新获取最新考试信息" }
                 )
             }
         }

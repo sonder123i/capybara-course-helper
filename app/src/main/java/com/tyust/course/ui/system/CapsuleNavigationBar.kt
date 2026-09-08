@@ -4,7 +4,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -49,10 +53,15 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -187,6 +196,13 @@ fun CapsuleNavigationBar(
     modifier: Modifier = Modifier
 ) {
     val useGlass = backdrop != null && isBackdropSupported()
+    val haptics = LocalHapticFeedback.current
+    val selectTab: (Int) -> Unit = { index ->
+        if (index != selectedTab) {
+            haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+            onTabSelect(index)
+        }
+    }
     val regionState = rememberWallpaperRegionState()
     val appearance = rememberWallpaperRegionAppearance(regionState)
 
@@ -199,6 +215,7 @@ fun CapsuleNavigationBar(
                 vertical = NavBarMetrics.blockPadding()
             )
             .navigationBarsPadding()
+            .height(NavBarMetrics.trackHeight())
             .wallpaperRegion(regionState),
         contentAlignment = Alignment.Center
     ) {
@@ -217,15 +234,16 @@ fun CapsuleNavigationBar(
                             alpha = (1f - f * 1.6f).fastCoerceIn(0f, 1f)
                             scaleX = 1f - 0.82f * f
                             scaleY = 1f - 0.30f * f
-                            transformOrigin = TransformOrigin(0.5f, 1f)
+                            transformOrigin = TransformOrigin.Center
                         }
                     ) {
                         GlassNavigationBar(
                             items = items,
                             selectedTab = selectedTab,
-                            onTabSelect = onTabSelect,
+                            onTabSelect = { if (!minimized) selectTab(it) },
                             backdrop = requireNotNull(backdrop),
-                            lensFreshness = lensFreshness
+                            lensFreshness = lensFreshness,
+                            enabled = !minimized
                         )
                     }
                 }
@@ -233,14 +251,14 @@ fun CapsuleNavigationBar(
                     MinimizedNavCapsule(
                         item = items.getOrElse(selectedTab) { items.first() },
                         backdrop = requireNotNull(backdrop),
-                        onClick = onExpandRequest,
+                        onClick = { if (minimized) onExpandRequest() },
                         modifier = Modifier.graphicsLayer {
                             val f = minimizeFraction
                             alpha = ((f - 0.35f) / 0.65f).fastCoerceIn(0f, 1f)
                             val scale = 0.55f + 0.45f * f
                             scaleX = scale
                             scaleY = scale
-                            transformOrigin = TransformOrigin(0.5f, 1f)
+                            transformOrigin = TransformOrigin.Center
                         }
                     )
                 }
@@ -248,7 +266,7 @@ fun CapsuleNavigationBar(
             else -> FallbackNavigationBar(
                 items = items,
                 selectedTab = selectedTab,
-                onTabSelect = onTabSelect
+                onTabSelect = selectTab
             )
         }
     }
@@ -294,9 +312,9 @@ private fun MinimizedNavCapsule(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.label,
+        AppSymbol(
+            spec = item.symbol,
+            progress = 1f,
             tint = accentColor,
             modifier = Modifier.size(20.dp)
         )
@@ -316,9 +334,13 @@ private fun GlassNavigationBar(
     selectedTab: Int,
     onTabSelect: (Int) -> Unit,
     backdrop: Backdrop,
-    lensFreshness: GlassLensFreshness? = null
+    lensFreshness: GlassLensFreshness? = null,
+    enabled: Boolean = true
 ) {
     val tabsCount = items.size
+    val symbolProgress = items.indices.map { index ->
+        animateFloatAsState(if (index == selectedTab) 1f else 0f, tween(220), label = "symbol-$index").value
+    }
     // 隐藏 tint 内容层：供选中透镜 combined 采样，避免只看到空雾
     val tabsBackdrop = rememberLayerBackdrop()
     // 只含 tint 文字、不含模糊壁纸、**也不含胶囊裁边**的副本，供 API31/32 的
@@ -326,6 +348,7 @@ private fun GlassNavigationBar(
     // 下游的文字。底图的模糊层由锚点自己铺满重画，理由见 lensAnchor 处。
     val tabsTintBackdrop = rememberLayerBackdrop()
     val accessibility = rememberGlassAccessibilityMode()
+    val latestOnTabSelect by rememberUpdatedState(onTabSelect)
     // 平台是否真出折射/色散（API 33+）
     val hasRealLens = isRuntimeShaderTrulySupported()
     // API31/32 是否走自家离屏 GL 折射。isGlassLensApplicable() 只在 31/32 为真，
@@ -502,7 +525,7 @@ private fun GlassNavigationBar(
 
         val animationScope = rememberCoroutineScope()
         var currentIndex by remember { mutableIntStateOf(selectedTab) }
-        val dampedDragAnimation = remember(animationScope) {
+        val dampedDragAnimation = remember(animationScope, tabsCount) {
             DampedDragAnimation(
                 animationScope = animationScope,
                 initialValue = selectedTab.toFloat(),
@@ -535,6 +558,11 @@ private fun GlassNavigationBar(
                     }
                 }
             )
+        }
+
+        LaunchedEffect(accessibility.reduceMotion, dampedDragAnimation) {
+            dampedDragAnimation.setReducedMotion(accessibility.reduceMotion, selectedTab.toFloat())
+            if (accessibility.reduceMotion) offsetAnimation.snapTo(0f)
         }
 
         LaunchedEffect(selectedTab) {
@@ -619,27 +647,42 @@ private fun GlassNavigationBar(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(tabsCount, tabWidth) {
+                    .selectableGroup()
+                    .testTag("main-navigation")
+                    .then(if (!enabled) Modifier.clearAndSetSemantics {} else Modifier)
+                    .pointerInput(tabsCount, tabWidth, enabled) {
+                        if (!enabled) return@pointerInput
                         awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            down.consume()
                             val startValue = dampedDragAnimation.value
+                            val committedIndex = currentIndex
                             val startX = down.position.x
                             val touchSlop = viewConfiguration.touchSlop
                             var totalDragX = 0f
                             var dragging = false
+                            var completed = false
                             var pointerId = down.id
 
                             dampedDragAnimation.press()
 
                             try {
                                 while (true) {
-                                    val event = awaitPointerEvent()
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val change = event.changes.firstOrNull { it.id == pointerId }
                                         ?: break
-                                    if (change.changedToUpIgnoreConsumed()) {
-                                        if (dragging) change.consume()
+                                    if (event.changes.count { it.pressed } > 1) {
+                                        event.changes.forEach { it.consume() }
                                         break
                                     }
+                                    // ACTION_CANCEL produces consumed up changes; never commit them.
+                                    if (change.isConsumed) break
+                                    if (change.changedToUpIgnoreConsumed()) {
+                                        completed = true
+                                        change.consume()
+                                        break
+                                    }
+                                    if (!dragging && abs(change.position.y - down.position.y) > touchSlop && abs(totalDragX) <= touchSlop) break
 
                                     val dragAmount = change.positionChange()
                                     if (dragAmount != Offset.Zero) {
@@ -661,7 +704,9 @@ private fun GlassNavigationBar(
                                     pointerId = change.id
                                 }
                             } finally {
-                                val targetIndex = if (dragging) {
+                                val targetIndex = if (!completed) {
+                                    committedIndex
+                                } else if (dragging) {
                                     dampedDragAnimation.targetValue
                                         .fastRoundToInt()
                                         .fastCoerceIn(0, tabsCount - 1)
@@ -670,14 +715,16 @@ private fun GlassNavigationBar(
                                         .toInt()
                                         .fastCoerceIn(0, tabsCount - 1)
                                 }
-                                if (!dragging && targetIndex == currentIndex) {
-                                    // 重复点击仍走原来的按压/松开视觉反馈，但不重复启动
-                                    // 位移、速度和页面状态更新动画。
-                                    dampedDragAnimation.release()
+                                if (!completed) {
+                                    dampedDragAnimation.animateToValue(committedIndex.toFloat())
                                 } else {
-                                    currentIndex = targetIndex
-                                    onTabSelect(targetIndex)
-                                    dampedDragAnimation.animateToValue(targetIndex.toFloat())
+                                    if (currentIndex == targetIndex) {
+                                        dampedDragAnimation.release()
+                                    } else {
+                                        currentIndex = targetIndex
+                                        latestOnTabSelect(targetIndex)
+                                        dampedDragAnimation.animateToValue(targetIndex.toFloat())
+                                    }
                                 }
                                 if (offsetAnimation.value != 0f) {
                                     animationScope.launch {
@@ -697,10 +744,20 @@ private fun GlassNavigationBar(
                         .fastCoerceIn(0f, 1f)
                     NavTab(
                         item = item,
-                        selected = selectionWeight > 0.55f,
+                        selected = selectedTab == index,
                         accent = accentColor,
                         selectionWeight = selectionWeight,
-                        onClick = null
+                        symbolProgress = symbolProgress[index],
+                        pressProgress = dampedDragAnimation.pressProgress * selectionWeight,
+                        onClick = {
+                            if (index == currentIndex) {
+                                dampedDragAnimation.release()
+                            } else {
+                                currentIndex = index
+                                onTabSelect(index)
+                                dampedDragAnimation.animateToValue(index.toFloat())
+                            }
+                        }
                     )
                 }
             }
@@ -769,12 +826,14 @@ private fun GlassNavigationBar(
                 .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            items.forEach { item ->
+            items.forEachIndexed { index, item ->
                 NavTab(
                     item = item,
-                    selected = true,
+                    selected = selectedTab == index,
                     accent = accentColor,
-                    selectionWeight = 1f,
+                    selectionWeight = (1f - abs(dampedDragAnimation.value - index)).fastCoerceIn(0f, 1f),
+                    symbolProgress = symbolProgress[index],
+                    pressProgress = dampedDragAnimation.pressProgress * (1f - abs(dampedDragAnimation.value - index)).fastCoerceIn(0f, 1f),
                     onClick = null,
                     forceAccent = true
                 )
@@ -1012,7 +1071,7 @@ private fun FallbackNavigationBar(
         shadowElevation = 4.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().selectableGroup(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1021,6 +1080,7 @@ private fun FallbackNavigationBar(
                     item = item,
                     selected = selectedTab == index,
                     accent = accentColor,
+                    symbolProgress = animateFloatAsState(if (selectedTab == index) 1f else 0f, tween(220), label = "fallbackSymbol-$index").value,
                     onClick = { onTabSelect(index) }
                 )
             }
@@ -1034,6 +1094,8 @@ private fun RowScope.NavTab(
     selected: Boolean,
     accent: Color,
     selectionWeight: Float = if (selected) 1f else 0f,
+    symbolProgress: Float = selectionWeight,
+    pressProgress: Float = 0f,
     onClick: (() -> Unit)?,
     forceAccent: Boolean = false
 ) {
@@ -1063,7 +1125,9 @@ private fun RowScope.NavTab(
         label = "navLabelColor"
     )
     val clickModifier = if (onClick != null) {
-        Modifier.clickable(
+        Modifier.selectable(
+            selected = selected,
+            role = Role.Tab,
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = onClick
@@ -1081,19 +1145,20 @@ private fun RowScope.NavTab(
         verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.label,
+        AppSymbol(
+            spec = item.symbol,
+            progress = symbolProgress,
             tint = iconTint,
             modifier = Modifier
                 .size(22.dp)
                 .graphicsLayer {
-                    // 选中：上移 + 放大 1.15x（跟随 selectionWeight，回弹来自底层气泡运动）
+                    // 局部填充负责辨识，轻微位移与缩放跟随同一份透镜状态。
+                    // 保留当前按压下沉，同时恢复底栏原有的选中放大和上浮幅度。
                     val w = if (forceAccent) 1f else weight
-                    val scale = 1f + 0.15f * w
+                    val scale = (1f + 0.15f * w) * (1f - 0.04f * pressProgress)
                     scaleX = scale
                     scaleY = scale
-                    translationY = -3.dp.toPx() * w
+                    translationY = -3.dp.toPx() * w + 1.dp.toPx() * pressProgress
                 }
         )
         Text(

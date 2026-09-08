@@ -50,6 +50,7 @@ import com.tyust.course.ui.system.PagePadding
 import com.tyust.course.ui.system.SystemPrimaryButton
 import com.tyust.course.ui.system.SystemIconButton
 import com.tyust.course.ui.system.SystemTopBar
+import com.tyust.course.ui.system.GlassPageScaffold
 import com.tyust.course.ui.theme.SemanticWarning
 import com.tyust.course.ui.theme.SemanticWarningContainer
 import kotlinx.coroutines.launch
@@ -151,20 +152,10 @@ fun SchoolAdaptationScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            SystemTopBar(
-                title = "申请统一登录适配",
-                subtitle = "提交临时测试账号协助适配",
-                navigationIcon = {
-                    SystemIconButton(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        onClick = onNavigateBack
-                    )
-                }
-            )
-        }
+    GlassPageScaffold(
+        title = "申请适配",
+        subtitle = "填写学校信息与临时测试账号",
+        onBack = onNavigateBack
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -182,7 +173,7 @@ fun SchoolAdaptationScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    color = SemanticWarningContainer,
+                    color = SemanticWarning.copy(alpha = 0.10f),
                     border = BorderStroke(1.dp, SemanticWarning.copy(alpha = 0.25f))
                 ) {
                     Column(
@@ -247,11 +238,11 @@ fun SchoolAdaptationScreen(
                 )
             }
             item {
-                OutlinedTextField(
+                SchoolFormField(
                     value = temporaryPassword,
                     onValueChange = { temporaryPassword = it.take(200) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("临时测试密码") },
+                    label = "临时测试密码",
                     singleLine = true,
                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(
@@ -261,15 +252,14 @@ fun SchoolAdaptationScreen(
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                         onNext = { focusManager.moveFocus(FocusDirection.Down) }
                     ),
-                    trailingIcon = {
+                    trailing = {
                         IconButton(onClick = { showPassword = !showPassword }) {
                             Icon(
                                 imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                 contentDescription = if (showPassword) "隐藏密码" else "显示密码"
                             )
                         }
-                    },
-                    shape = RoundedCornerShape(14.dp)
+                    }
                 )
             }
             item {
@@ -283,15 +273,14 @@ fun SchoolAdaptationScreen(
                 )
             }
             item {
-                OutlinedTextField(
+                SchoolFormField(
                     value = notes,
                     onValueChange = { notes = it.take(1000) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp),
-                    label = { Text("补充说明（选填）") },
-                    placeholder = { Text("登录入口、验证码、已知跳转流程等") },
-                    shape = RoundedCornerShape(14.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "补充说明（选填）",
+                    placeholder = "登录入口、验证码、已知跳转流程等",
+                    singleLine = false,
+                    minHeight = 112.dp,
                 )
             }
             item {
@@ -342,12 +331,12 @@ private fun AdaptationTextField(
     imeAction: ImeAction,
     onNext: () -> Unit
 ) {
-    OutlinedTextField(
+    SchoolFormField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text(label) },
-        placeholder = { Text(placeholder) },
+        label = label,
+        placeholder = placeholder,
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = keyboardType,
@@ -355,8 +344,7 @@ private fun AdaptationTextField(
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(
             onNext = { onNext() }
-        ),
-        shape = RoundedCornerShape(14.dp)
+        )
     )
 }
 

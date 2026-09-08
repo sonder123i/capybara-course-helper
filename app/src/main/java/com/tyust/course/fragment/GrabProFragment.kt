@@ -142,11 +142,9 @@ class GrabProFragment : Fragment(), SmartSelector.OnStatusUpdateListener {
         super.onResume()
         // Register broadcast receiver
         val filter = IntentFilter(GrabService.BROADCAST_UPDATE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requireContext().registerReceiver(grabUpdateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            requireContext().registerReceiver(grabUpdateReceiver, filter)
-        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            requireContext(), grabUpdateReceiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         updateUI()
         updateTargetCourse()
     }

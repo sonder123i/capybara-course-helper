@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +47,7 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -57,6 +60,7 @@ import com.tyust.course.ui.system.rememberGlassAccessibilityMode
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.first
 
 /**
  * 按压时向邻居融合的液体按钮组。
@@ -484,19 +488,27 @@ private fun LiquidActionItem(
     val glideVelocity = remember { mutableFloatStateOf(0f) }
     var glideSampleX by remember { mutableFloatStateOf(Float.NaN) }
     var glideSampleT by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(animateContent) {
+        if (!animateContent) {
+            glideVelocity.floatValue = 0f
+            return@LaunchedEffect
+        }
         while (true) {
-            withFrameNanos { }
-            val v = glideVelocity.floatValue
-            if (v != 0f) {
-                val decayed = v * 0.78f
-                glideVelocity.floatValue = if (abs(decayed) < 0.006f) 0f else decayed
+            snapshotFlow { glideVelocity.floatValue }.first { it != 0f }
+            var previous = withFrameNanos { it }
+            while (glideVelocity.floatValue != 0f) {
+                val now = withFrameNanos { it }
+                glideVelocity.floatValue = decayGlideVelocity(
+                    glideVelocity.floatValue, (now - previous) / 1_000_000_000f
+                )
+                previous = now
             }
         }
     }
 
     Box(
         modifier = Modifier
+            .then(if (!reachable) Modifier.clearAndSetSemantics {} else Modifier)
             .then(
                 if (appearance >= 1f) {
                     Modifier
@@ -513,6 +525,7 @@ private fun LiquidActionItem(
                         }
                 }
             )
+            .minimumInteractiveComponentSize()
             .size(buttonSize)
             .graphicsLayer {
                 // 滑行拉伸对两种状态都成立：完整的那枚被推着走、退场的那枚
