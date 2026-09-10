@@ -1,100 +1,173 @@
 package com.tyust.course.ui
 
-import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.FrameMetrics
 import android.view.Window
+import android.view.PixelCopy
+import android.view.accessibility.AccessibilityNodeInfo
+import android.graphics.Bitmap
+import android.os.Looper
+import android.app.Activity
+import android.app.Application
+import android.content.Intent
+import android.os.Bundle
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import androidx.compose.runtime.Recomposer
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Configurator
+import androidx.test.uiautomator.UiDevice
 import com.tyust.course.BuildConfig
 import com.tyust.course.MainActivity
 import org.json.JSONArray
 import org.json.JSONObject
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
-import org.junit.BeforeClass
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.Collections
 
-/** Repeatable local-data workload; never reads or changes a real student account. */
+/** Real display clock, local demo data, no Compose test clock or production account. */
 @RunWith(AndroidJUnit4::class)
 class MainPerformanceDeviceTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
-
-    companion object {
-        @BeforeClass @JvmStatic fun requirePreview() { assumeTrue(BuildConfig.UI_PREVIEW) }
-    }
-
-    private fun settle() {
-        compose.mainClock.advanceTimeBy(1200)
-        compose.waitForIdle()
-    }
-
-    private fun navigate(label: String) {
-        compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("main-navigation"))).performClick()
-        settle()
-    }
-
     @Test fun measureIdleAndRepeatedNavigation() {
-        compose.mainClock.autoAdvance = false
-        settle()
-        navigate("成绩")
-        compose.onNode(hasText("学期") and isSelectable()).performClick()
-        settle()
-        val output = File(compose.activity.getExternalFilesDir(null), "performance-validation").apply { mkdirs() }
-        val label = InstrumentationRegistry.getArguments().getString("capturePrefix") ?: "sample"
-        val frames = Collections.synchronizedList(mutableListOf<Long>())
-        val uiFrames = Collections.synchronizedList(mutableListOf<Long>())
+        assumeTrue("Performance measurements require the isolated demo variant", BuildConfig.UI_PREVIEW)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val previousTimeout = Configurator.getInstance().waitForIdleTimeout
+        Configurator.getInstance().waitForIdleTimeout = 0
+        // ActivityScenario waits for main-queue idleness; that is what this test measures.
+        val app = instrumentation.targetContext.applicationContext as Application
+        val resumed = CountDownLatch(1)
+        var activity: MainActivity? = null
+        val callbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(current: Activity) {
+                if (current is MainActivity) { activity = current; resumed.countDown() }
+            }
+            override fun onActivityCreated(current: Activity, state: Bundle?) {}
+            override fun onActivityStarted(current: Activity) {}
+            override fun onActivityPaused(current: Activity) {}
+            override fun onActivityStopped(current: Activity) {}
+            override fun onActivitySaveInstanceState(current: Activity, state: Bundle) {}
+            override fun onActivityDestroyed(current: Activity) {}
+        }
+        app.registerActivityLifecycleCallbacks(callbacks)
+        app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+        assertTrue("Demo activity did not resume", resumed.await(15, TimeUnit.SECONDS))
+        val scenario = object {
+            fun onActivity(action: (MainActivity) -> Unit) = instrumentation.runOnMainSync { action(requireNotNull(activity)) }
+            fun close() {
+                onActivity { it.finish() }
+                app.unregisterActivityLifecycleCallbacks(callbacks)
+            }
+        }
         val worker = HandlerThread("frame-metrics").apply { start() }
+        val frames = Collections.synchronizedList(mutableListOf<Long>())
+        val layoutDraw = Collections.synchronizedList(mutableListOf<Long>())
+        val deadlines = Collections.synchronizedList(mutableListOf<Long>())
+        var output: File? = null
+        var refreshRate = 60f
+        var displayId = 0
+        var width = 0
+        var height = 0
         val listener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
             frames += metrics.getMetric(FrameMetrics.TOTAL_DURATION)
-            uiFrames += metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION) + metrics.getMetric(FrameMetrics.DRAW_DURATION)
+            layoutDraw += metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION) + metrics.getMetric(FrameMetrics.DRAW_DURATION)
+            deadlines += if (android.os.Build.VERSION.SDK_INT >= 31) metrics.getMetric(FrameMetrics.DEADLINE) else 0L
         }
-        compose.runOnUiThread { compose.activity.window.addOnFrameMetricsAvailableListener(listener, Handler(worker.looper)) }
-        try {
-            val before = Recomposer.runningRecomposers.value.sumOf { it.changeCount }
-            repeat(120) { compose.mainClock.advanceTimeByFrame(); Thread.sleep(16) }
-            val idleChanges = Recomposer.runningRecomposers.value.sumOf { it.changeCount } - before
-            val idleFrames = frames.size
-            frames.clear()
-            uiFrames.clear()
-            repeat(3) {
-                compose.onRoot().performTouchInput {
-                    swipe(Offset(width * .5f, height * .76f), Offset(width * .5f, height * .37f), 480)
+        fun navigate(label: String) {
+            val end = SystemClock.uptimeMillis() + 6000
+            var found = false
+            while (!found && SystemClock.uptimeMillis() < end) {
+                fun find(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
+                    if (root == null) return emptyList()
+                    return buildList {
+                        if (root.text?.toString() == label) add(root)
+                        for (index in 0 until root.childCount) addAll(find(root.getChild(index)))
+                    }
                 }
-                settle()
-                compose.onRoot().performTouchInput {
-                    swipe(Offset(width * .5f, height * .37f), Offset(width * .5f, height * .76f), 480)
-                }
-                settle()
-                navigate("设置")
-                navigate("成绩")
-                compose.onNode(hasText("总体") and isSelectable()).performClick()
-                settle()
-                compose.onNode(hasText("学期") and isSelectable()).performClick()
-                settle()
+                val nodes = instrumentation.uiAutomation.windowsOnAllDisplays.get(displayId).orEmpty()
+                    .flatMap { find(it.root) }
+                fun bounds(node: AccessibilityNodeInfo) = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                val node = nodes.maxByOrNull { bounds(it).bottom }
+                if (node != null) {
+                    val p = bounds(node)
+                    device.executeShellCommand("input -d $displayId tap ${p.centerX()} ${p.centerY()}")
+                    found = true
+                } else SystemClock.sleep(100)
             }
-            Thread.sleep(350)
-            val frameCopy = synchronized(frames) { frames.toList() }
-            val uiCopy = synchronized(uiFrames) { uiFrames.toList() }
-            File(output, "$label.json").writeText(JSONObject()
-                .put("idleRecompositions", idleChanges).put("idleFrames", idleFrames)
-                .put("totalDurationNs", JSONArray(frameCopy))
-                .put("layoutDrawDurationNs", JSONArray(uiCopy)).toString(2))
-            File(output, "$label-grades.png").outputStream().use {
-                compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            assertTrue("Navigation label missing: $label", found)
+            SystemClock.sleep(1000)
+        }
+        fun scroll(down: Boolean) {
+            val from = (height * if (down) .72 else .38).toInt()
+            val to = (height * if (down) .38 else .72).toInt()
+            device.executeShellCommand("input -d $displayId swipe ${width / 2} $from ${width / 2} $to 500")
+            SystemClock.sleep(800)
+        }
+        try {
+            SystemClock.sleep(2000)
+            scenario.onActivity {
+                refreshRate = it.display?.refreshRate ?: 60f
+                displayId = it.display?.displayId ?: 0
+                width = it.window.decorView.width
+                height = it.window.decorView.height
+                output = File(it.getExternalFilesDir(null), "performance-validation").apply { mkdirs() }
+                it.window.addOnFrameMetricsAvailableListener(listener, Handler(worker.looper))
+            }
+            val label = InstrumentationRegistry.getArguments().getString("capturePrefix") ?: "sample"
+            for (tab in listOf("课程", "课表", "抢课", "成绩", "设置")) {
+                navigate(tab)
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val captured = CountDownLatch(1)
+                var captureResult = PixelCopy.ERROR_UNKNOWN
+                scenario.onActivity { activity ->
+                    PixelCopy.request(activity.window, bitmap, { result -> captureResult = result; captured.countDown() }, Handler(Looper.getMainLooper()))
+                }
+                assertTrue("Window screenshot failed", captured.await(3, TimeUnit.SECONDS) && captureResult == PixelCopy.SUCCESS)
+                File(output, "$label-$tab.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            fun measure(name: String, round: Int, action: () -> Unit) {
+                SystemClock.sleep(1200)
+                frames.clear(); layoutDraw.clear(); deadlines.clear()
+                val before = Recomposer.runningRecomposers.value.sumOf { it.changeCount }
+                val start = SystemClock.elapsedRealtime()
+                action()
+                SystemClock.sleep(200)
+                val duration = SystemClock.elapsedRealtime() - start
+                val total = synchronized(frames) { frames.toList() }
+                val ui = synchronized(layoutDraw) { layoutDraw.toList() }
+                val deadline = synchronized(deadlines) { deadlines.toList() }
+                File(output, "$label-$name-$round.json").writeText(JSONObject()
+                    .put("scenario", name).put("round", round).put("elapsedMs", duration)
+                    .put("package", BuildConfig.APPLICATION_ID).put("refreshRate", refreshRate)
+                    .put("widthPx", width).put("heightPx", height).put("displayId", displayId)
+                    .put("recompositions", Recomposer.runningRecomposers.value.sumOf { it.changeCount } - before)
+                    .put("totalDurationNs", JSONArray(total)).put("layoutDrawDurationNs", JSONArray(ui))
+                    .put("deadlineNs", JSONArray(deadline)).toString(2))
+            }
+            repeat(3) { round ->
+                navigate("成绩")
+                measure("idle", round) { SystemClock.sleep(10_000) }
+                measure("navigation", round) {
+                    for (tab in listOf("设置", "课程", "课表", "抢课", "成绩")) navigate(tab)
+                }
+                measure("grades-scroll", round) { repeat(2) { scroll(true); scroll(false) } }
+                navigate("课表")
+                measure("schedule-scroll", round) { repeat(2) { scroll(true); scroll(false) } }
             }
         } finally {
-            compose.runOnUiThread { compose.activity.window.removeOnFrameMetricsAvailableListener(listener) }
+            scenario.onActivity { it.window.removeOnFrameMetricsAvailableListener(listener) }
             worker.quitSafely()
+            scenario.close()
+            Configurator.getInstance().waitForIdleTimeout = previousTimeout
         }
     }
 }

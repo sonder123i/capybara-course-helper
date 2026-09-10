@@ -4,61 +4,58 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
 import com.tyust.course.login.PasswordLoginCallback
 import com.tyust.course.login.PasswordLoginGatewayFactory
+import com.tyust.course.manager.SessionToken
 import com.tyust.course.manager.UserManager
 
-/** Shared renewal entry point. Callbacks and session changes are serialized on the UI thread. */
+/** All entry points share one recovery operation; Android callbacks are serialized on main. */
 object SessionRenewer {
-    private const val TAG = "SessionRenewer"
     private val handler = Handler(Looper.getMainLooper())
-    private val gate = SessionRenewalGate()
-
-    @JvmStatic
-    fun canRenew(): Boolean {
+    private fun onMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) action() else handler.post(action)
+    }
+    private val coordinator by lazy {
         val user = UserManager.getInstance()
-        return synchronized(gate) { gate.canAttempt(user.sessionState.token, SystemClock.elapsedRealtime()) } &&
-            user.canAutoRelogin()
+        SessionRecoveryCoordinator(
+            sessions = user.sessionState,
+            now = SystemClock::elapsedRealtime,
+            canRestore = { user.currentSchool != null && user.canAutoRelogin() },
+            install = { expected, cookie -> user.saveCookieIfCurrent(expected, cookie) },
+            login = { _, done ->
+                val school = requireNotNull(user.currentSchool)
+                val gateway = PasswordLoginGatewayFactory.create(school)
+                fun complete(outcome: LoginRecoveryOutcome) {
+                    gateway.clearSensitiveState()
+                    onMain { done(outcome) }
+                }
+                gateway.login(school, user.username, user.accountPassword, object : PasswordLoginCallback {
+                    override fun onSuccess(cookie: String) = complete(LoginRecoveryOutcome.Cookie(cookie))
+                    override fun onCaptchaRequired(imageBytes: ByteArray) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.VerificationRequired))
+                    override fun onCaptchaInvalid() = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.VerificationRequired))
+                    override fun onInvalidCredentials() = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.CredentialsRejected))
+                    override fun onError(message: String) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.Network))
+                })
+                val cancel: () -> Unit = { gateway.clearSensitiveState() }
+                cancel
+            }
+        )
     }
 
-    @JvmStatic
-    fun renew(context: Context, onDone: (Boolean) -> Unit) {
-        val expected = UserManager.getInstance().sessionState.token
-        handler.post start@{
-            val user = UserManager.getInstance()
-            if (!user.sessionState.isCurrent(expected) || !canRenew()) {
-                onDone(false)
-                return@start
-            }
-            if (!synchronized(gate) { gate.join(expected, onDone) }) return@start
-            val school = user.currentSchool
-            fun finish(success: Boolean) {
-                synchronized(gate) {
-                    gate.finish(expected, success, user.sessionState.isCurrent(expected), SystemClock.elapsedRealtime())
-                }
-            }
-            if (school == null) { finish(false); return@start }
-            val username = user.username
-            val gateway = PasswordLoginGatewayFactory.create(school)
-            fun complete(cookie: String? = null) {
-                gateway.clearSensitiveState()
-                handler.post result@{
-                    if (!user.sessionState.isCurrent(expected)) { finish(false); return@result }
-                    if (cookie != null) user.saveCookie(cookie)
-                    finish(cookie != null)
-                }
-            }
-            gateway.login(school, username, user.accountPassword, object : PasswordLoginCallback {
-                override fun onSuccess(cookie: String) = complete(cookie)
-                override fun onCaptchaRequired(imageBytes: ByteArray) = complete()
-                override fun onCaptchaInvalid() = complete()
-                override fun onInvalidCredentials() = complete()
-                override fun onError(message: String) {
-                    Log.w(TAG, "续期失败: $message")
-                    complete()
-                }
-            })
-        }
+    val state get() = coordinator.state
+
+    @JvmStatic fun canRenew(): Boolean = coordinator.canAttempt(UserManager.getInstance().sessionState.token)
+
+    fun sessionChanged() = onMain { coordinator.sessionChanged() }
+
+    fun request(
+        expected: SessionToken,
+        manual: Boolean = false,
+        onDone: (SessionRecoveryResult) -> Unit = {}
+    ) = onMain { coordinator.request(expected, manual, onDone) }
+
+    /** Compatibility for the existing background service; UI uses the typed result above. */
+    @JvmStatic fun renew(context: Context, onDone: (Boolean) -> Unit) {
+        request(UserManager.getInstance().sessionState.token) { onDone(it is SessionRecoveryResult.Recovered) }
     }
 }

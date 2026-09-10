@@ -1,6 +1,7 @@
 package com.tyust.course.academic
 
 import com.tyust.course.manager.UserManager
+import com.tyust.course.manager.SessionToken
 import com.tyust.course.model.Course
 import com.tyust.course.model.SchoolConfig
 
@@ -20,9 +21,8 @@ object AcademicCourseBridge {
         return existing.take(insertion) + sections + existing.drop(insertion).filterNot(::replaced)
     }
 
-    suspend fun listCourses(school: SchoolConfig, accountStorageKey: String, query: CourseQuery = CourseQuery()): AcademicCoursePage {
-        prepareSession(school, accountStorageKey)
-        val adapter = AcademicGatewayFactory.create(school, accountStorageKey)
+    suspend fun listCourses(school: SchoolConfig, accountStorageKey: String, query: CourseQuery = CourseQuery(), expected: SessionToken = UserManager.getInstance().sessionState.token): AcademicCoursePage {
+        val adapter = prepareSession(school, accountStorageKey, expected)
         return adapter.inSession {
             val context = adapter.loadCourseContext()
             if (query.scopeId.isNotBlank() && context.scopes.none { it.id == query.scopeId })
@@ -32,9 +32,8 @@ object AcademicCourseBridge {
         }
     }
 
-    suspend fun selectedCourses(school: SchoolConfig, accountStorageKey: String): List<Course> {
-        prepareSession(school, accountStorageKey)
-        val adapter = AcademicGatewayFactory.create(school, accountStorageKey)
+    suspend fun selectedCourses(school: SchoolConfig, accountStorageKey: String, expected: SessionToken = UserManager.getInstance().sessionState.token): List<Course> {
+        val adapter = prepareSession(school, accountStorageKey, expected)
         return adapter.inSession {
             val context = adapter.loadCourseContext()
             adapter.selected(context).map { selected ->
@@ -57,10 +56,9 @@ object AcademicCourseBridge {
         }
     }
 
-    suspend fun listSections(school: SchoolConfig, accountStorageKey: String, course: Course): List<Course> {
-        prepareSession(school, accountStorageKey)
+    suspend fun listSections(school: SchoolConfig, accountStorageKey: String, course: Course, expected: SessionToken = UserManager.getInstance().sessionState.token): List<Course> {
+        val adapter = prepareSession(school, accountStorageKey, expected)
         if (school.academicType() in setOf(AcademicSystem.QZ, AcademicSystem.QZ_OLD)) return listOf(course)
-        val adapter = AcademicGatewayFactory.create(school, accountStorageKey)
         return adapter.inSession {
             val context = adapter.loadCourseContext()
             val offer = findOffer(adapter, context, course)
@@ -69,9 +67,8 @@ object AcademicCourseBridge {
         }
     }
 
-    suspend fun select(school: SchoolConfig, accountStorageKey: String, course: Course): SelectionResult {
-        prepareSession(school, accountStorageKey)
-        val adapter = AcademicGatewayFactory.create(school, accountStorageKey)
+    suspend fun select(school: SchoolConfig, accountStorageKey: String, course: Course, expected: SessionToken = UserManager.getInstance().sessionState.token): SelectionResult {
+        val adapter = prepareSession(school, accountStorageKey, expected)
         return adapter.inSession {
             val context = adapter.loadCourseContext()
             val resolved = adapter.resolveSelection(context,
@@ -80,7 +77,7 @@ object AcademicCourseBridge {
                 course.completeParams["academic_scope_id"].orEmpty())
                 ?: return@inSession SelectionResult(AcademicStatus.PAGE_CHANGED, "无法唯一确定目标教学班，请刷新后重新确认")
             val (offer, section) = resolved
-            prepareSession(school, accountStorageKey)
+            prepareSession(school, accountStorageKey, expected)
             val result = try { adapter.select(SelectionTarget(offer, section, confirmed = true)) }
                 catch (e: AcademicException) { SelectionResult(e.status, e.message.orEmpty()) }
             if (result.status == AcademicStatus.RESULT_UNKNOWN) {
@@ -91,9 +88,8 @@ object AcademicCourseBridge {
             result
         }
     }
-    suspend fun drop(school: SchoolConfig, accountStorageKey: String, course: Course): OperationResult {
-        prepareSession(school, accountStorageKey)
-        val adapter = AcademicGatewayFactory.create(school, accountStorageKey)
+    suspend fun drop(school: SchoolConfig, accountStorageKey: String, course: Course, expected: SessionToken = UserManager.getInstance().sessionState.token): OperationResult {
+        val adapter = prepareSession(school, accountStorageKey, expected)
         return adapter.inSession {
             val context = adapter.loadCourseContext()
             val selectedId = course.completeParams["academic_selected_id"].orEmpty().ifBlank { course.classId }
@@ -102,7 +98,7 @@ object AcademicCourseBridge {
             val offer = CourseOffer(enrolled.courseId, enrolled.name, enrolled.teacher, scopeId = "",
                 raw = enrolled.raw)
             val section = CourseSection(enrolled.sectionId.ifBlank { enrolled.stableId }, enrolled.courseId, raw = enrolled.raw)
-            prepareSession(school, accountStorageKey)
+            prepareSession(school, accountStorageKey, expected)
             adapter.drop(SelectionTarget(offer, section, confirmed = true))
         }
     }
@@ -117,11 +113,13 @@ object AcademicCourseBridge {
         }
     }
 
-    private fun prepareSession(school: SchoolConfig, accountStorageKey: String) {
+    private fun prepareSession(school: SchoolConfig, accountStorageKey: String, expected: SessionToken): AcademicProtocolAdapter {
         val user = UserManager.getInstance()
-        check(user.currentAccountStorageKey == accountStorageKey && user.currentSchool?.id == school.id) { "账号已切换，请重新加载" }
-        val savedCookie = user.savedCookie
-        if (savedCookie.isNotBlank()) AcademicGatewayFactory.importCookie(school, accountStorageKey, savedCookie, replace = false, username = user.username.ifBlank { user.studentId.orEmpty() })
+        return synchronized(user.sessionState) {
+            if (!user.sessionState.isCurrent(expected) || expected.accountStorageKey != accountStorageKey || user.currentSchool?.id != school.id)
+                throw kotlinx.coroutines.CancellationException("Session replaced")
+            AcademicGatewayFactory.create(school, accountStorageKey)
+        }
     }
 
     private fun toCourse(offer: CourseOffer, section: CourseSection? = null): Course = Course().apply {

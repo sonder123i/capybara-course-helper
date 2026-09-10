@@ -40,6 +40,7 @@ import androidx.compose.runtime.snapshotFlow
  * **底图内容由调用方给**。
  */
 val LocalGlassLensAnchor = staticCompositionLocalOf<GlassLensAnchor?> { null }
+val LocalPageGlassFreshness = staticCompositionLocalOf<GlassLensFreshness?> { null }
 
 /**
  * 与 [LocalGlassLensAnchor] 同一块区域，但底图**预先模糊过**（Modal 档 6dp）。
@@ -105,4 +106,3 @@ fun DrawScope.drawBackdropSource(
 ) {
     with(backdrop) { drawBackdrop(density, coords, null) }
 }
-

@@ -10,22 +10,32 @@ import androidx.lifecycle.ViewModel
 /** Large, non-sensitive results stay in memory; small UI state uses saved state. */
 class PageDataState {
     private val values = mutableMapOf<String, MutableState<*>>()
+    val hasCachedContent: Boolean get() = values.values.any { (it.value as? Collection<*>)?.isNotEmpty() == true } ||
+        values["content.available"]?.value == true
 
     @Suppress("UNCHECKED_CAST")
     fun <T> state(key: String, initial: () -> T): MutableState<T> =
         values.getOrPut(key) { mutableStateOf(initial()) } as MutableState<T>
 }
 
+@Composable
+fun ReportPageContent(available: Boolean) {
+    val store = LocalPageDataState.current
+    androidx.compose.runtime.SideEffect { if (available) store?.state("content.available") { false }?.value = true }
+}
+
 class PageDataViewModel : ViewModel() {
-    private var account: String? = null
-    private var data = PageDataState()
+    private val accounts = mutableMapOf<String, PageDataState>()
+    private var activeAccount: String? = null
 
     fun forAccount(key: String): PageDataState {
-        if (account != key) {
-            account = key
-            data = PageDataState()
-        }
-        return data
+        // A page result is scoped to the currently active account. Retire the
+        // previous account's in-memory store so late callbacks cannot mutate
+        // a state object that can be reused after an account switch.
+        val previous = activeAccount
+        if (previous != null && previous != key) accounts.remove(previous)
+        activeAccount = key
+        return accounts.getOrPut(key) { PageDataState() }
     }
 }
 

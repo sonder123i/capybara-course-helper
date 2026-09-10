@@ -10,11 +10,13 @@ import org.json.JSONObject
 import java.util.Locale
 
 object AcademicStudyBridge {
-    fun reader(school: SchoolConfig, account: String): AcademicStudyAdapter {
+    fun reader(school: SchoolConfig, account: String, expected: com.tyust.course.manager.SessionToken = UserManager.getInstance().sessionState.token): AcademicStudyAdapter {
         val user = UserManager.getInstance()
-        check(user.currentAccountStorageKey == account && user.currentSchool?.id == school.id) { "账号已切换，请重新加载" }
-        if (user.savedCookie.isNotBlank()) AcademicGatewayFactory.importCookie(school, account, user.savedCookie, replace = false, username = user.username.ifBlank { user.studentId.orEmpty() })
-        return AcademicGatewayFactory.createStudy(school, account)
+        return synchronized(user.sessionState) {
+            if (!user.sessionState.isCurrent(expected) || expected.accountStorageKey != account || user.currentSchool?.id != school.id)
+                throw kotlinx.coroutines.CancellationException("Session replaced")
+            AcademicGatewayFactory.createStudy(school, account)
+        }
     }
 
     fun grade(item: AcademicGrade) = GradeItemUi(

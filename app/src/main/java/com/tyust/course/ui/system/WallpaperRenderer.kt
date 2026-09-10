@@ -30,6 +30,10 @@ import kotlin.math.roundToInt
  *                     没有折射要服务，留着它只剩噪点风险。
  */
 fun DrawScope.drawWallpaperPattern(style: WallpaperStyle, microTexture: Boolean = true) {
+    if (style.image == null && style.accents.isEmpty() && style.glowColor == style.baseColor && style.shadeColor == style.baseColor) {
+        drawRect(style.baseColor)
+        return
+    }
     val image = style.image
     if (image != null) {
         drawImageWallpaper(image, style)

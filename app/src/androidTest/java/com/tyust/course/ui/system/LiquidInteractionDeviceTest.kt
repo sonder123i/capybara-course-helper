@@ -26,6 +26,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import android.provider.Settings
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.ui.graphics.asAndroidBitmap
 
 /** Runs only local UI fixtures; no login, requests, or course-selection operations. */
 @RunWith(AndroidJUnit4::class)
@@ -37,6 +38,45 @@ class LiquidInteractionDeviceTest {
         BottomNavItem.Courses, BottomNavItem.Schedule, BottomNavItem.Grab,
         BottomNavItem.Grades, BottomNavItem.Settings
     )
+
+    @Test fun passwordSymbolReversesFromItsCurrentFrameAndReturnsToItsOriginalShape() {
+        val revealed = mutableStateOf(false)
+        compose.setContent {
+            CourseSelectorTheme { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                VisibilitySymbol(revealed.value, Modifier.testTag("password-symbol"))
+            } }
+        }
+        compose.mainClock.autoAdvance = false
+        val initial = compose.onNodeWithTag("password-symbol").captureToImage().asAndroidBitmap()
+        compose.runOnIdle { revealed.value = true }
+        compose.mainClock.advanceTimeBy(112)
+        val middle = compose.onNodeWithTag("password-symbol").captureToImage().asAndroidBitmap()
+        assertFalse("The icon must draw intermediate geometry", initial.sameAs(middle))
+        compose.runOnIdle { revealed.value = false }
+        compose.mainClock.advanceTimeBy(600)
+        val end = compose.onNodeWithTag("password-symbol").captureToImage().asAndroidBitmap()
+        assertTrue("Reversal must settle back to the original shape", initial.sameAs(end))
+        compose.onNodeWithContentDescription("显示密码").assertExists()
+    }
+
+    @Test fun queueSuccessDrawsIntermediateFramesThenSettlesToACheck() {
+        val result = mutableStateOf(SymbolResult.None)
+        compose.setContent {
+            CourseSelectorTheme { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                RequestStateSymbol(result = result.value, queue = true, modifier = Modifier.testTag("queue-symbol"))
+            } }
+        }
+        compose.mainClock.autoAdvance = false
+        val initial = compose.onNodeWithTag("queue-symbol").captureToImage().asAndroidBitmap()
+        compose.runOnIdle { result.value = SymbolResult.Success }
+        compose.mainClock.advanceTimeBy(112)
+        val middle = compose.onNodeWithTag("queue-symbol").captureToImage().asAndroidBitmap()
+        compose.mainClock.advanceTimeBy(600)
+        val end = compose.onNodeWithTag("queue-symbol").captureToImage().asAndroidBitmap()
+        assertFalse(initial.sameAs(middle))
+        assertFalse(middle.sameAs(end))
+        assertFalse(initial.sameAs(end))
+    }
 
     private fun navigation(onSelection: (Int) -> Unit = {}): MutableIntState {
         val selected = mutableIntStateOf(0)
@@ -60,9 +100,10 @@ class LiquidInteractionDeviceTest {
         lateinit var animation: DampedDragAnimation
         compose.setContent {
             val scope = rememberCoroutineScope()
-            animation = remember {
-                DampedDragAnimation(scope, 0f, 0f..4f, 0.001f, 1f, 1.2f,
+            DisposableEffect(scope) {
+                animation = DampedDragAnimation(scope, 0f, 0f..4f, 0.001f, 1f, 1.2f,
                     onDragStarted = {}, onDragStopped = {}, onDrag = { _, _ -> })
+                onDispose { }
             }
             Box(Modifier.fillMaxSize())
         }

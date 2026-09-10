@@ -22,6 +22,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -71,6 +74,7 @@ fun LoginScreen(
     onSchoolAdded: () -> Unit = {},
     onDemoMode: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
     isLoading: Boolean = false,
     errorMessage: String? = null,
     cookieValue: String = "",
@@ -141,6 +145,8 @@ fun LoginScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .testTag("login-screen")
+            .semantics { contentDescription = "login-screen" }
     ) {
 
         Column(

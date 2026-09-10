@@ -17,10 +17,11 @@ sealed class GrabRunEvent {
 
 /** Runs only the new protocol queue. GrabService remains the compatibility runner for legacy_zf. */
 class ProtocolGrabRunner(
-    private val adapter: AcademicProtocolAdapter,
+    private var adapter: AcademicProtocolAdapter,
     private val canContinue: () -> Boolean = { true },
     private val renewSession: suspend () -> Boolean = { false }
 ) {
+    fun replaceAdapter(current: AcademicProtocolAdapter) { adapter = current }
     suspend fun runOnce(item: AcademicGrabItem, confirmed: Boolean = false, candidateIntervalMillis: Long = 0): GrabRunEvent {
         return adapter.inSession { runOnceLocked(item, confirmed, candidateIntervalMillis) }
     }

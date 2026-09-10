@@ -29,13 +29,13 @@ import kotlin.math.roundToInt
 
 internal data class PortalPlacement(val x: Float, val y: Float, val width: Float, val bodySpace: Float, val opensUp: Boolean)
 
-internal fun resolvePortalPlacement(anchor: Rect, safe: Rect, desiredBody: Float, header: Float, rendered: Float, gap: Float): PortalPlacement {
+internal fun resolvePortalPlacement(anchor: Rect, safe: Rect, desiredBody: Float, header: Float, rendered: Float, gap: Float, requestedWidth: Float = anchor.width): PortalPlacement {
     val below = (safe.bottom - anchor.bottom - gap).coerceAtLeast(0f)
     val above = (anchor.top - safe.top - gap).coerceAtLeast(0f)
     val up = below < desiredBody && above > below
-    val width = anchor.width.coerceAtMost(safe.width).coerceAtLeast(1f)
+    val width = requestedWidth.coerceAtMost(safe.width).coerceAtLeast(1f)
     return PortalPlacement(
-        anchor.left.coerceIn(safe.left, (safe.right - width).coerceAtLeast(safe.left)),
+        (anchor.right - width).coerceIn(safe.left, (safe.right - width).coerceAtLeast(safe.left)),
         if (up) anchor.top - (rendered - header) else anchor.top,
         width, if (up) above else below, up
     )
@@ -50,6 +50,7 @@ private class GlassPortalEntry(
     var header by mutableFloatStateOf(0f)
     var rendered by mutableFloatStateOf(0f)
     var desiredBody by mutableFloatStateOf(0f)
+    var preferredWidth by mutableStateOf<Float?>(null)
 }
 
 private class GlassPortalState {
@@ -77,7 +78,7 @@ fun GlassOverlayHost(modifier: Modifier = Modifier, content: @Composable BoxScop
                 key(entry) {
                     if (window.height > 0f && entry.anchor.width > 0f) {
                         val safe = Rect(window.left + margin, window.top + top + margin, window.right - margin, maxOf(window.top + top + margin, window.bottom - bottom - margin))
-                        val placement = resolvePortalPlacement(entry.anchor, safe, entry.desiredBody, entry.header, entry.rendered, margin)
+                        val placement = resolvePortalPlacement(entry.anchor, safe, entry.desiredBody, entry.header, entry.rendered, margin, entry.preferredWidth ?: entry.anchor.width)
                         SideEffect { entry.onSpace(placement.bodySpace, placement.opensUp) }
                         BackHandler(enabled = state.entries.lastOrNull() === entry) { entry.dismiss() }
                         Box(Modifier.fillMaxSize().clickable(
@@ -105,9 +106,15 @@ internal fun AnchoredGlassPortal(
     onDismiss: () -> Unit,
     onSpaceAvailable: (Float, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    popupWidth: Dp? = null,
     content: @Composable () -> Unit
 ) {
     val host = LocalGlassPortals.current
+    val dialogHost = LocalDialogHost.current
+    DisposableEffect(active, dialogHost) {
+        if (active) dialogHost?.beginPortal()
+        onDispose { if (active) dialogHost?.endPortal() }
+    }
     val density = LocalDensity.current
     val currentContent by rememberUpdatedState(content)
     val currentDismiss by rememberUpdatedState(onDismiss)
@@ -119,6 +126,7 @@ internal fun AnchoredGlassPortal(
         entry.header = with(density) { anchorHeight.toPx() }
         entry.rendered = with(density) { renderedHeight.toPx() }
         entry.desiredBody = with(density) { desiredBodyHeight.toPx() }
+        entry.preferredWidth = popupWidth?.let { with(density) { it.toPx() } }
         if (host != null) {
             if (active && entry !in host.entries) {
                 host.entries.toList().forEach { it.dismiss() }

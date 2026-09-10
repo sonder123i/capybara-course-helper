@@ -53,6 +53,9 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = UserManager.getInstance().currentAccountStorageKey
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
+    val expectedSession = session.token
     var tab by rememberSaveable(account) { mutableIntStateOf(0) }
     var selectedCategory by rememberSaveable(account) { mutableStateOf("") }
     var courses by rememberPageData<List<Course>>("academic.courses.$selectedCategory") { emptyList() }
@@ -71,27 +74,35 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
     var batchConfirmation by remember(account) { mutableStateOf<List<Course>?>(null) }
     var selecting by remember(account) { mutableStateOf(false) }
     var batchJob by remember(account) { mutableStateOf<Job?>(null) }
-    var filter by remember(account) { mutableStateOf(AcademicCourseFilter()) }
+    var filter by rememberPageData("academic.courses.filter") { AcademicCourseFilter() }
     var draftFilter by remember(account) { mutableStateOf(filter) }
     var showFilters by remember(account) { mutableStateOf(false) }
     val visibleCourses = remember(courses, query, filter) { courses.filter {
         (query.isBlank() || listOf(it.name, it.teacher, it.courseId, it.jxbmc).any { value -> value.contains(query, true) }) && filter.matches(it)
     } }
 
-    LaunchedEffect(account, selectedCategory, revision) {
+    LaunchedEffect(account, selectedCategory, revision, expectedSession) {
         if (revision == 0 && coursesLoaded) { loading = false; return@LaunchedEffect }
         loading = true
         error = ""
         try {
-            val page = withContext(Dispatchers.IO) { AcademicCourseBridge.listCourses(school, account, CourseQuery(scopeId = selectedCategory)) }
-            if (UserManager.getInstance().currentAccountStorageKey == account) {
+            val page = withContext(Dispatchers.IO) { AcademicCourseBridge.listCourses(school, account, CourseQuery(scopeId = selectedCategory), expectedSession) }
+            if (sessions.isCurrent(expectedSession)) {
                 courses = page.courses
                 categories = page.context.scopes
                 coursesLoaded = true
             }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { error = e.message ?: "课程加载失败，请重试" }
-        finally { loading = false }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) error = e.message ?: "课程加载失败，请重试" }
+        finally { if (sessions.isCurrent(expectedSession) && kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive == true) loading = false }
+    }
+
+    LaunchedEffect(expectedSession) {
+        error = ""
+        pendingSelection = null
+        batchConfirmation = null
+        selecting = false
+        batchJob?.cancel()
     }
 
     fun select(course: Course) {
@@ -99,13 +110,13 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
         selecting = true
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { AcademicCourseBridge.select(school, account, course) }
-                if (UserManager.getInstance().currentAccountStorageKey != account) return@launch
+                val result = withContext(Dispatchers.IO) { AcademicCourseBridge.select(school, account, course, expectedSession) }
+                if (!sessions.isCurrent(expectedSession)) return@launch
                 GlassToaster.show(result.message.ifBlank { result.status.displayName() })
                 if (result.status in setOf(AcademicStatus.SUCCESS, AcademicStatus.ALREADY_SELECTED)) { revision++; selectedRevision++ }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { GlassToaster.show(e.message ?: "选课失败") }
-            finally { selecting = false }
+            catch (e: Exception) { if (sessions.isCurrent(expectedSession)) GlassToaster.show(e.message ?: "选课失败") }
+            finally { if (sessions.isCurrent(expectedSession)) selecting = false }
         }
     }
 
@@ -218,10 +229,10 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                                 scope.launch {
                                     try {
                                         val sections = withContext(Dispatchers.IO) {
-                                            classes.flatMap { AcademicCourseBridge.listSections(school, account, it) }
+                                            classes.flatMap { AcademicCourseBridge.listSections(school, account, it, expectedSession) }
                                                 .distinctBy { it.completeParams["academic_scope_id"] to it.classId }
                                         }
-                                        if (UserManager.getInstance().currentAccountStorageKey != account || selectedCategory != requestCategory || revision != requestRevision) return@launch
+                                        if (!sessions.isCurrent(expectedSession) || selectedCategory != requestCategory || revision != requestRevision) return@launch
                                         classes.forEach { requested ->
                                             courses = AcademicCourseBridge.mergeSections(courses, requested,
                                                 sections.filter { it.completeParams["academic_scope_id"] == requested.completeParams["academic_scope_id"] })
@@ -229,7 +240,12 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                                         complete(sections.isNotEmpty())
                                         if (sections.isEmpty()) GlassToaster.show("当前课程没有可查看的教学班，请刷新重试")
                                     } catch (e: CancellationException) { throw e }
-                                    catch (e: Exception) { complete(false); GlassToaster.show(e.message ?: "教学班加载失败，请重试") }
+                                    catch (e: Exception) {
+                                        if (sessions.isCurrent(expectedSession) && selectedCategory == requestCategory && revision == requestRevision) {
+                                            complete(false)
+                                            GlassToaster.show(e.message ?: "教学班加载失败，请重试")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -242,15 +258,20 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
         SystemConfirmDialog(title = "确认批量选课", text = "按顺序提交已勾选的 ${selected.size} 个教学班。验证码、登录失效或结果待确认时，将停止后续提交。",
             confirmText = "确认提交", onDismiss = { batchConfirmation = null }, onConfirm = {
                 batchConfirmation = null
-                if (!selecting) {
+                if (!selecting && sessions.isCurrent(expectedSession)) {
                     selecting = true
                     batchJob = scope.launch {
                         try {
-                            val result = withContext(Dispatchers.IO) { runAcademicBatch(selected) { AcademicCourseBridge.select(school, account, it) } }
+                            val result = withContext(Dispatchers.IO) { runAcademicBatch(selected) { AcademicCourseBridge.select(school, account, it, expectedSession) } }
+                            if (!sessions.isCurrent(expectedSession)) return@launch
                             GlassToaster.show("已提交 ${result.attempted} 个，成功 ${result.succeeded} 个" + if (result.stopped) "；${result.message}" else "")
                         } catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { GlassToaster.show(e.message ?: "批量选课已停止") }
-                        finally { selecting = false; multiSelect = false; checkedIds = emptySet(); revision++; selectedRevision++ }
+                        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) GlassToaster.show(e.message ?: "批量选课已停止") }
+                        finally {
+                            if (sessions.isCurrent(expectedSession)) {
+                                selecting = false; multiSelect = false; checkedIds = emptySet(); revision++; selectedRevision++
+                            }
+                        }
                     }
                 }
             })
@@ -281,9 +302,12 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
 }
 
 @Composable
-fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0) {
+fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0, onLoadingChange: (Boolean) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val account = UserManager.getInstance().currentAccountStorageKey
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
+    val expectedSession = session.token
     var courses by rememberPageData<List<Course>>("academic.selected") { emptyList() }
     var loadedRevision by rememberPageData("academic.selected.loadedRevision") { -1 }
     var loading by remember(account) { mutableStateOf(true) }
@@ -291,15 +315,18 @@ fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0)
     var dropping by remember(account) { mutableStateOf(false) }
     var revision by remember(account) { mutableIntStateOf(0) }
     var pendingDrop by remember(account) { mutableStateOf<Course?>(null) }
-    LaunchedEffect(account, revision, refreshRevision) {
+    val currentLoadingChange by rememberUpdatedState(onLoadingChange)
+    LaunchedEffect(loading) { currentLoadingChange(loading) }
+    LaunchedEffect(expectedSession) { error = ""; pendingDrop = null; dropping = false }
+    LaunchedEffect(account, revision, refreshRevision, expectedSession) {
         if (revision == 0 && loadedRevision == refreshRevision) { loading = false; return@LaunchedEffect }
         loading = true; error = ""
         try {
-            val loaded = withContext(Dispatchers.IO) { AcademicCourseBridge.selectedCourses(school, account) }
-            if (UserManager.getInstance().currentAccountStorageKey == account) { courses = loaded; loadedRevision = refreshRevision }
+            val loaded = withContext(Dispatchers.IO) { AcademicCourseBridge.selectedCourses(school, account, expectedSession) }
+            if (sessions.isCurrent(expectedSession)) { courses = loaded; loadedRevision = refreshRevision }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { error = e.message ?: "已选课程加载失败" }
-        finally { loading = false }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) error = e.message ?: "已选课程加载失败" }
+        finally { if (sessions.isCurrent(expectedSession) && kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive == true) loading = false }
     }
     if (error.isNotBlank()) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         SystemEmptyState(title = "已选课程加载失败", message = error) { SystemSecondaryButton(text = "重试", onClick = { revision++ }) }
@@ -309,13 +336,13 @@ fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0)
             pendingDrop = null; dropping = true
             scope.launch {
                 try {
-                    val result = withContext(Dispatchers.IO) { AcademicCourseBridge.drop(school, account, course) }
-                    if (UserManager.getInstance().currentAccountStorageKey == account) {
+                    val result = withContext(Dispatchers.IO) { AcademicCourseBridge.drop(school, account, course, expectedSession) }
+                    if (sessions.isCurrent(expectedSession)) {
                         GlassToaster.show(result.message.ifBlank { result.status.displayName() }); revision++
                     }
                 } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { GlassToaster.show(e.message ?: "退课失败") }
-                finally { dropping = false }
+                catch (e: Exception) { if (sessions.isCurrent(expectedSession)) GlassToaster.show(e.message ?: "退课失败") }
+                finally { if (sessions.isCurrent(expectedSession)) dropping = false }
             }
         })
     }
@@ -325,6 +352,9 @@ fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0)
 fun AcademicGrabQueueRoute(school: SchoolConfig) {
     val context = LocalContext.current
     val account = UserManager.getInstance().currentAccountStorageKey
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
+    val expectedSession = session.token
     val store = remember(context) { AcademicGrabQueueStore(context) }
     val prefs = remember(context) { context.getSharedPreferences("grab_pro_prefs", Context.MODE_PRIVATE) }
     val scheduler = remember(context) { AcademicGrabScheduler(context) }
@@ -351,7 +381,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
     var pendingScheduledStart by remember(account) { mutableStateOf(false) }
     fun replace(updated: List<AcademicGrabItem>) { if (!running) { store.replace(account, updated); items = updated } }
     fun start(scheduled: Boolean = false) {
-        if (UserManager.getInstance().currentAccountStorageKey != account || running) return
+        if (!sessions.isCurrent(expectedSession) || running) return
         val delay = interval.toIntOrNull()
         val attempts = maxRetry.toIntOrNull()
         if (delay == null || delay < 500 || attempts == null || attempts !in 1..1000) {
@@ -469,7 +499,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
             }
         }, confirmButton = {
             SystemPrimaryButton(text = "添加", enabled = inputCourse.isNotBlank() && !running, onClick = {
-                if (UserManager.getInstance().currentAccountStorageKey != account) return@SystemPrimaryButton
+                if (!sessions.isCurrent(expectedSession)) return@SystemPrimaryButton
                 val added = store.add(AcademicGrabItem(account, school.id, inputCourse.trim(), inputTeacher.trim(), inputTime.trim(), useExactMatch = false))
                 if (added) {
                     items = store.items(account); showManualAdd = false

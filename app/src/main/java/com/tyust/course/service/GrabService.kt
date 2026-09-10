@@ -560,8 +560,8 @@ class GrabService : Service() {
         val system = AcademicSystem.fromId(school.academicSystem)
         val workers = if (system?.serial == false && intent.getBooleanExtra(EXTRA_PARALLEL_MODE, false)) 2 else 1
         val currentUser = UserManager.getInstance()
-        AcademicGatewayFactory.importCookie(school, account, currentUser.savedCookie, replace = false,
-            username = currentUser.username.ifBlank { currentUser.studentId.orEmpty() })
+        val queueSession = java.util.concurrent.atomic.AtomicReference(currentUser.sessionState.token)
+        if (queueSession.get().accountStorageKey != account) return
         isRunning = true
         store.resetStatuses(account, items)
         successCount = 0; failCount = 0; retryCount = 0
@@ -574,21 +574,34 @@ class GrabService : Service() {
                 coroutineScope {
                     items.map { item -> launch {
                         semaphore.withPermit {
-                            if (queueHalted.get()) return@withPermit
+                            var expected = queueSession.get()
+                            if (queueHalted.get() || !currentUser.sessionState.isCurrent(expected)) return@withPermit
                             val adapter = AcademicGatewayFactory.create(school, account)
-                            ProtocolGrabRunner(adapter, canContinue = { !queueHalted.get() }) {
+                            lateinit var runner: ProtocolGrabRunner
+                            runner = ProtocolGrabRunner(adapter, canContinue = { !queueHalted.get() && currentUser.sessionState.isCurrent(expected) }) {
                                 val active = UserManager.getInstance()
-                                if (active.currentAccountStorageKey != account || !SessionRenewer.canRenew()) false
+                                if (!active.sessionState.isCurrent(expected) || !SessionRenewer.canRenew()) false
                                 else kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
-                                    SessionRenewer.renew(this@GrabService) { renewed ->
-                                        if (continuation.isActive) continuation.resumeWith(Result.success(
-                                            renewed && UserManager.getInstance().currentAccountStorageKey == account))
+                                    SessionRenewer.request(expected) { result ->
+                                        if (continuation.isActive) {
+                                            if (result is com.tyust.course.utils.SessionRecoveryResult.Recovered && active.sessionState.isCurrent(result.token)) {
+                                                expected = result.token
+                                                queueSession.set(result.token)
+                                                runner.replaceAdapter(AcademicGatewayFactory.create(school, account))
+                                                continuation.resumeWith(Result.success(true))
+                                            } else if (result is com.tyust.course.utils.SessionRecoveryResult.Superseded) {
+                                                continuation.cancel()
+                                            } else continuation.resumeWith(Result.success(false))
+                                        }
                                     }
                                 }
-                            }.runUntilDone(item, policy) { event ->
+                            }
+                            runner.runUntilDone(item, policy) { event ->
+                                val eventSession = expected
                                 if (event is GrabRunEvent.Attempt && queueHalted.get()) throw CancellationException("Queue requires attention")
                                 if (event is GrabRunEvent.Paused && event.status.blocksFurtherSelections()) queueHalted.set(true)
                                 handler.post {
+                                    if (!currentUser.sessionState.isCurrent(eventSession)) return@post
                                     when (event) {
                                         is GrabRunEvent.Attempt -> { store.setStatus(account, item, "GRABBING"); retryCount++; broadcastLog("正在尝试：${item.courseName} (${event.number})") }
                                         is GrabRunEvent.Success -> {
@@ -614,6 +627,7 @@ class GrabService : Service() {
                     } }.joinAll()
                 }
                 handler.post {
+                    if (!currentUser.sessionState.isCurrent(queueSession.get())) return@post
                     isRunning = false
                     broadcastLog(if (queueHalted.get()) "教务队列已停止，请处理提示后重新启动" else "教务队列执行结束")
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -623,6 +637,7 @@ class GrabService : Service() {
                 throw e
             } catch (e: Exception) {
                 handler.post {
+                    if (!currentUser.sessionState.isCurrent(queueSession.get())) return@post
                     isRunning = false
                     broadcastLog("教务任务已暂停：${e.message.orEmpty()}")
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1352,11 +1367,13 @@ class GrabService : Service() {
     
     // 检查 Cookie 有效性 (Pre-flight Check)
     private fun checkCookieValidity(school: SchoolConfig, callback: (Boolean) -> Unit) {
+        val sessions = UserManager.getInstance().sessionState
+        val expected = sessions.token
         CourseApiClient.getInstance().validateCookie(school, serviceAccountStorageKey, object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 // 网络错误暂时视为通过 (避免因网络波动误判为过期)
                 Log.w(TAG, "Cookie validity check failed (network error): ${e.message}")
-                handler.post { callback(true) }
+                handler.post { if (sessions.isCurrent(expected)) callback(true) }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -1368,6 +1385,7 @@ class GrabService : Service() {
                 val isValid = !studentName.isNullOrEmpty()
 
                 handler.post {
+                    if (!sessions.isCurrent(expected)) return@post
                     if (isValid) {
                         Log.d(TAG, "Cookie 有效，学生姓名: $studentName")
                         callback(true)
@@ -1375,11 +1393,11 @@ class GrabService : Service() {
                         Log.w(TAG, "Cookie 已失效，尝试静默续期")
                         if (com.tyust.course.utils.SessionRenewer.canRenew()) {
                             broadcastLog("注意：登录状态已失效，正在自动续期")
-                            com.tyust.course.utils.SessionRenewer.renew(this@GrabService) { renewed ->
-                                if (renewed) {
+                            com.tyust.course.utils.SessionRenewer.request(expected) { result ->
+                                if (result is com.tyust.course.utils.SessionRecoveryResult.Recovered && sessions.isCurrent(result.token)) {
                                     broadcastLog("成功：登录状态已恢复，继续执行")
                                     callback(true)
-                                } else {
+                                } else if (result is com.tyust.course.utils.SessionRecoveryResult.NeedsLogin && sessions.isCurrent(expected)) {
                                     handleCookieInvalid()
                                     callback(false)
                                 }

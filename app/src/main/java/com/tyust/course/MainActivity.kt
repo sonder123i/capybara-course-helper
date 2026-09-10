@@ -7,6 +7,13 @@ import android.graphics.Paint
 import android.graphics.Picture
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.tyust.course.utils.SessionRenewer
+import com.tyust.course.utils.RecoveryPhase
+import com.tyust.course.ui.system.SessionNoticeViewModel
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedContent
@@ -151,17 +158,11 @@ class MainActivity : FragmentActivity() {
         if (BuildConfig.UI_PREVIEW) {
             userManager.startDemoSession(com.tyust.course.demo.DemoData.school())
         }
-        if (userManager.hasSavedCookie() && userManager.currentSchool != null) {
-            com.tyust.course.network.CourseApiClient.getInstance().setCookie(
-                userManager.currentSchool.baseUrl,
-                userManager.savedCookie
-            )
-        }
 
         SmartSelector.getInstance().init(this)
         com.tyust.course.network.CourseApiClient.getInstance().init(this)
 
-        if (!UserManager.getInstance().isLoggedIn) {
+        if (!userManager.isLoggedIn && !(userManager.hasSavedCookie() && userManager.sessionState.state.value.expired)) {
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -231,11 +232,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     var showStarDialog by rememberSaveable { mutableStateOf(false) }
     var startupOverlaysReady by remember { mutableStateOf(false) }
 
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    var currentAccountStorageKey by remember { mutableStateOf(UserManager.getInstance().currentAccountStorageKey) }
+    val sessionStore = UserManager.getInstance().sessionState
+    val session by sessionStore.state.collectAsState()
+    val currentAccountStorageKey = session.token.accountStorageKey
     val accessibility = rememberGlassAccessibilityMode()
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
+    var selectedTab by remember(pageData) { pageData.state("navigation.tab") { 0 } }
     val dialogHostState = rememberDialogHostState()
     val density = LocalDensity.current
     val pageTravelPx = with(density) { 8.dp.roundToPx() }
@@ -247,9 +250,38 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         BottomNavItem.Settings
     ) }
     val updateState = rememberUpdateState()
-    val sessionStore = UserManager.getInstance().sessionState
-    val session by sessionStore.state.collectAsState()
-    var isTokenExpired by remember(session.token) { mutableStateOf(false) }
+    val recovery by SessionRenewer.state.collectAsState()
+    val isTokenExpired = session.expired && recovery.token == session.token && recovery.phase == RecoveryPhase.NeedsLogin
+    val isRecovering = session.expired && !isTokenExpired
+    val noticeModel: SessionNoticeViewModel = viewModel()
+    val sessionNotice by noticeModel.notices.state.collectAsState()
+    var foreground by remember { mutableStateOf(fragmentActivity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    val relogin = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            SessionRenewer.sessionChanged()
+            val current = sessionStore.state.value
+            if (!current.expired) noticeModel.notices.update(current, needsLogin = false, canPresent = false)
+        }
+    }
+    val beginRelogin: () -> Unit = {
+        if (sessionStore.isCurrent(session.token) && sessionStore.state.value.expired) {
+            noticeModel.notices.dismiss(session.token)
+            relogin.launch(Intent(fragmentActivity, LoginActivity::class.java).apply {
+                putExtra("force_relogin", true)
+                putExtra(LoginActivity.EXTRA_RETURN_TO_CALLER, true)
+            })
+        }
+    }
+    DisposableEffect(fragmentActivity) {
+        val observer = LifecycleEventObserver { _, _ ->
+            foreground = fragmentActivity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        fragmentActivity.lifecycle.addObserver(observer)
+        onDispose { fragmentActivity.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(session, isTokenExpired, foreground, dialogHostState.hasBlockingSurface) {
+        noticeModel.notices.update(session, isTokenExpired, foreground && !dialogHostState.hasBlockingSurface)
+    }
 
     // 底栏滚动最小化：捕获页面内任意滚动的方向（nested scroll 冒泡，页面零改动）
     var navBarMinimized by remember { mutableStateOf(false) }
@@ -306,19 +338,12 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     }
 
     LaunchedEffect(session.token, session.expired) {
-        if (!session.expired) return@LaunchedEffect
-        if (com.tyust.course.utils.SessionRenewer.canRenew()) {
-            GlassToaster.show("登录状态已失效，正在自动续期…")
-            com.tyust.course.utils.SessionRenewer.renew(fragmentActivity) { renewed ->
-                if (sessionStore.isCurrent(session.token)) isTokenExpired = !renewed
-            }
-        } else {
-            isTokenExpired = true
-        }
+        SessionRenewer.sessionChanged()
+        if (session.expired) SessionRenewer.request(session.token)
     }
 
-    DisposableEffect(fragmentActivity, session.token) {
-        if (!isDemoMode && UserManager.getInstance().currentSchool != null && !session.expired) {
+    DisposableEffect(fragmentActivity, session.token, session.expired, foreground) {
+        if (foreground && !isDemoMode && UserManager.getInstance().currentSchool != null && !session.expired) {
             com.tyust.course.utils.CookieWatchdog.start(fragmentActivity)
         }
         onDispose {
@@ -328,20 +353,9 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
 
     val updateInfo = updateState.updateInfo()
     SchoolAdaptationCompletionReminder(
-        enabled = !isDemoMode && startupOverlaysReady && !showStarDialog && !updateState.showDialog(),
+        enabled = !isDemoMode && !session.expired && startupOverlaysReady && !showStarDialog && !updateState.showDialog(),
         accountScopeKey = currentAccountStorageKey
     )
-    if (updateState.showDialog() && updateInfo != null) {
-        UpdateDialog(
-            updateInfo = updateInfo,
-            currentVersion = updateState.getCurrentVersion(),
-            onDismiss = { updateState.dismiss() },
-            onUpdate = { updateState.startDownload() },
-            downloadProgress = updateState.downloadProgress(),
-            isDownloading = updateState.isDownloading()
-        )
-    }
-
     GlassOverlayHost(modifier = Modifier.fillMaxSize()) {
         val useGlass = isBackdropSupported()
         // debug 平铺水印的开关。**它绝不能进任何 backdrop 捕获层**，见文件末尾
@@ -352,14 +366,12 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             ) != 0 && !BuildConfig.UI_PREVIEW
         val tokenExpiredNotice = if (isTokenExpired) {
             FloatingNotice(
-                message = "登录状态已失效",
+                message = "需要重新登录",
                 actionLabel = "重新登录",
-                onClick = {
-                    val intent = Intent(fragmentActivity, LoginActivity::class.java)
-                    intent.putExtra("force_relogin", true)
-                    fragmentActivity.startActivity(intent)
-                }
+                onClick = beginRelogin
             )
+        } else if (isRecovering) {
+            FloatingNotice(message = "正在恢复登录状态", actionLabel = "恢复中", onClick = {})
         } else {
             null
         }
@@ -425,13 +437,15 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         // 所以一张就够；将来若有别的档位要 blur→lens，它得自己再建一张 ——
         // 差一档模糊，折射里的内容就和屏幕上的对不上。
         val modalLensBlurPx = with(appLensDensity) { GlassRecipe.DialogBlurDp.dp.toPx() }
-        val modalLensAnchor = if (wallpaperBackdrop != null) {
+        val modalLensAnchor = if (navBarBackdrop != null) {
             com.tyust.course.ui.system.glass.rememberGlassLensRegion(
                 tag = "app-modal",
+                keys = arrayOf(selectedTab, session.token, dialogHostState.currentDialog),
+                freshness = lensFreshness,
                 // 壁纸同上，由锚点自己盯
                 drawSource = { coords ->
                     drawBlurred(modalLensBlurPx) {
-                        drawBackdropSource(wallpaperBackdrop, appLensDensity, coords)
+                        drawBackdropSource(navBarBackdrop, appLensDensity, coords)
                     }
                 }
             )
@@ -448,6 +462,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             LocalPageDataState provides pageData,
             LocalFloatingNotice provides tokenExpiredNotice,
             LocalNoticeAnchor provides noticeAnchorState,
+            com.tyust.course.ui.system.glass.LocalPageGlassFreshness provides lensFreshness,
             com.tyust.course.ui.system.glass.LocalGlassLensAnchor provides appLensAnchor,
             com.tyust.course.ui.system.glass.LocalGlassLensModalAnchor provides modalLensAnchor
         ) {
@@ -521,12 +536,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                     1 -> com.tyust.course.ui.route.ScheduleRoute()
                                     2 -> com.tyust.course.ui.route.GrabProRoute()
                                     3 -> com.tyust.course.ui.route.GradesRoute()
-                                    4 -> com.tyust.course.ui.route.SettingsRoute(
-                                        onAccountChanged = {
-                                            currentAccountStorageKey =
-                                                UserManager.getInstance().currentAccountStorageKey
-                                        }
-                                    )
+                                    4 -> com.tyust.course.ui.route.SettingsRoute()
                                     else -> com.tyust.course.ui.route.CourseListRoute()
                                 }
                               }
@@ -566,6 +576,29 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 modifier = Modifier.fillMaxSize()
             )
 
+            if (!session.expired && updateState.showDialog() && updateInfo != null) {
+                UpdateDialog(
+                    updateInfo = updateInfo,
+                    currentVersion = updateState.getCurrentVersion(),
+                    onDismiss = { updateState.dismiss() },
+                    onUpdate = { updateState.startDownload() },
+                    downloadProgress = updateState.downloadProgress(),
+                    isDownloading = updateState.isDownloading()
+                )
+            }
+
+            if (sessionNotice.token == session.token && sessionNotice.visible && isTokenExpired) {
+                key(session.token) {
+                    com.tyust.course.ui.system.SessionExpiryPrompt(
+                        hasCachedContent = pageData.hasCachedContent,
+                        onLater = { noticeModel.notices.dismiss(session.token) },
+                        onLogin = {
+                            if (sessionStore.isCurrent(session.token) && sessionStore.state.value.expired) beginRelogin()
+                        }
+                    )
+                }
+            }
+
             // 悬浮玻璃通知：叠加在正文之上，落点由顶栏上报的底边决定，不压顶栏操作
             FloatingNoticeHost(modifier = Modifier.fillMaxSize())
 
@@ -579,7 +612,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 )
             }
 
-            if (showStarDialog && !updateState.showDialog()) {
+            if (!session.expired && showStarDialog && !updateState.showDialog()) {
                 val dialogTitle = when (dismissCount) {
                     0 -> "在 GitHub 上支持这个项目"
                     1 -> "一个 Star，就是最好的反馈"

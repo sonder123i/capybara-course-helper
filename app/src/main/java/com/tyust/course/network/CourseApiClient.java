@@ -30,6 +30,7 @@ public class CourseApiClient {
         private static final ThreadLocal<String> REQUEST_ACCOUNT_STORAGE_KEY = new ThreadLocal<>();
         private static final ThreadLocal<SessionToken> REQUEST_SESSION_TOKEN = new ThreadLocal<>();
         private static final ThreadLocal<String> ACCOUNT_OVERRIDE_STORAGE_KEY = new ThreadLocal<>();
+        private static final ThreadLocal<SessionToken> SESSION_OVERRIDE = new ThreadLocal<>();
         private static volatile CourseApiClient instance;
         private final OkHttpClient client;
         private final CookieJarImpl cookieJar;
@@ -109,6 +110,9 @@ public class CourseApiClient {
                                                 }
                                         }
 
+                                        if (requestSession != null && !UserManager.getInstance().getSessionState().isCurrent(requestSession)) {
+                                                throw new IOException("Session replaced");
+                                        }
                                         Response response = chain.proceed(request);
 
                                         // 🌐 【高精度重定向检测】若原请求非登录相关，但响应 URL 变为登录相关，判定为 Cookie 过期重定向
@@ -271,7 +275,8 @@ public class CourseApiClient {
 
         private Request.Builder accountAwareRequestBuilder() {
                 String account = getCurrentAccountStorageKeySafely();
-                SessionToken token = UserManager.getInstance().getSessionState().getToken();
+                SessionToken token = SESSION_OVERRIDE.get();
+                if (token == null) token = UserManager.getInstance().getSessionState().getToken();
                 return new Request.Builder()
                                 .header(INTERNAL_ACCOUNT_HEADER, account)
                                 .tag(SessionToken.class, account.equals(token.getAccountStorageKey()) ? token : null);
@@ -279,13 +284,6 @@ public class CourseApiClient {
 
         private String displayParamsCacheKey(String xkkzId) {
                 return getCurrentAccountStorageKeySafely() + "::" + (xkkzId != null ? xkkzId : "");
-        }
-
-        public void notifyCookieExpired(String accountStorageKey) {
-                SessionToken token = UserManager.getInstance().getSessionState().getToken();
-                if (accountStorageKey == null || accountStorageKey.isEmpty() || accountStorageKey.equals(token.getAccountStorageKey())) {
-                        notifyCookieExpired(token);
-                }
         }
 
         public void notifyCookieExpired(SessionToken token) {
@@ -299,6 +297,22 @@ public class CourseApiClient {
                         intent.putExtra(EXTRA_SESSION_GENERATION, token.getGeneration());
                         appContext.sendBroadcast(intent);
                 });
+        }
+
+        public <T> T runWithSession(SessionToken token, AccountScopedOperation<T> operation) {
+                SessionToken previous = SESSION_OVERRIDE.get();
+                SESSION_OVERRIDE.set(token);
+                try {
+                        return runWithAccount(token.getAccountStorageKey(), operation);
+                } finally {
+                        if (previous == null) SESSION_OVERRIDE.remove();
+                        else SESSION_OVERRIDE.set(previous);
+                }
+        }
+
+        private Callback sessionBound(Callback callback) {
+                return new SessionBoundCallback(UserManager.getInstance().getSessionState(), callback,
+                                (token, action) -> token == null ? action.invoke() : runWithSession(token, action::invoke));
         }
 
         public static boolean isCurrentSessionEvent(Intent intent) {
@@ -400,7 +414,7 @@ public class CourseApiClient {
                                 .url(url)
                                 .build();
                 Call call = client.newCall(request);
-                call.enqueue(callback);
+                call.enqueue(sessionBound(callback));
                 return call;
         }
 
@@ -424,7 +438,7 @@ public class CourseApiClient {
                                 .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .callTimeout(timeoutMs + 500, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .build();
-                healthClient.newCall(request).enqueue(callback);
+                healthClient.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void checkServerHealth(SchoolConfig school, String accountStorageKey, long timeoutMs, Callback callback) {
@@ -443,7 +457,7 @@ public class CourseApiClient {
                                 .url(url)
                                 .cacheControl(okhttp3.CacheControl.FORCE_NETWORK) // Prevent caching
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void fetchCourseParams(SchoolConfig school, String accountStorageKey, Callback callback) {
@@ -498,7 +512,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void fetchCourseDisplayParams(SchoolConfig school, String xkkz_id, String kklxdm,
@@ -562,7 +576,7 @@ public class CourseApiClient {
                                         okhttp3.MediaType.parse("application/x-www-form-urlencoded")));
                 }
 
-                client.newCall(builder.build()).enqueue(callback);
+                client.newCall(builder.build()).enqueue(sessionBound(callback));
         }
 
         public String fetchAvailableCoursesSync(SchoolConfig school, String postBody) {
@@ -660,7 +674,7 @@ public class CourseApiClient {
                                         okhttp3.MediaType.parse("application/x-www-form-urlencoded")));
                 }
 
-                client.newCall(builder.build()).enqueue(callback);
+                client.newCall(builder.build()).enqueue(sessionBound(callback));
         }
 
         public void fetchAvailableCourses(SchoolConfig school, String postBody, String accountStorageKey, Callback callback) {
@@ -685,7 +699,7 @@ public class CourseApiClient {
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
 
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void selectCourse(SchoolConfig school, String postBody, String accountStorageKey, Callback callback) {
@@ -710,7 +724,7 @@ public class CourseApiClient {
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
 
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void fetchCourseSelectionDetails(SchoolConfig school, String postBody, String accountStorageKey, Callback callback) {
@@ -749,7 +763,7 @@ public class CourseApiClient {
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
 
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 获取课表 (POST with xnm/xqm params)
@@ -765,7 +779,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 获取成绩 (单学期)
@@ -785,7 +799,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void fetchGradeDetails(SchoolConfig school, String semester, Callback callback) {
@@ -803,7 +817,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 获取考试安排
@@ -821,7 +835,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 获取总体成绩参数页面 (Step 1: GET HTML page to extract xfyqjd_id)
@@ -833,7 +847,7 @@ public class CourseApiClient {
                                 .url(url)
                                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 获取总体成绩数据 (Step 2: POST with xfyqjd_id to get grades)
@@ -850,7 +864,7 @@ public class CourseApiClient {
                                 .post(okhttp3.RequestBody.create(postBody,
                                                 okhttp3.MediaType.parse("application/x-www-form-urlencoded")))
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 旧的接口 - 兼容性 (已弃用)
@@ -860,7 +874,7 @@ public class CourseApiClient {
                                 .url(baseUrl + "/jwglxt/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512")
                                 .header("User-Agent", "Mozilla/5.0")
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         // 内部类 CookieJar (线程安全版)
@@ -1181,7 +1195,7 @@ public class CourseApiClient {
                                                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
                                 .get()
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void getPublicKey(SchoolConfig school, Callback callback) {
@@ -1195,7 +1209,7 @@ public class CourseApiClient {
                                 .header("X-Requested-With", "XMLHttpRequest")
                                 .get()
                                 .build();
-                client.newCall(request).enqueue(callback);
+                client.newCall(request).enqueue(sessionBound(callback));
         }
 
         public void getCaptchaImage(SchoolConfig school, Callback callback) {
@@ -1279,7 +1293,7 @@ public class CourseApiClient {
                                 .header("Referer", school.getBaseUrl() + school.loginPagePath)
                                 .post(formBody)
                                 .build();
-                noRedirectClient.newCall(request).enqueue(callback);
+                noRedirectClient.newCall(request).enqueue(sessionBound(callback));
         }
 
         public String getCookieString(SchoolConfig school) {

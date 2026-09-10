@@ -121,7 +121,16 @@ fun SettingsRoute(
     var accountsWithPassword by remember { mutableStateOf<Set<String>>(emptySet()) }
     var currentAccountKey by remember { mutableStateOf("") }
     var canRefreshCookie by remember { mutableStateOf(false) }
-    var isRefreshingCookie by remember { mutableStateOf(false) }
+    val session by UserManager.getInstance().sessionState.state.collectAsState()
+    var cookieUpdateFeedback by remember {
+        mutableStateOf<Pair<com.tyust.course.manager.SessionToken, com.tyust.course.ui.system.SymbolResult>?>(null)
+    }
+    val cookieUpdateResult = cookieUpdateFeedback?.takeIf { it.first == session.token }?.second
+        ?: com.tyust.course.ui.system.SymbolResult.None
+    val recovery by com.tyust.course.utils.SessionRenewer.state.collectAsState()
+    val isRefreshingCookie = recovery.token == session.token &&
+        recovery.phase == com.tyust.course.utils.RecoveryPhase.Restoring
+    val relogin = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     
     // Update States
     val updateManager = remember { UpdateManager.getInstance(context) }
@@ -181,7 +190,7 @@ fun SettingsRoute(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(session.token) {
         refreshAccountUiState()
     }
     
@@ -274,100 +283,34 @@ fun SettingsRoute(
     }
 
     fun refreshCookieManually() {
-        if (isDemoMode) {
-            GlassToaster.show("本地演示模式没有远程 Cookie")
-            return
-        }
-        val userManager = UserManager.getInstance()
-        val school = userManager.currentSchool
-        if (isRefreshingCookie) return
-        if (school == null) {
-            GlassToaster.show("请先选择学校")
-            return
-        }
-        if (userManager.loginMode != "password") {
-            GlassToaster.show("仅密码登录账号支持手动更新 Cookie")
-            return
-        }
-        if (!userManager.canAutoRelogin()) {
-            GlassToaster.show("未找到该账号的已存密码，请重新登录后再更新")
-            return
-        }
-
-        val requestAccountKey = userManager.currentAccountStorageKey
-        val requestSession = userManager.sessionState.token
-        val requestSchoolId = school.id
-        val requestUsername = userManager.username
-        val requestPassword = userManager.accountPassword
-        isRefreshingCookie = true
-        val gateway = PasswordLoginGatewayFactory.create(school)
-        gateway.login(school, requestUsername, requestPassword, object : PasswordLoginCallback {
-            private var hasNotifiedCancellation = false
-
-            private fun isRequestCurrent(): Boolean {
-                val currentSchool = userManager.currentSchool
-                return userManager.sessionState.isCurrent(requestSession) &&
-                    userManager.currentAccountStorageKey == requestAccountKey &&
-                    currentSchool?.id == requestSchoolId &&
-                    userManager.username == requestUsername
-            }
-
-            private fun postToUi(block: () -> Unit) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post post@{
-                    if (!isRequestCurrent()) {
-                        isRefreshingCookie = false
-                        if (!hasNotifiedCancellation) {
-                            hasNotifiedCancellation = true
-                            GlassToaster.show("登录状态已更新，本次 Cookie 更新已取消")
-                        }
-                        return@post
+        if (isDemoMode || isRefreshingCookie) return
+        cookieUpdateFeedback = null
+        val user = UserManager.getInstance()
+        val expected = user.sessionState.token
+        com.tyust.course.utils.SessionRenewer.request(expected, manual = true) { result ->
+            when (result) {
+                is com.tyust.course.utils.SessionRecoveryResult.Recovered -> {
+                    if (user.sessionState.isCurrent(result.token)) {
+                        cookieUpdateFeedback = result.token to com.tyust.course.ui.system.SymbolResult.Success
+                        refreshAccountUiState()
+                        GlassToaster.show("登录状态已更新")
                     }
-                    block()
                 }
-            }
-
-            override fun onSuccess(cookie: String) {
-                gateway.clearSensitiveState()
-                postToUi {
-                    userManager.saveCookie(cookie)
-                    isRefreshingCookie = false
-                    refreshAccountUiState()
-                    GlassToaster.show("Cookie 已更新")
+                is com.tyust.course.utils.SessionRecoveryResult.NeedsLogin -> {
+                    if (user.sessionState.isCurrent(expected)) {
+                        cookieUpdateFeedback = expected to com.tyust.course.ui.system.SymbolResult.Failure
+                        GlassToaster.show(
+                        when (result.reason) {
+                            com.tyust.course.utils.RecoveryFailure.Network -> "暂时无法连接，请稍后重试"
+                            com.tyust.course.utils.RecoveryFailure.Storage -> "保存失败，请重试"
+                            else -> "需要重新登录以更新登录状态"
+                        }
+                        )
+                    }
                 }
+                com.tyust.course.utils.SessionRecoveryResult.Superseded -> Unit
             }
-
-            override fun onCaptchaRequired(imageBytes: ByteArray) {
-                gateway.clearSensitiveState()
-                postToUi {
-                    isRefreshingCookie = false
-                    GlassToaster.show("更新 Cookie 需要验证码，请重新使用密码登录")
-                }
-            }
-
-            override fun onCaptchaInvalid() {
-                gateway.clearSensitiveState()
-                postToUi {
-                    isRefreshingCookie = false
-                    GlassToaster.show("验证码校验失败，请重新使用密码登录")
-                }
-            }
-
-            override fun onInvalidCredentials() {
-                gateway.clearSensitiveState()
-                postToUi {
-                    isRefreshingCookie = false
-                    GlassToaster.show("密码已失效，请重新登录")
-                }
-            }
-
-            override fun onError(message: String) {
-                gateway.clearSensitiveState()
-                postToUi {
-                    isRefreshingCookie = false
-                    GlassToaster.show("更新失败：$message")
-                }
-            }
-        })
+        }
     }
     
     if (showSchoolAdaptation) {
@@ -377,7 +320,7 @@ fun SettingsRoute(
     }
 
     // Update Dialog
-    if (showUpdateDialog && updateInfo != null) {
+    if (showUpdateDialog && updateInfo != null && !session.expired) {
         UpdateDialog(
             updateInfo = updateInfo!!,
             currentVersion = currentVersion,
@@ -399,7 +342,12 @@ fun SettingsRoute(
         onSchoolSelect = {
             if (isDemoMode) GlassToaster.show("演示学校固定为本地数据源") else showSchoolDialog = true
         },
-        onCookieConfig = { performLogout() },
+        onCookieConfig = {
+            relogin.launch(Intent(context, LoginActivity::class.java).apply {
+                putExtra("force_relogin", true)
+                putExtra(LoginActivity.EXTRA_RETURN_TO_CALLER, true)
+            })
+        },
         onAccountManage = {
             if (isDemoMode) GlassToaster.show("本地演示模式不读取真实账号") else showAccountManagerDialog = true
         },

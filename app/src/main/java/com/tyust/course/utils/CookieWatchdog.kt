@@ -14,68 +14,52 @@ import okhttp3.Callback
 import okhttp3.Response
 import java.io.IOException
 
-/** One cancellable check and one timer per session; lifecycle state belongs to the main thread. */
 object CookieWatchdog {
     private const val DEFAULT_INTERVAL_MS = 5 * 60 * 1000L
     private val handler = Handler(Looper.getMainLooper())
     private val academicScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var academicCheck: Job? = null
-    private var legacyCheck: Call? = null
-    private var watchedSession: SessionToken? = null
     private var watchedSchool: SchoolConfig? = null
     private var context: Context? = null
     private var intervalMs = DEFAULT_INTERVAL_MS
-    private var runId = 0L
+    private val loop by lazy {
+        SessionCheckLoop(UserManager.getInstance().sessionState,
+            schedule = { delay, action ->
+                val task = Runnable(action)
+                handler.postDelayed(task, delay)
+                val cancel: () -> Unit = { handler.removeCallbacks(task) }
+                cancel
+            }, check = ::check, onExpired = ::recover)
+    }
 
-    private fun onMain(block: () -> Unit) {
+    private fun onMain(block: () -> Unit): Unit {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post(block)
     }
 
     @JvmStatic
     fun start(ctx: Context, intervalMs: Long = DEFAULT_INTERVAL_MS): Unit = onMain {
         val user = UserManager.getInstance()
-        val token = user.sessionState.token
-        if (watchedSession == token) return@onMain
-        stop()
         watchedSchool = user.currentSchool ?: return@onMain
-        watchedSession = token
         context = ctx.applicationContext
         this.intervalMs = intervalMs
-        handler.postDelayed(checkRunnable, 30_000L)
+        loop.start(user.sessionState.token, intervalMs)
     }
 
     @JvmStatic
-    fun stop(): Unit = onMain {
-        runId++
-        handler.removeCallbacks(checkRunnable)
-        academicCheck?.cancel()
-        legacyCheck?.cancel()
-        academicCheck = null
-        legacyCheck = null
-        watchedSession = null
-        watchedSchool = null
-    }
+    fun stop(): Unit = onMain { loop.stop() }
 
-    private fun ownsCheck(id: Long, token: SessionToken): Boolean =
-        runId == id && watchedSession == token && UserManager.getInstance().sessionState.isCurrent(token)
-
-    private fun scheduleNext(id: Long, token: SessionToken): Unit {
-        if (!ownsCheck(id, token)) return
-        handler.removeCallbacks(checkRunnable)
-        handler.postDelayed(checkRunnable, intervalMs)
-    }
-
-    private fun complete(id: Long, token: SessionToken, expired: Boolean): Unit = onMain {
-        if (!ownsCheck(id, token)) return@onMain
-        if (!expired) { scheduleNext(id, token); return@onMain }
-        val ctx = context
-        if (ctx != null && SessionRenewer.canRenew()) {
-            SessionRenewer.renew(ctx) { renewed ->
-                if (renewed && runId == id && UserManager.getInstance().currentAccountStorageKey == token.accountStorageKey) {
-                    start(ctx, intervalMs)
-                } else if (ownsCheck(id, token)) {
-                    CourseApiClient.getInstance().notifyCookieExpired(token)
-                    stop()
+    private fun recover(token: SessionToken, runId: Long): Unit {
+        val ctx = context ?: return
+        if (SessionRenewer.canRenew()) {
+            SessionRenewer.request(token) { result ->
+                if (loop.isActive(runId)) when (result) {
+                    is SessionRecoveryResult.Recovered -> {
+                        if (UserManager.getInstance().sessionState.isCurrent(result.token)) start(ctx, intervalMs)
+                    }
+                    is SessionRecoveryResult.NeedsLogin -> {
+                        CourseApiClient.getInstance().notifyCookieExpired(token)
+                        stop()
+                    }
+                    SessionRecoveryResult.Superseded -> Unit
                 }
             }
         } else {
@@ -84,38 +68,33 @@ object CookieWatchdog {
         }
     }
 
-    private val checkRunnable: Runnable = Runnable {
-        val token = watchedSession ?: return@Runnable
-        val school = watchedSchool ?: return@Runnable
-        val id = runId
-        if (!ownsCheck(id, token)) return@Runnable
+    private fun check(token: SessionToken, complete: (Boolean) -> Unit): () -> Unit {
+        val school = watchedSchool ?: return { }
         if (AcademicGatewayFactory.supports(school)) {
-            val user = UserManager.getInstance()
-            val cookie = user.savedCookie
-            val username = user.username.ifBlank { user.studentId.orEmpty() }
-            academicCheck = academicScope.launch {
+            val gateway = AcademicGatewayFactory.create(school, token.accountStorageKey)
+            val job = academicScope.launch {
                 val result = try {
-                    AcademicGatewayFactory.importCookie(school, token.accountStorageKey, cookie, replace = false, username = username)
-                    AcademicGatewayFactory.create(school, token.accountStorageKey).validateSession().status
+                    gateway.validateSession().status
                 } catch (e: CancellationException) { throw e }
                 catch (e: AcademicException) { e.status }
                 catch (_: Exception) { AcademicStatus.NETWORK_RETRYABLE }
-                complete(id, token, result == AcademicStatus.SESSION_EXPIRED)
+                onMain { complete(result == AcademicStatus.SESSION_EXPIRED) }
             }
-        } else {
-            legacyCheck = CourseApiClient.getInstance().validateCookie(school, token.accountStorageKey, object : Callback {
-                override fun onFailure(call: Call, e: IOException) = complete(id, token, false)
-                override fun onResponse(call: Call, response: Response) {
-                    val expired = response.use {
-                        runCatching {
-                            val html = it.body?.string().orEmpty()
-                            html.contains("用户登录") || html.contains("登 录") || html.contains("slogin.html") ||
-                                html.contains("notLogin") || html.contains("name=\"yhm\"")
-                        }.getOrDefault(false)
-                    }
-                    complete(id, token, expired)
-                }
-            })
+            return { job.cancel() }
         }
+        val call = CourseApiClient.getInstance().validateCookie(school, token.accountStorageKey, object : Callback {
+            override fun onFailure(call: Call, e: IOException): Unit = onMain { complete(false) }
+            override fun onResponse(call: Call, response: Response) {
+                val expired = response.use {
+                    runCatching {
+                        val html = it.body?.string().orEmpty()
+                        html.contains("用户登录") || html.contains("登 录") || html.contains("slogin.html") ||
+                            html.contains("notLogin") || html.contains("name=\"yhm\"")
+                    }.getOrDefault(false)
+                }
+                onMain { complete(expired) }
+            }
+        })
+        return { call.cancel() }
     }
 }

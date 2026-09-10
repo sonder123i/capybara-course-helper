@@ -28,6 +28,7 @@ fun AcademicGradesRoute(school: SchoolConfig) {
     val account = UserManager.getInstance().currentAccountStorageKey
     val sessions = UserManager.getInstance().sessionState
     val session by sessions.state.collectAsState()
+    val expectedSession = session.token
     var tab by rememberSaveable(account) { mutableIntStateOf(0) }
     var report by rememberPageData("academic.grades") { AcademicGradeReport(emptyList()) }
     var reportLoaded by rememberPageData("academic.grades.loaded") { false }
@@ -46,41 +47,46 @@ fun AcademicGradesRoute(school: SchoolConfig) {
     val overallStats = remember(report) { AcademicStudyBridge.stats(report) }
 
     LaunchedEffect(account, revision, session.token) {
+        val expected = expectedSession
         if (revision == 0 && reportLoaded) { loading = false; return@LaunchedEffect }
         loading = true; error = ""
         try {
-            val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account).grades() }
-            if (!sessions.isCurrent(session.token)) return@LaunchedEffect
+            val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expected).grades() }
+            if (!sessions.isCurrent(expected)) return@LaunchedEffect
             report = loaded
             reportLoaded = true
             val available = AcademicStudyBridge.semesters(loaded.grades)
             if (semester.isBlank() || semester !in available) semester = available.firstOrNull() ?: AcademicStudyReader.calendarTerm().id
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
+            if (!sessions.isCurrent(expected)) return@LaunchedEffect
             error = e.message ?: "成绩加载失败，请重试"
             if ((e as? AcademicException)?.status == AcademicStatus.SESSION_EXPIRED)
-                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(session.token)
+                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expected)
         }
-        finally { loading = false }
+        finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) loading = false }
     }
     LaunchedEffect(account, tab, examRevision, session.token) {
+        val expected = expectedSession
         if (tab != 2 || examsLoaded) return@LaunchedEffect
         examLoading = true; examError = ""
         try {
             val loaded = withContext(Dispatchers.IO) {
-                val reader = AcademicStudyBridge.reader(school, account)
+                val reader = AcademicStudyBridge.reader(school, account, expected)
                 reader.exams(reader.catalog().currentTerm).map(AcademicStudyBridge::exam)
             }
-            if (!sessions.isCurrent(session.token)) return@LaunchedEffect
+            if (!sessions.isCurrent(expected)) return@LaunchedEffect
             exams = loaded; examsLoaded = true
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
+            if (!sessions.isCurrent(expected)) return@LaunchedEffect
             examError = e.message ?: "考试安排加载失败，请重试"
             if ((e as? AcademicException)?.status == AcademicStatus.SESSION_EXPIRED)
-                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(session.token)
+                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expected)
         }
-        finally { examLoading = false }
+        finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) examLoading = false }
     }
+    com.tyust.course.ui.system.ReportPageContent(report.grades.isNotEmpty() || exams.isNotEmpty())
     GradesScreen(currentTab = tab, onTabChange = { tab = it },
         semesterGrades = semesterGrades,
         semesters = semesters, currentSemester = semester, onSemesterChange = { semester = it },

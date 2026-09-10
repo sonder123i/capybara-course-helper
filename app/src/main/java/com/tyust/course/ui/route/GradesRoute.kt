@@ -10,6 +10,8 @@ import androidx.compose.ui.platform.LocalContext
 import com.tyust.course.demo.DemoData
 import com.tyust.course.manager.UserManager
 import com.tyust.course.manager.SessionToken
+import com.tyust.course.manager.SessionRequestTicket
+import com.tyust.course.manager.SessionRequestGate
 import com.tyust.course.model.SchoolConfig
 import com.tyust.course.network.CourseApiClient
 import com.tyust.course.ui.screen.ExamItemUi
@@ -39,6 +41,8 @@ fun GradesRoute() {
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val sessions = UserManager.getInstance().sessionState
     val session by sessions.state.collectAsState()
+    val requests = remember { SessionRequestGate(sessions) }
+    DisposableEffect(requests) { onDispose { requests.cancelAll() } }
     
     // State
     var currentTab by rememberSaveable { mutableIntStateOf(0) }
@@ -84,11 +88,11 @@ fun GradesRoute() {
         android.os.Handler(android.os.Looper.getMainLooper()).post(action)
     }
 
-    fun isCurrentAccount(accountKey: SessionToken): Boolean {
-        return sessions.isCurrent(accountKey)
+    fun isCurrentAccount(accountKey: SessionRequestTicket): Boolean {
+        return requests.isCurrent(accountKey)
     }
 
-    fun runOnUiThreadForAccount(accountKey: SessionToken, action: () -> Unit) {
+    fun runOnUiThreadForAccount(accountKey: SessionRequestTicket, action: () -> Unit) {
         runOnUiThread {
             if (isCurrentAccount(accountKey)) action()
         }
@@ -110,9 +114,9 @@ fun GradesRoute() {
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = sessions.token
         val requestSemester = currentSemester
-        if (school != null && requestSemester.isNotEmpty()) {
+        if (school != null && requestSemester.isNotEmpty() && !semesterIsLoading) {
+            val requestAccountKey = requests.begin("semester")
 
             semesterIsLoading = true
             CourseApiClient.getInstance().fetchGrades(school, requestSemester, object : Callback {
@@ -125,11 +129,12 @@ fun GradesRoute() {
 
                 override fun onResponse(call: Call, response: Response) {
                     val json = response.body?.string() ?: ""
+                    if (!requests.isCurrent(requestAccountKey)) return
 
                     // 检测Cookie过期
                     if (isLoginPageHtml(json)) {
                         runOnUiThreadForAccount(requestAccountKey) { semesterIsLoading = false }
-                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey.session)
                         return
                     }
 
@@ -159,6 +164,7 @@ fun GradesRoute() {
 
                             override fun onResponse(call: Call, response: Response) {
                                 val detailJson = response.body?.string() ?: ""
+                                if (!requests.isCurrent(requestAccountKey)) return
                                 Log.d("GradesRoute", "Detail response length: ${detailJson.length}")
                                 val merged = GradesLogic.mergeDetails(items, detailJson)
                                 runOnUiThreadForAccount(requestAccountKey) {
@@ -176,6 +182,7 @@ fun GradesRoute() {
     
     // Trigger load on semester change
     LaunchedEffect(currentSemester, session.token) {
+        requests.cancel("semester")
         semesterIsLoading = false
         if (currentSemester.isNotEmpty() && !semesterLoaded) loadSemesterGrades()
     }
@@ -191,8 +198,8 @@ fun GradesRoute() {
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = sessions.token
         if (school != null && !overallIsLoading) {
+            val requestAccountKey = requests.begin("overall")
 
             overallIsLoading = true
 
@@ -210,7 +217,7 @@ fun GradesRoute() {
                     // Parse Index Logic
                     if (isLoginPageHtml(html)) {
                         runOnUiThreadForAccount(requestAccountKey) { overallIsLoading = false }
-                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey.session)
                         return
                     }
 
@@ -235,6 +242,7 @@ fun GradesRoute() {
                     // Recursive Fetch
                     GradesLogic.fetchGradesDetailsRecursive(
                         school, xfyqjdIds.toList(), 0, xh_id, cjlrxn, cjlrxq, mutableListOf(),
+                        isCurrent = { requests.isCurrent(requestAccountKey) },
                         onComplete = { resultGrades ->
                              runOnUiThreadForAccount(requestAccountKey) {
                                  overallIsLoading = false
@@ -259,8 +267,8 @@ fun GradesRoute() {
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool
-        val requestAccountKey = sessions.token
         if (school != null && !examIsLoading) {
+            val requestAccountKey = requests.begin("exams")
 
             examIsLoading = true
 
@@ -285,7 +293,7 @@ fun GradesRoute() {
                     // 检测Cookie过期
                     if (isLoginPageHtml(json)) {
                         runOnUiThreadForAccount(requestAccountKey) { examIsLoading = false }
-                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey)
+                        CourseApiClient.getInstance().notifyCookieExpired(requestAccountKey.session)
                         return
                     }
 
@@ -301,6 +309,8 @@ fun GradesRoute() {
     }
 
     LaunchedEffect(session.token) {
+        requests.cancel("overall")
+        requests.cancel("exams")
         overallIsLoading = false
         examIsLoading = false
     }
@@ -309,6 +319,7 @@ fun GradesRoute() {
         if (currentTab == 2 && !examsLoaded) loadExamSchedule()
     }
 
+    com.tyust.course.ui.system.ReportPageContent(semesterGrades.isNotEmpty() || overallGrades.isNotEmpty() || examList.isNotEmpty())
     GradesScreen(
         currentTab = currentTab,
         onTabChange = { 
@@ -639,8 +650,10 @@ private object GradesLogic {
         school: SchoolConfig, 
         ids: List<String>, index: Int, xh_id: String, cjlrxn: String, cjlrxq: String,
         accumulatedGrades: MutableList<GradeItemUi>,
+        isCurrent: () -> Boolean = { true },
         onComplete: (List<GradeItemUi>) -> Unit
     ) {
+        if (!isCurrent()) return
         if (index >= ids.size) {
             onComplete(accumulatedGrades)
             return
@@ -651,7 +664,7 @@ private object GradesLogic {
 
         CourseApiClient.getInstance().fetchOverallGradesData(school, postBody, object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                fetchGradesDetailsRecursive(school, ids, index + 1, xh_id, cjlrxn, cjlrxq, accumulatedGrades, onComplete)
+                fetchGradesDetailsRecursive(school, ids, index + 1, xh_id, cjlrxn, cjlrxq, accumulatedGrades, isCurrent, onComplete)
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -662,7 +675,7 @@ private object GradesLogic {
                         accumulatedGrades.add(newItem)
                     }
                 }
-                fetchGradesDetailsRecursive(school, ids, index + 1, xh_id, cjlrxn, cjlrxq, accumulatedGrades, onComplete)
+                fetchGradesDetailsRecursive(school, ids, index + 1, xh_id, cjlrxn, cjlrxq, accumulatedGrades, isCurrent, onComplete)
             }
         })
     }

@@ -29,6 +29,7 @@ public class UserManager {
     private String runtimeAccountStorageKey = "";
     private String runtimeCookie = "";
     private String runtimeSchoolAddress = "";
+    private SchoolConfig runtimeSchool;
     private final Map<String, String> sessionPasswords = new HashMap<>();
     private List<Course> selectedCourses = new ArrayList<>();
 
@@ -317,6 +318,16 @@ public class UserManager {
     }
 
     // 保存 Cookie。默认只更新当前会话 Cookie，不改变登录模式。
+    public com.tyust.course.manager.SessionToken saveCookieIfCurrent(
+            com.tyust.course.manager.SessionToken expected, String cookie) {
+        synchronized (sessionState) {
+            if (!sessionState.isCurrent(expected) || cookie == null || cookie.isEmpty()) return null;
+            saveCookie(cookie);
+            com.tyust.course.manager.SessionToken installed = sessionState.getToken();
+            return installed.equals(expected) ? null : installed;
+        }
+    }
+
     public void saveCookie(String cookie) {
         this.savedCookie = cookie != null ? cookie : "";
         this.isLoggedIn = !this.savedCookie.isEmpty();
@@ -731,6 +742,10 @@ public class UserManager {
         try {
             CourseApiClient apiClient = CourseApiClient.getInstance();
             apiClient.clearDisplayParamsCache();
+            if (runtimeSchool != null && (accountChanged || !address.equals(runtimeSchoolAddress))) {
+                com.tyust.course.academic.AcademicGatewayFactory.INSTANCE.invalidate(runtimeSchool, runtimeAccountStorageKey);
+                apiClient.clearCookies(runtimeAccountStorageKey);
+            }
             if (currentSchool != null && savedCookie != null && !savedCookie.isEmpty()) {
                 apiClient.setCookie(currentSchool.getBaseUrl(), savedCookie, account);
                 if (com.tyust.course.academic.AcademicGatewayFactory.INSTANCE.supports(currentSchool)) {
@@ -743,6 +758,7 @@ public class UserManager {
             runtimeAccountStorageKey = account;
             runtimeCookie = savedCookie;
             runtimeSchoolAddress = address;
+            runtimeSchool = currentSchool;
             sessionState.replace(account);
             if (accountChanged) SmartSelector.getInstance().reloadForCurrentAccount();
         } catch (Exception e) {
@@ -767,6 +783,7 @@ public class UserManager {
         runtimeAccountStorageKey = "";
         runtimeCookie = "";
         runtimeSchoolAddress = "";
+        runtimeSchool = null;
         sessionState.replace("default");
         isLoggedIn = false;
         isDemoMode = false;

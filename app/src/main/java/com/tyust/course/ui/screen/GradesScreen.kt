@@ -723,6 +723,7 @@ private fun OverallGradesContent(
     topInset: Dp,
     bottomInset: Dp
 ) {
+    val rowKeys = remember(grades) { gradeRowKeys(grades) }
     when {
         isLoading && grades.isEmpty() -> {
             Box(
@@ -775,8 +776,8 @@ private fun OverallGradesContent(
                     }
                 }
 
-                items(grades) { item ->
-                    GradeItemRow(item = item)
+                items(grades.size, key = { rowKeys[it] }, contentType = { "grade" }) { index ->
+                    GradeItemRow(item = grades[index])
                 }
             }
         }
@@ -797,6 +798,7 @@ private fun SemesterGradesContent(
 ) {
     val totalCredits = remember(grades) { grades.sumOf { it.credits.toDoubleOrNull() ?: 0.0 } }
     val averageGpa = remember(grades) { semesterAverageGpa(grades) }
+    val rowKeys = remember(grades) { gradeRowKeys(grades) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -849,8 +851,8 @@ private fun SemesterGradesContent(
         }
 
         if (grades.isNotEmpty()) {
-            items(grades) { item ->
-                GradeItemRow(item = item)
+            items(grades.size, key = { rowKeys[it] }, contentType = { "grade" }) { index ->
+                GradeItemRow(item = grades[index])
             }
         }
     }
@@ -948,7 +950,11 @@ private fun DistributionItem(
 private fun GradeItemRow(
     item: GradeItemUi
 ) {
-    var expanded by rememberSaveable(item.courseCode, item.courseName) { mutableStateOf(false) }
+    var expanded by rememberSaveable(item.year, item.term, item.courseCode, item.courseName, item.jxbId) { mutableStateOf(false) }
+    val components = remember(item.detail) { parseGradeComponents(item.detail) }
+    val notes = remember(item.detail) {
+        item.detail.split(Regex("\\s*[|；;]\\s*")).filter { it.isNotBlank() && parseGradeComponents(it).isEmpty() }
+    }
     val gradeColor = getGradeColor(item.grade)
     val hasDetail = item.detail.isNotEmpty() || item.courseCode.isNotEmpty()
     // 一枚箭头旋转，而不是上下两个图标硬切换——后者在展开动画中途是一帧突变
@@ -1049,7 +1055,6 @@ private fun GradeItemRow(
                     SystemDivider(alpha = 0.5f)
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    val components = parseGradeComponents(item.detail)
                     if (components.isNotEmpty()) {
                         Text(
                             text = "成绩构成",
@@ -1081,7 +1086,6 @@ private fun GradeItemRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     }
-                    val notes = item.detail.split(Regex("\\s*[|；;]\\s*")).filter { it.isNotBlank() && parseGradeComponents(it).isEmpty() }
                     if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
 

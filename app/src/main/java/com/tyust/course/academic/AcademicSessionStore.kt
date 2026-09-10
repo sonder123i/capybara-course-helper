@@ -16,8 +16,10 @@ import java.util.concurrent.atomic.AtomicLong
 class AcademicCookieJar : CookieJar {
     private val cookies = mutableListOf<Cookie>()
     private val lock = Any()
+    private var retired = false
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) = synchronized(lock) {
+        if (retired) return@synchronized
         cookies.forEach { incoming ->
             this.cookies.removeAll { it.name == incoming.name && it.domain == incoming.domain && it.path == incoming.path }
             if (!incoming.expiresAt.let { it <= System.currentTimeMillis() }) this.cookies += incoming
@@ -30,6 +32,7 @@ class AcademicCookieJar : CookieJar {
     }
 
     fun clear() = synchronized(lock) { cookies.clear() }
+    fun retire() = synchronized(lock) { retired = true; cookies.clear() }
 }
 
 class AcademicSession internal constructor(
@@ -41,6 +44,8 @@ class AcademicSession internal constructor(
     internal var pageCharset: java.nio.charset.Charset? = null
     private val epochCounter = AtomicLong(1L)
     private val operationMutex = Mutex()
+    @Volatile var retired: Boolean = false
+        private set
     var epoch: Long = epochCounter.get()
         private set
 
@@ -51,12 +56,23 @@ class AcademicSession internal constructor(
         }
     }
 
+    fun retire() = synchronized(this) {
+        retired = true
+        invalidate()
+        cookies.retire()
+    }
+
+    fun requireActive() {
+        if (retired) throw kotlinx.coroutines.CancellationException("Session replaced")
+    }
+
     fun cookieHeader(): String = (baseUrl.trimEnd('/') + "/").toHttpUrlOrNull()?.let { cookies.loadForRequest(it) }
         ?.joinToString("; ") { "${it.name}=${it.value}" }.orEmpty()
 
     suspend fun <T> withProtocolLock(block: suspend () -> T): T {
+        requireActive()
         if (coroutineContext[SessionLock]?.session === this) return block()
-        return operationMutex.withLock { withContext(SessionLock(this)) { block() } }
+        return operationMutex.withLock { requireActive(); withContext(SessionLock(this)) { block() } }
     }
 
     private class SessionLock(val session: AcademicSession) : AbstractCoroutineContextElement(Key) {
@@ -70,20 +86,20 @@ class AcademicSessionStore {
     fun session(schoolId: String, accountKey: String, baseUrl: String): AcademicSession =
         sessions.compute(AcademicSessionKey(schoolId, accountKey)) { key, previous ->
             if (previous?.baseUrl == baseUrl) previous else {
-                previous?.invalidate()
+                previous?.retire()
                 AcademicSession(key, baseUrl)
             }
         }!!
 
     fun invalidate(schoolId: String, accountKey: String) {
-        sessions[AcademicSessionKey(schoolId, accountKey)]?.invalidate()
+        sessions.remove(AcademicSessionKey(schoolId, accountKey))?.retire()
     }
 
     fun replace(schoolId: String, accountKey: String, baseUrl: String): AcademicSession =
         sessions.compute(AcademicSessionKey(schoolId, accountKey)) { key, previous ->
-            previous?.invalidate()
+            previous?.retire()
             AcademicSession(key, baseUrl)
         }!!
 
-    fun clear() = sessions.values.forEach { it.invalidate() }
+    fun clear() { sessions.values.forEach { it.retire() }; sessions.clear() }
 }

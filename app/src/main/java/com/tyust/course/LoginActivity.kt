@@ -40,6 +40,7 @@ class LoginActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "LoginActivity"
+        const val EXTRA_RETURN_TO_CALLER = "return_to_caller"
     }
 
     private var isLoading by mutableStateOf(false)
@@ -48,6 +49,10 @@ class LoginActivity : ComponentActivity() {
     private var academicWebPageUrl = ""
     private var academicValidationGeneration = 0
     private var isAutoValidating by mutableStateOf(false)
+    private var selectedLoginSchool: SchoolConfig? = null
+    private var validationCall: Call? = null
+    private val validationAccounts = mutableMapOf<String, SchoolConfig>()
+    private var validationJob: kotlinx.coroutines.Job? = null
 
     // Binding Dialog State
     private var showBindingDialog by mutableStateOf(false)
@@ -85,10 +90,11 @@ class LoginActivity : ComponentActivity() {
         
         // Initialize UserManager with context for SharedPreferences
         UserManager.getInstance().init(this)
+        selectedLoginSchool = UserManager.getInstance().currentSchool
         
             // 🔄 每次启动 App 都同步云端激活配置（获取最新的 max_students）
         lifecycleScope.launch {
-            try {
+            if (!BuildConfig.UI_PREVIEW) try {
                 withContext(Dispatchers.IO) {
                     com.tyust.course.activation.ActivationManager.checkActivation(this@LoginActivity)
                 }
@@ -100,9 +106,7 @@ class LoginActivity : ComponentActivity() {
             // 🔧 关键修复：如果是为了“重新登录”而跳转过来的，不要执行自动登录检查
             val forceRelogin = intent.getBooleanExtra("force_relogin", false)
             if (forceRelogin) {
-                Log.d(TAG, "检测到强制重新登录请求，清空旧状态")
-                UserManager.getInstance().logout() // 清除登录标记和旧 Cookie
-                errorMessage = "请获取新的 Cookie 并登录"
+                errorMessage = "请重新登录以继续使用"
             } else {
                 // 检查是否有保存的有效登录状态
                 checkSavedLoginState()
@@ -119,13 +123,14 @@ class LoginActivity : ComponentActivity() {
                 LaunchedEffect(schools) {
                     val userManager = UserManager.getInstance()
                     // 1. 如果当前没有选定学校，先尝试加载存过的
-                    if (userManager.currentSchool == null) {
+                    if (selectedLoginSchool == null) {
                         userManager.loadLoginState()
+                        selectedLoginSchool = userManager.currentSchool
                     }
                     
                     // 2. 如果加载后依然没选中任何学校（比如第一次用），才选第一个
-                    if (schools.isNotEmpty() && userManager.currentSchool == null) {
-                        userManager.currentSchool = schools[0]
+                    if (schools.isNotEmpty() && selectedLoginSchool == null) {
+                        selectedLoginSchool = schools[0]
                     }
                 }
                 
@@ -136,9 +141,18 @@ class LoginActivity : ComponentActivity() {
                     )
                 } else {
                     LoginScreen(
+                    onBack = if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
+                        { onBackPressedDispatcher.onBackPressed() }
+                    } else null,
                     schools = schools,
                     onSchoolSelected = { school ->
-                        UserManager.getInstance().currentSchool = school
+                        selectedLoginSchool = school
+                        academicValidationGeneration++
+                        validationCall?.cancel()
+                        validationJob?.cancel()
+                        clearValidationSessions()
+                        discardPendingPasswordLogin()
+                        isLoading = false
                     },
                     onLoginClick = { cookie ->
                         handleLogin(cookie)
@@ -178,8 +192,8 @@ class LoginActivity : ComponentActivity() {
                         showBindingDialog = false
                         val recorded = com.tyust.course.manager.StudentLimitManager.recordStudent(
                             context = this@LoginActivity,
-                            schoolId = UserManager.getInstance().currentSchool?.id.orEmpty(),
-                            schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
+                            schoolId = selectedLoginSchool?.id.orEmpty(),
+                            schoolName = selectedLoginSchool?.name.orEmpty(),
                             studentName = bindingStudentName,
                             studentId = bindingStudentId
                         )
@@ -236,7 +250,7 @@ class LoginActivity : ComponentActivity() {
     }
 
     private fun openWebView() {
-        val currentSchool = UserManager.getInstance().currentSchool
+        val currentSchool = selectedLoginSchool
         if (currentSchool != null && AcademicGatewayFactory.supports(currentSchool)) {
             val hosts = java.util.ArrayList<String>().apply {
                 add(currentSchool.domain)
@@ -272,7 +286,7 @@ class LoginActivity : ComponentActivity() {
 
     private fun handleLogin(cookieStr: String) {
         discardPendingPasswordLogin()
-        val currentSchool = UserManager.getInstance().currentSchool
+        val currentSchool = selectedLoginSchool
         if (currentSchool == null) {
             errorMessage = "请先选择学校"
             return
@@ -305,21 +319,26 @@ class LoginActivity : ComponentActivity() {
     }
     
     private fun performLoginValidation(currentSchool: SchoolConfig, cookieStr: String) {
+        val generation = ++academicValidationGeneration
+        validationCall?.cancel()
+        validationJob?.cancel()
+        clearValidationSessions()
+        val validationKey = "login-validation-" + java.util.UUID.randomUUID()
+        validationAccounts[validationKey] = currentSchool
         val academicGateway = activePasswordLoginGateway as? AcademicPasswordLoginGateway
         if (AcademicGatewayFactory.supports(currentSchool)) {
-            val generation = ++academicValidationGeneration
             val username = pendingPasswordUsername.ifBlank {
                 runCatching { android.net.Uri.parse(academicWebPageUrl).getQueryParameter("xh") }.getOrNull().orEmpty()
             }
-            val key = AcademicGatewayFactory.accountKey(currentSchool, username.ifBlank { "webview_pending" })
-            lifecycleScope.launch {
+            val key = validationKey
+            validationJob = lifecycleScope.launch {
                 val result = runCatching { withContext(Dispatchers.IO) {
                     if (currentSchool.academicSystem == "auto" && AcademicGatewayFactory.detect(currentSchool, key) == null)
                         throw IllegalStateException("无法识别教务系统，请在学校配置中手动选择")
                     AcademicGatewayFactory.importCookie(currentSchool, key, cookieStr, username = username)
                     AcademicGatewayFactory.create(currentSchool, key).validateSession()
                 } }
-                if (generation != academicValidationGeneration || UserManager.getInstance().currentSchool?.id != currentSchool.id) return@launch
+                if (generation != academicValidationGeneration || selectedLoginSchool?.id != currentSchool.id) return@launch
                 result.onSuccess { identity ->
                     if (identity.status != com.tyust.course.academic.AcademicStatus.SUCCESS) {
                         isLoading = false
@@ -333,7 +352,6 @@ class LoginActivity : ComponentActivity() {
                             discardPendingPasswordLogin()
                         } else {
                             UserManager.getInstance().updateSchoolConfig(currentSchool)
-                            AcademicGatewayFactory.importCookie(currentSchool, AcademicGatewayFactory.accountKey(currentSchool, id), cookieStr, username = id)
                             finishAcademicLogin(currentSchool, cookieStr, identity.studentName.ifBlank { academicGateway?.studentName.orEmpty() }, id)
                         }
                     }
@@ -347,12 +365,13 @@ class LoginActivity : ComponentActivity() {
             return
         }
         // 1. Set Cookie
-        CourseApiClient.getInstance().setCookie(currentSchool.baseUrl, cookieStr.trim())
+        CourseApiClient.getInstance().setCookie(currentSchool.baseUrl, cookieStr.trim(), validationKey)
 
         // 2. Validate Cookie
-        CourseApiClient.getInstance().validateCookie(currentSchool, object : Callback {
+        validationCall = CourseApiClient.getInstance().validateCookie(currentSchool, validationKey, object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
+                    if (generation != academicValidationGeneration || isFinishing || isDestroyed) return@runOnUiThread
                     isLoading = false
                     errorMessage = "网络请求失败: ${e.message}"
                     discardPendingPasswordLogin()
@@ -378,10 +397,11 @@ class LoginActivity : ComponentActivity() {
                 val success = !isLoginPage && (name != null || hasWelcomeSign)
 
                 runOnUiThread {
+                    if (generation != academicValidationGeneration || isFinishing || isDestroyed) return@runOnUiThread
                     isLoading = false
                     if (success) {
                         val userManager = UserManager.getInstance()
-                        if (userManager.currentSchool?.id != currentSchool.id) {
+                        if (selectedLoginSchool?.id != currentSchool.id) {
                             errorMessage = "学校已切换，请重新登录"
                             discardPendingPasswordLogin()
                             return@runOnUiThread
@@ -390,10 +410,8 @@ class LoginActivity : ComponentActivity() {
                         val studentIdParsed = studentId ?: ""
                         
                         // 保存信息
-                        userManager.studentName = studentNameParsed
-                        if (studentIdParsed.isNotEmpty()) {
-                            userManager.studentId = studentIdParsed
-                        }
+                        bindingStudentName = studentNameParsed
+                        bindingStudentId = studentIdParsed
                         
                         val maxStudents = com.tyust.course.activation.ActivationManager.getMaxStudents(this@LoginActivity)
                         val bindingCheck = com.tyust.course.manager.StudentLimitManager.checkCanUseStudent(
@@ -439,8 +457,8 @@ class LoginActivity : ComponentActivity() {
         val studentNameParsed = parsedName.ifBlank { "同学" }
         val studentIdParsed = parsedId
         val userManager = UserManager.getInstance()
-        userManager.studentName = studentNameParsed
-        if (studentIdParsed.isNotBlank()) userManager.studentId = studentIdParsed
+        bindingStudentName = studentNameParsed
+        bindingStudentId = studentIdParsed
         val bindingCheck = com.tyust.course.manager.StudentLimitManager.checkCanUseStudent(
             context = this, schoolId = currentSchool.id,
             studentName = studentNameParsed, studentId = studentIdParsed
@@ -467,13 +485,15 @@ class LoginActivity : ComponentActivity() {
     private fun proceedToMain(userManager: UserManager, studentName: String, cookieStr: String) {
         if (pendingPasswordLogin) {
             val passwordSchool = pendingPasswordSchool
-            if (passwordSchool == null || userManager.currentSchool?.id != passwordSchool.id) {
+            if (passwordSchool == null || selectedLoginSchool?.id != passwordSchool.id) {
                 errorMessage = "学校已切换，请重新登录"
                 discardPendingPasswordLogin()
                 return
             }
         }
+        userManager.currentSchool = selectedLoginSchool ?: return
         userManager.isLoggedIn = true
+        userManager.studentId = bindingStudentId
         userManager.studentName = studentName
         
         // 保存 Cookie 用于下次自动登录
@@ -495,14 +515,18 @@ class LoginActivity : ComponentActivity() {
             Toast.LENGTH_SHORT
         ).show()
         
-        startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+        if (intent.getBooleanExtra(EXTRA_RETURN_TO_CALLER, false)) {
+            setResult(RESULT_OK)
+        } else {
+            startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+        }
         finish()
     }
 
     // ============ 密码登录 ============
 
     private fun handlePasswordLogin(username: String, password: String) {
-        val school = UserManager.getInstance().currentSchool
+        val school = selectedLoginSchool
         Log.d(TAG, "handlePasswordLogin: school=${school?.name}, baseUrl=${school?.getBaseUrl()}, fullPath=${school?.getFullBasePath()}")
         if (school == null) {
             errorMessage = "请先选择学校"
@@ -527,7 +551,7 @@ class LoginActivity : ComponentActivity() {
         gateway.login(school, username, password, object : PasswordLoginCallback {
             override fun onSuccess(cookie: String) {
                 runOnUiThread {
-                    if (UserManager.getInstance().currentSchool?.id != school.id) {
+                    if (selectedLoginSchool?.id != school.id) {
                         isLoading = false
                         errorMessage = "学校已切换，请重新登录"
                         discardPendingPasswordLogin()
@@ -614,7 +638,7 @@ class LoginActivity : ComponentActivity() {
                     isLoading = false
                     captchaImageBytes = null  // 成功时清除
                     val school = pendingPasswordSchool
-                    if (school == null || UserManager.getInstance().currentSchool?.id != school.id) {
+                    if (school == null || selectedLoginSchool?.id != school.id) {
                         errorMessage = "学校已切换，请重新登录"
                         discardPendingPasswordLogin()
                         return@runOnUiThread
@@ -687,7 +711,19 @@ class LoginActivity : ComponentActivity() {
         pendingPasswordLogin = false
     }
 
+    private fun clearValidationSessions() {
+        validationAccounts.forEach { (key, school) ->
+            CourseApiClient.getInstance().clearCookies(key)
+            AcademicGatewayFactory.invalidate(school, key)
+        }
+        validationAccounts.clear()
+    }
+
     override fun onDestroy() {
+        academicValidationGeneration++
+        validationCall?.cancel()
+        validationJob?.cancel()
+        clearValidationSessions()
         discardPendingPasswordLogin()
         super.onDestroy()
     }

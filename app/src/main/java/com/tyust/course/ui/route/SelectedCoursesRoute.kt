@@ -15,30 +15,36 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SelectedCoursesRoute() {
+fun SelectedCoursesRoute(refreshRevision: Int = 0, onLoadingChange: (Boolean) -> Unit = {}) {
     val academicSchool = UserManager.getInstance().currentSchool
     if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
-        AcademicSelectedCoursesRoute(academicSchool)
+        AcademicSelectedCoursesRoute(academicSchool, refreshRevision, onLoadingChange)
         return
     }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
+    val requests = remember(sessions) { com.tyust.course.manager.SessionRequestGate(sessions) }
+    DisposableEffect(requests) { onDispose { requests.cancelAll() } }
     
-    var courses by remember { mutableStateOf<List<Course>>(emptyList()) }
+    var courses by com.tyust.course.ui.system.rememberPageData<List<Course>>("legacy.selected") { emptyList() }
+    var loadedRevision by com.tyust.course.ui.system.rememberPageData("legacy.selected.revision") { -1 }
     var isLoading by remember { mutableStateOf(false) }
     var isDropping by remember { mutableStateOf(false) }
     
     // 缓存从服务器获取的学年/学期参数（退课 API 需要）
-    var xkxnm by remember { mutableStateOf("") }
-    var xkxqm by remember { mutableStateOf("") }
+    var xkxnm by com.tyust.course.ui.system.rememberPageData("legacy.selected.year") { "" }
+    var xkxqm by com.tyust.course.ui.system.rememberPageData("legacy.selected.term") { "" }
 
-    fun isCurrentAccount(accountKey: String): Boolean {
-        return UserManager.getInstance().currentAccountStorageKey == accountKey
+    fun isCurrentAccount(ticket: com.tyust.course.manager.SessionRequestTicket): Boolean {
+        return requests.isCurrent(ticket)
     }
 
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
 
     fun loadSelectedCourses() {
+        if (isLoading && requests.isCurrent("load")) return
         if (isDemoMode) {
             courses = DemoData.selectedCourses()
             isLoading = false
@@ -46,14 +52,15 @@ fun SelectedCoursesRoute() {
         }
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool ?: return
-        val requestAccountKey = userManager.currentAccountStorageKey
+        val requestAccountKey = requests.begin("load")
         isLoading = true
         
         scope.launch(Dispatchers.IO) {
             try {
                 // 1. 动态获取已选课程需要的参数（从选课首页提取）
                 val paramsBody = withContext(Dispatchers.IO) {
-                    val response = CourseApiClient.getInstance().fetchPageHiddenParamsSync(school)
+                    val api = CourseApiClient.getInstance()
+                    val response = api.runWithSession(requestAccountKey.session) { api.fetchPageHiddenParamsSync(school) }
                     if (response != null) {
                         val paramsMap = CourseParser.parseCourseParams(response)
                         // 缓存学年学期参数供退课使用
@@ -65,21 +72,23 @@ fun SelectedCoursesRoute() {
                         }
                         
                         // 构建符合 Web 版要求的 POST Body
-                        val sb = StringBuilder()
+                        val body = okhttp3.FormBody.Builder()
                         val keys = listOf("jg_id", "zyh_id", "njdm_id", "zyfx_id", "bh_id", "xz", "ccdm", "xqh_id", "xkxnm", "xkxqm", "xkly")
                         keys.forEach { key ->
                             val value = paramsMap[key] ?: ""
-                            if (sb.isNotEmpty()) sb.append("&")
-                            sb.append(key).append("=").append(value)
+                            body.add(key, value)
                         }
-                        sb.toString()
+                        val buffer = okio.Buffer()
+                        body.build().writeTo(buffer)
+                        buffer.readUtf8()
                     } else ""
                 }
                 
-                android.util.Log.d("SelectedCoursesRoute", "发送已选课程请求参数: $paramsBody")
+                if (!requests.isCurrent(requestAccountKey)) return@launch
 
                 // 2. 使用提取到的参数获取已选课程
-                val response = CourseApiClient.getInstance().fetchSelectedCoursesSync(school, paramsBody)
+                val api = CourseApiClient.getInstance()
+                val response = api.runWithSession(requestAccountKey.session) { api.fetchSelectedCoursesSync(school, paramsBody) }
                 
                 if (response != null) {
                     // 3. 解析课程列表
@@ -88,6 +97,7 @@ fun SelectedCoursesRoute() {
                     withContext(Dispatchers.Main) {
                         if (!isCurrentAccount(requestAccountKey)) return@withContext
                         courses = parsedCourses
+                        loadedRevision = refreshRevision
                         isLoading = false
                     }
                 } else {
@@ -97,6 +107,7 @@ fun SelectedCoursesRoute() {
                         GlassToaster.show("未获取到已选课程数据")
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     if (!isCurrentAccount(requestAccountKey)) return@withContext
@@ -111,7 +122,8 @@ fun SelectedCoursesRoute() {
     fun performDropCourse(course: Course) {
         val userManager = UserManager.getInstance()
         val school = userManager.currentSchool ?: return
-        val requestAccountKey = userManager.currentAccountStorageKey
+        if (isDropping) return
+        val requestAccountKey = requests.begin("drop")
         val requestXkxnm = xkxnm
         val requestXkxqm = xkxqm
         val kchId = course.courseId ?: return
@@ -125,7 +137,10 @@ fun SelectedCoursesRoute() {
         isDropping = true
         scope.launch(Dispatchers.IO) {
             try {
-                val result = CourseApiClient.getInstance().dropCourseSync(school, kchId, jxbIds, requestXkxnm, requestXkxqm)
+                val api = CourseApiClient.getInstance()
+                val result = api.runWithSession(requestAccountKey.session) {
+                    api.dropCourseSync(school, kchId, jxbIds, requestXkxnm, requestXkxqm)
+                }
                 withContext(Dispatchers.Main) {
                     if (!isCurrentAccount(requestAccountKey)) return@withContext
                     isDropping = false
@@ -133,12 +148,12 @@ fun SelectedCoursesRoute() {
                     if (result != null && (result.trim() == "\"1\"" || result.contains("\"flag\":\"1\""))) {
                         GlassToaster.show("退课成功：${course.name}")
                         // 同步更新本地缓存的 isSelected 状态
-                        val cached = CourseCacheManager.getCachedCourses(context, requestAccountKey)
+                        val cached = CourseCacheManager.getCachedCourses(context, requestAccountKey.session.accountStorageKey)
                         if (cached != null) {
                             cached.forEach { c ->
                                 if (c.classId == course.classId) c.isSelected = false
                             }
-                            CourseCacheManager.saveCourses(context, cached, requestAccountKey)
+                            CourseCacheManager.saveCourses(context, cached, requestAccountKey.session.accountStorageKey)
                         }
                         loadSelectedCourses() // 刷新列表
                     } else {
@@ -150,6 +165,7 @@ fun SelectedCoursesRoute() {
                         GlassToaster.show(msg)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     if (!isCurrentAccount(requestAccountKey)) return@withContext
@@ -160,9 +176,14 @@ fun SelectedCoursesRoute() {
         }
     }
 
-    LaunchedEffect(Unit) {
-        loadSelectedCourses()
+    LaunchedEffect(session.token, refreshRevision) {
+        isLoading = false
+        isDropping = false
+        if (loadedRevision != refreshRevision) loadSelectedCourses()
     }
+    val currentLoadingChange by rememberUpdatedState(onLoadingChange)
+    LaunchedEffect(isLoading) { currentLoadingChange(isLoading) }
+    com.tyust.course.ui.system.ReportPageContent(courses.isNotEmpty())
 
     SelectedCoursesScreen(
         courses = courses,

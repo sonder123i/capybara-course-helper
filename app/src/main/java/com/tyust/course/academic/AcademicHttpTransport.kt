@@ -75,6 +75,7 @@ class AcademicHttpTransport(
         var redirects = 0
         var readRetries = 0
         while (true) {
+            session.requireActive()
             val parsed = url.toHttpUrlOrNull()
                 ?: throw AcademicException(AcademicStatus.UNTRUSTED_URL, "Invalid academic URL")
             ensureAllowed(parsed)
@@ -86,6 +87,7 @@ class AcademicHttpTransport(
             val request = builder.build()
             try {
                 execute(request).use {
+                session.requireActive()
                 if (it.code in 300..399) {
                     val location = it.headers["Location"] ?: throw AcademicException(AcademicStatus.PAGE_CHANGED, "Redirect has no location")
                     if (write) {
@@ -107,6 +109,7 @@ class AcademicHttpTransport(
                 val source = it.body?.source()
                 source?.request((MAX_BODY_BYTES + 1).toLong())
                 val bytes = source?.buffer?.readByteArray(minOf(source.buffer.size, (MAX_BODY_BYTES + 1).toLong())) ?: ByteArray(0)
+                session.requireActive()
                 if (bytes.size > MAX_BODY_BYTES) throw AcademicException(AcademicStatus.PAGE_CHANGED, "Academic response is too large")
                 if (it.code == 401 || it.code == 403) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "登录已失效，请重新登录")
                 if (it.code == 429 || it.code >= 500) throw AcademicException(if (write && it.code >= 500) AcademicStatus.RESULT_UNKNOWN else AcademicStatus.NETWORK_RETRYABLE, "教务系统暂时不可用（HTTP ${it.code}），请稍后重试")

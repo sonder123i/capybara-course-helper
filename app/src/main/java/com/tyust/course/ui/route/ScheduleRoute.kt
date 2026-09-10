@@ -98,6 +98,10 @@ fun ScheduleRoute() {
     val scope = rememberCoroutineScope()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val routeAccountKey = remember { UserManager.getInstance().currentAccountStorageKey }
+    val sessions = UserManager.getInstance().sessionState
+    val session by sessions.state.collectAsState()
+    val requests = remember { com.tyust.course.manager.SessionRequestGate(sessions) }
+    DisposableEffect(requests) { onDispose { requests.cancelAll() } }
     val restoredSnapshot = remember(routeAccountKey) {
         ScheduleRouteMemoryCache.get(routeAccountKey)
     }
@@ -246,7 +250,7 @@ fun ScheduleRoute() {
     }
 
     // Load Schedule Function
-    val loadSchedule = remember(isNextSemester) {
+    val loadSchedule = remember(isNextSemester, session.token) {
         fun(forceRefresh: Boolean) {
             if (isDemoMode) {
                 courses = DemoData.scheduleCourses()
@@ -255,6 +259,7 @@ fun ScheduleRoute() {
             }
             val school = UserManager.getInstance().currentSchool
             if (school == null) return
+            val ticket = requests.begin("schedule")
 
             if (AcademicGatewayFactory.supports(school)) {
                 studyLoadJob?.cancel()
@@ -266,21 +271,21 @@ fun ScheduleRoute() {
                 studyLoadJob = scope.launch {
                     try {
                         val (cacheKey, json) = withContext(Dispatchers.IO) {
-                            val reader = AcademicStudyBridge.reader(school, account)
+                            val reader = AcademicStudyBridge.reader(school, account, ticket.session)
                             val current = reader.catalog().currentTerm
                             val term = if (isNextSemester) current.next() else current
                             val entries = reader.schedule(term)
                             "schedule_${account}_${school.id}_${term.id}" to AcademicStudyBridge.scheduleJson(entries)
                         }
-                        if (UserManager.getInstance().currentAccountStorageKey != account || studyGeneration != generation) return@launch
+                        if (!requests.isCurrent(ticket) || studyGeneration != generation) return@launch
                         saveScheduleToCache(cacheKey, json)
                         courses = reloadCustomCourses(parseSchedule(json))
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
-                        if (UserManager.getInstance().currentAccountStorageKey == account && studyGeneration == generation)
+                        if (requests.isCurrent(ticket) && studyGeneration == generation)
                             loadError = e.message ?: "课表同步失败，请重试"
                     } finally {
-                        if (studyGeneration == generation) isLoading = false
+                        if (requests.isCurrent(ticket) && studyGeneration == generation) isLoading = false
                     }
                 }
                 return
@@ -304,7 +309,7 @@ fun ScheduleRoute() {
             
             val accountKey = UserManager.getInstance().currentAccountStorageKey
             fun isRequestAccountActive(): Boolean {
-                return UserManager.getInstance().currentAccountStorageKey == accountKey
+                return requests.isCurrent(ticket)
             }
             val cacheKey = "schedule_${accountKey}_${school.id}_${xnm}_${xqm}"
 
@@ -368,7 +373,7 @@ fun ScheduleRoute() {
     }
     
     // 监听学期切换并重新加载
-    LaunchedEffect(isNextSemester) {
+    LaunchedEffect(isNextSemester, session.token) {
         if (skipFirstSemesterLoad) {
             skipFirstSemesterLoad = false
             return@LaunchedEffect
@@ -378,6 +383,7 @@ fun ScheduleRoute() {
     }
 
     // Refresh custom courses when dialogs close
+    com.tyust.course.ui.system.ReportPageContent(courses.isNotEmpty())
     ScheduleScreen(
         currentWeek = currentWeek,
         courses = courses,

@@ -252,7 +252,11 @@ fun CourseListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(groupedCourses) { (key, classes) ->
+                            items(
+                                groupedCourses,
+                                key = { (group, _) -> group.first.length.toString() + ":" + group.first + group.second },
+                                contentType = { "course-group" }
+                            ) { (key, classes) ->
                                 val courseId = classes.firstOrNull()?.courseId.orEmpty()
                                 val groupId = key.first
                                 val courseName = key.second
