@@ -230,6 +230,18 @@ jobs:
           --no-parallel --max-workers=2 --console=plain
 
 
+      - name: Upload Check Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-check-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload version.properties
         uses: actions/upload-artifact@v4
         with:

@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.*
 import org.junit.Test
+import java.net.InetAddress
 import java.security.KeyPairGenerator
 import java.security.interfaces.RSAPublicKey
 import javax.crypto.Cipher
@@ -15,9 +16,14 @@ import okio.ByteString.Companion.toByteString
 class AcademicProtocolSafetyTest {
     @Test fun interruptedResponseBodiesRetryOnlyReadOnlyRequests() = runBlocking {
         val server = MockWebServer()
-        server.start()
+        // After a body disconnect OkHttp postpones the failed route. Dual-stack
+        // localhost can then select an address family this server is not listening on.
+        // Pin the listener and request to one endpoint so this isolates body retries.
+        server.start(InetAddress.getByName("127.0.0.1"), 0)
         try {
-            val school = AcademicCoreTest.testSchool(server, AcademicSystem.QZ)
+            val school = AcademicCoreTest.testSchool(server, AcademicSystem.QZ).apply {
+                domain = "127.0.0.1:${server.port}"
+            }
             val session = AcademicSessionStore().session(school.id, "test", school.fullBasePath)
             val transport = AcademicHttpTransport(school, session)
             server.enqueue(MockResponse().setBody("partial data").setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
