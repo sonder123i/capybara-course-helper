@@ -197,6 +197,13 @@ jobs:
           echo "version_code=${VC}" >> "$GITHUB_OUTPUT"
           echo "version_name=${VN}" >> "$GITHUB_OUTPUT"
 
+      - name: Validate Release Announcement
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_publish_announcement.py'
+          python3 scripts/publish_announcement.py --tag "$TAG" --validate-only
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -211,13 +218,16 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK
+      - name: Check App and Build APKs
         env:
           RELEASE_SIGNING_CONFIG_FILE: release-key.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+        run: >-
+          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+          :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleUiPreview
+          --no-parallel --max-workers=2 --console=plain
 
 
       - name: Upload version.properties
@@ -259,7 +269,7 @@ jobs:
           prerelease: false
           name: Release ${{ steps.target.outputs.tag }}
           body: |
-            感谢使用正方教务助手！
+            感谢使用教务助手！
 
             **更新日志：**
             ${{ steps.notes.outputs.release_notes }}
@@ -446,3 +456,10 @@ jobs:
 
           echo ""
           echo "=== Gitee sync complete ==="
+
+      - name: Verify Delivery and Publish Announcement
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: python3 scripts/publish_announcement.py --tag "$TAG"
