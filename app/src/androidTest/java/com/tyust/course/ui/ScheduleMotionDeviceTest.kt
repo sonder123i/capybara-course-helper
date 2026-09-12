@@ -133,7 +133,7 @@ class ScheduleMotionDeviceTest {
         compose.setContent {
             CourseSelectorTheme {
                 motion = rememberNavigationMotionState(0, "preview", false)
-                NavigationPages(motion) { Text("页面 $it") }
+                NavigationPages(motion, Modifier.testTag("schedule-navigation-frame")) { Text("页面 $it") }
             }
         }
         compose.runOnIdle {
@@ -267,7 +267,8 @@ class ScheduleMotionDeviceTest {
         val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
         val folder = java.io.File(context.getExternalFilesDir(null), "motion-validation").apply { mkdirs() }
         java.io.File(folder, "$name.png").outputStream().use { output ->
-            compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+            compose.onNodeWithTag("schedule-navigation-frame").captureToImage().asAndroidBitmap()
+                .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
         }
     }
 }

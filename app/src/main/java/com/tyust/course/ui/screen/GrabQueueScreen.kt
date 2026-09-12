@@ -1,5 +1,7 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.moduleEntrance
+
 import androidx.compose.animation.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
@@ -89,7 +91,7 @@ fun LazyListScope.grabQueueItems(
 ) {
     if (queue.isEmpty()) {
         item {
-            GrabQueueEmptyState(onAddCourse, supportsManualAdd)
+            Box(Modifier.moduleEntrance(2)) { GrabQueueEmptyState(onAddCourse, supportsManualAdd) }
         }
     } else {
         itemsIndexed(
@@ -109,7 +111,7 @@ fun LazyListScope.grabQueueItems(
             val status = itemStatuses[courseKey] ?: GrabQueueItemStatus.WAITING
             
             // 用 Box 包裹并应用动画
-            Box(modifier = Modifier.animateItem()) {
+            Box(modifier = Modifier.animateItem(fadeInSpec = null).moduleEntrance(2)) {
                 GrabQueueItem(
                     course = course,
                     index = index,
@@ -133,6 +135,7 @@ fun LazyListScope.grabQueueItems(
                 onClick = onAddCourse,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .moduleEntrance(2)
                     .padding(vertical = 8.dp),
                 enabled = editable,
                 leadingIcon = {

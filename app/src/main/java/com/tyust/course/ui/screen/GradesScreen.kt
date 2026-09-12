@@ -1,14 +1,14 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.moduleEntrance
+import com.tyust.course.ui.theme.ModuleMotion
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,22 +27,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,11 +50,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tyust.course.ui.system.GlassSegmentedBar
 import com.tyust.course.ui.system.PagePadding
-import com.tyust.course.ui.system.glass.LocalGlassLensAnchor
-import com.tyust.course.ui.system.glass.rememberGlassLensRegion
-import com.tyust.course.ui.system.glass.drawBackdropSource
-import com.tyust.course.ui.system.glass.glassLensAnchor
-import com.tyust.course.ui.system.glass.LiquidActionGroup
 import com.tyust.course.ui.system.SystemCard
 import com.tyust.course.ui.system.SystemEmptyState
 import com.tyust.course.ui.system.SystemLoadingState
@@ -71,46 +57,29 @@ import com.tyust.course.ui.system.SystemSectionHeader
 import com.tyust.course.ui.system.SystemStatStrip
 import com.tyust.course.ui.system.SystemStatusBadge
 import com.tyust.course.ui.system.SystemTone
-import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.tyust.course.ui.system.HeaderGlassSlab
-import com.tyust.course.ui.system.LiquidSegmentedControl
 import com.tyust.course.ui.system.LocalAppBackdrop
 import com.tyust.course.ui.system.LocalAppOverlayBottomInset
-import com.tyust.course.ui.system.LocalControlBackdrop
-import com.tyust.course.ui.system.StatusBarFrost
 import com.tyust.course.ui.system.SystemDivider
 import com.tyust.course.ui.system.SystemPicker
 import com.tyust.course.ui.system.isBackdropSupported
-import com.tyust.course.ui.system.lerpDp
-import com.tyust.course.ui.system.rememberScreenMetrics
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
 import com.tyust.course.ui.system.reportNoticeAnchor
-import com.tyust.course.ui.theme.MotionSpring
 import com.tyust.course.ui.theme.NeuPrimary
 import com.tyust.course.ui.theme.SemanticDanger
 import com.tyust.course.ui.theme.SemanticInfo
@@ -253,7 +222,7 @@ fun GradesScreen(
         containerColor = Color.Transparent,
         topBar = {
             // topBar slot 只测量单个子项，内联通知必须与顶栏在同一个 Column 里
-            Column(modifier = Modifier.reportNoticeAnchor()) {
+            Column(modifier = Modifier.moduleEntrance(0).reportNoticeAnchor()) {
                 GradesHeader(
                     subtitle = subtitle,
                     tabTitles = tabTitles,
@@ -403,7 +372,7 @@ private fun OverallGradesContent(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Column(Modifier.moduleEntrance(1), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         GradeRefreshStatus(isLoading, error)
                         SystemStatStrip(
                             items = listOf(
@@ -456,7 +425,7 @@ private fun SemesterGradesContent(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.moduleEntrance(1), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 SemesterSelector(
                     semesters = semesters,
                     currentSemester = currentSemester,
@@ -600,9 +569,10 @@ private fun GradeItemRow(
         item.detail.split(Regex("\\s*[|；;]\\s*")).filter { it.isNotBlank() && parseGradeComponents(it).isEmpty() }
     }
     val gradeColor = getGradeColor(item.grade)
+    val reduced = com.tyust.course.ui.system.rememberGlassAccessibilityMode().reduceMotion
     val hasDetail = item.detail.isNotEmpty() || item.courseCode.isNotEmpty()
     SystemCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().moduleEntrance(2),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         onClick = if (hasDetail) ({ expanded = !expanded }) else null
     ) {
@@ -669,20 +639,8 @@ private fun GradeItemRow(
             // 展开区域：成绩构成进度条
             AnimatedVisibility(
                 visible = expanded,
-                enter = expandVertically(
-                    animationSpec = spring(
-                        dampingRatio = 0.86f,
-                        stiffness = 420f,
-                        visibilityThreshold = IntSize.VisibilityThreshold
-                    )
-                ) + fadeIn(animationSpec = tween(170)),
-                exit = shrinkVertically(
-                    animationSpec = spring(
-                        dampingRatio = 1f,
-                        stiffness = 460f,
-                        visibilityThreshold = IntSize.VisibilityThreshold
-                    )
-                ) + fadeOut(animationSpec = tween(120))
+                enter = ModuleMotion.expand(reduced),
+                exit = ModuleMotion.collapse(reduced)
             ) {
                 Column(modifier = Modifier.padding(top = 10.dp)) {
                     SystemDivider(alpha = 0.5f)
@@ -861,7 +819,7 @@ private fun ExamScheduleContent(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Column(Modifier.moduleEntrance(1), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         SystemStatStrip(
                             items = listOf(
                                 "考试数" to exams.size.toString(),
@@ -877,7 +835,7 @@ private fun ExamScheduleContent(
                 }
 
                 items(exams) { exam ->
-                    ExamItemRow(exam = exam)
+                    Box(Modifier.moduleEntrance(2)) { ExamItemRow(exam = exam) }
                 }
             }
         }

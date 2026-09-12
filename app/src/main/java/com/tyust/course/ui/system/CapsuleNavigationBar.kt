@@ -1,6 +1,5 @@
 package com.tyust.course.ui.system
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
@@ -11,7 +10,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,11 +27,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -197,12 +193,14 @@ fun CapsuleNavigationBar(
     modifier: Modifier = Modifier
 ) {
     val useGlass = backdrop != null && isBackdropSupported()
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val iconPlayback = rememberNavigationIconPlayback(items.size, selectedTab, reduced)
     val haptics = LocalHapticFeedback.current
     val selectTab: (Int) -> Unit = { index ->
         if (index != selectedTab) {
             haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
             onTabSelect(index)
-        }
+        } else iconPlayback.replay(index)
     }
     val regionState = rememberWallpaperRegionState()
     val appearance = rememberWallpaperRegionAppearance(regionState)
@@ -243,6 +241,7 @@ fun CapsuleNavigationBar(
                             selectedTab = selectedTab,
                             onTabSelect = { if (!minimized) selectTab(it) },
                             backdrop = requireNotNull(backdrop),
+                            iconPlayback = iconPlayback,
                             lensFreshness = lensFreshness,
                             enabled = !minimized
                         )
@@ -251,6 +250,7 @@ fun CapsuleNavigationBar(
                 if (minimizeFraction > 0.001f) {
                     MinimizedNavCapsule(
                         item = items.getOrElse(selectedTab) { items.first() },
+                        iconPhase = { iconPlayback.phase(selectedTab) },
                         backdrop = requireNotNull(backdrop),
                         onClick = { if (minimized) onExpandRequest() },
                         modifier = Modifier.graphicsLayer {
@@ -267,7 +267,8 @@ fun CapsuleNavigationBar(
             else -> FallbackNavigationBar(
                 items = items,
                 selectedTab = selectedTab,
-                onTabSelect = selectTab
+                onTabSelect = selectTab,
+                iconPlayback = iconPlayback
             )
         }
     }
@@ -278,6 +279,7 @@ fun CapsuleNavigationBar(
 @Composable
 private fun MinimizedNavCapsule(
     item: BottomNavItem,
+    iconPhase: () -> Float,
     backdrop: Backdrop,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -313,11 +315,12 @@ private fun MinimizedNavCapsule(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        AnimatedStateIcon(
+        PhosphorNavigationIcon(
             spec = item.symbol,
-            progress = 1f,
+            selection = 1f,
+            phase = iconPhase,
             tint = accentColor,
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(24.dp)
         )
         Text(
             text = item.label,
@@ -335,15 +338,13 @@ private fun GlassNavigationBar(
     selectedTab: Int,
     onTabSelect: (Int) -> Unit,
     backdrop: Backdrop,
+    iconPlayback: NavigationIconPlayback,
     lensFreshness: GlassLensFreshness? = null,
     enabled: Boolean = true
 ) {
     val tabsCount = items.size
     val navigationMotion = com.tyust.course.ui.theme.LocalNavigationMotion.current
     var gestureDragging by remember { mutableStateOf(false) }
-    val symbolProgress = items.indices.map { index ->
-        navigationMotion?.weight(index) ?: animateFloatAsState(if (index == selectedTab) 1f else 0f, tween(220), label = "symbol-$index").value
-    }
     // 隐藏 tint 内容层：供选中透镜 combined 采样，避免只看到空雾
     val tabsBackdrop = rememberLayerBackdrop()
     // 只含 tint 文字、不含模糊壁纸、**也不含胶囊裁边**的副本，供 API31/32 的
@@ -479,9 +480,8 @@ private fun GlassNavigationBar(
     LaunchedEffect(lensAnchor, isLightTheme, accentColor, selectedTab) {
         if (lensAnchor == null) return@LaunchedEffect
         lensAnchor.invalidate()
-        // 入场动画是 tween(160ms)（MainActivity 的 tabEnterProgress），之后还要
-        // 等它把那层全屏 RenderNode 撤掉、内容重排完。240 给足余量。
-        delay(240)
+        // Refresh once more after the shared module timeline and final page layout settle.
+        delay(com.tyust.course.ui.theme.ModuleMotion.TimelineMillis.toLong() + 150L)
         lensAnchor.invalidate()
     }
     // 滚动改变的是页面内容那一层。限频版本号推进 + 停下后补一次：
@@ -500,6 +500,12 @@ private fun GlassNavigationBar(
         snapshotFlow { lensFreshness.version }.collectLatest {
             lensAnchor.invalidate()
             delay(140)
+            lensAnchor.invalidate()
+        }
+    }
+    LaunchedEffect(lensAnchor, iconPlayback) {
+        if (lensAnchor == null) return@LaunchedEffect
+        snapshotFlow { items.indices.map { iconPlayback.phase(it) } }.collect {
             lensAnchor.invalidate()
         }
     }
@@ -732,11 +738,11 @@ private fun GlassNavigationBar(
                                 if (!completed) {
                                     dampedDragAnimation.animateToValue(committedIndex.toFloat())
                                 } else {
+                                    latestOnTabSelect(targetIndex)
                                     if (currentIndex == targetIndex) {
                                         dampedDragAnimation.release()
                                     } else {
                                         currentIndex = targetIndex
-                                        latestOnTabSelect(targetIndex)
                                         dampedDragAnimation.animateToValue(targetIndex.toFloat())
                                     }
                                 }
@@ -762,14 +768,14 @@ private fun GlassNavigationBar(
                         selected = selectedTab == index,
                         accent = accentColor,
                         selectionWeight = selectionWeight,
-                        symbolProgress = if (gestureDragging) selectionWeight else symbolProgress[index],
+                        iconPhase = { iconPlayback.phase(index) },
                         pressProgress = dampedDragAnimation.pressProgress * selectionWeight,
                         onClick = {
+                            onTabSelect(index)
                             if (index == currentIndex) {
                                 dampedDragAnimation.release()
                             } else {
                                 currentIndex = index
-                                onTabSelect(index)
                                 dampedDragAnimation.animateToValue(index.toFloat())
                             }
                         }
@@ -847,7 +853,7 @@ private fun GlassNavigationBar(
                     selected = selectedTab == index,
                     accent = accentColor,
                     selectionWeight = (1f - abs(selectedPosition() - index)).fastCoerceIn(0f, 1f),
-                    symbolProgress = symbolProgress[index],
+                    iconPhase = { iconPlayback.phase(index) },
                     pressProgress = dampedDragAnimation.pressProgress * (1f - abs(selectedPosition() - index)).fastCoerceIn(0f, 1f),
                     onClick = null,
                     forceAccent = true
@@ -1068,7 +1074,8 @@ private fun indicatorScale(anim: DampedDragAnimation): GlassLensTransform {
 private fun FallbackNavigationBar(
     items: List<BottomNavItem>,
     selectedTab: Int,
-    onTabSelect: (Int) -> Unit
+    onTabSelect: (Int) -> Unit,
+    iconPlayback: NavigationIconPlayback
 ) {
     val navigationMotion = com.tyust.course.ui.theme.LocalNavigationMotion.current
     val capsuleShape = RoundedCornerShape(28.dp)
@@ -1096,7 +1103,8 @@ private fun FallbackNavigationBar(
                     item = item,
                     selected = selectedTab == index,
                     accent = accentColor,
-                    symbolProgress = navigationMotion?.weight(index) ?: animateFloatAsState(if (selectedTab == index) 1f else 0f, tween(220), label = "fallbackSymbol-$index").value,
+                    selectionWeight = navigationMotion?.weight(index) ?: animateFloatAsState(if (selectedTab == index) 1f else 0f, tween(220), label = "fallbackSymbol-$index").value,
+                    iconPhase = { iconPlayback.phase(index) },
                     onClick = { onTabSelect(index) }
                 )
             }
@@ -1110,14 +1118,13 @@ private fun RowScope.NavTab(
     selected: Boolean,
     accent: Color,
     selectionWeight: Float = if (selected) 1f else 0f,
-    symbolProgress: Float = selectionWeight,
+    iconPhase: () -> Float,
     pressProgress: Float = 0f,
     onClick: (() -> Unit)?,
     forceAccent: Boolean = false
 ) {
     val weight = selectionWeight.fastCoerceIn(0f, 1f)
-    val iconTint by animateColorAsState(
-        targetValue = if (forceAccent) {
+    val iconTint = if (forceAccent) {
             accent
         } else {
             androidx.compose.ui.graphics.lerp(
@@ -1125,11 +1132,8 @@ private fun RowScope.NavTab(
                 accent,
                 weight
             )
-        },
-        label = "navIconTint"
-    )
-    val labelColor by animateColorAsState(
-        targetValue = if (forceAccent) {
+        }
+    val labelColor = if (forceAccent) {
             accent
         } else {
             androidx.compose.ui.graphics.lerp(
@@ -1137,9 +1141,7 @@ private fun RowScope.NavTab(
                 LocalWallpaperAppearanceColors.current.onSurface,
                 weight
             )
-        },
-        label = "navLabelColor"
-    )
+        }
     val clickModifier = if (onClick != null) {
         Modifier.selectable(
             selected = selected,
@@ -1161,20 +1163,20 @@ private fun RowScope.NavTab(
         verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        AnimatedStateIcon(
+        PhosphorNavigationIcon(
             spec = item.symbol,
-            progress = symbolProgress,
+            selection = weight,
+            phase = iconPhase,
             tint = iconTint,
             modifier = Modifier
-                .size(22.dp)
+                .size(24.dp)
                 .graphicsLayer {
                     // 局部填充负责辨识，轻微位移与缩放跟随同一份透镜状态。
                     // 保留当前按压下沉，同时恢复底栏原有的选中放大和上浮幅度。
-                    val w = if (forceAccent) 1f else weight
-                    val scale = (1f + 0.15f * w) * (1f - 0.04f * pressProgress)
+                    val scale = (1f + 0.10f * weight) * (1f - 0.04f * pressProgress)
                     scaleX = scale
                     scaleY = scale
-                    translationY = -3.dp.toPx() * w + 1.dp.toPx() * pressProgress
+                    translationY = -2.dp.toPx() * weight + 1.dp.toPx() * pressProgress
                 }
         )
         Text(

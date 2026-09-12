@@ -1,6 +1,8 @@
 package com.tyust.course.ui.theme
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -16,9 +18,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlin.math.abs
 
-data class PageTransitionSpec(val enterDistance: Float = 16f, val exitDistance: Float = 20f, val exitScale: Float = 0.985f)
+data class PageTransitionSpec(val enterDistance: Float = 8f, val exitDistance: Float = 12f, val exitScale: Float = 0.985f)
 
 object MotionProfile {
     val Navigation = PageTransitionSpec()
@@ -27,7 +30,7 @@ object MotionProfile {
     const val DetailStaggerMillis = 35L
     const val HierarchyEnterDp = 22f
     const val HierarchyBehindDp = 6f
-    const val SheetExitMillis = 280
+    const val SheetExitMillis = 220
     fun hierarchySpring() = androidx.compose.animation.core.spring<Float>(0.76f, 220f)
     fun sheetSpring() = androidx.compose.animation.core.spring<Float>(0.78f, 210f)
     fun pageSpring() = androidx.compose.animation.core.spring<Float>(0.74f, 180f)
@@ -41,6 +44,9 @@ data class PageMotion(val x: Float = 0f, val alpha: Float = 1f, val scale: Float
 @Stable
 class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
     private val progress = Animatable(1f)
+    private val entrance = Animatable(0f)
+    private var entranceStarts = mapOf(initial to 0f)
+    private var initialized = false
     private var startPosition = initial.toFloat()
     private var endPosition = initial.toFloat()
     private var direction = 1f
@@ -51,22 +57,32 @@ class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
         private set
     val position: Float get() = startPosition + (endPosition - startPosition) * progress.value
     fun weight(page: Int): Float = (1f - abs(position - page)).coerceIn(0f, 1f)
+    fun moduleProgress(page: Int): Float {
+        val start = entranceStarts[page] ?: 0f
+        return if (page == target) start + (1f - start) * entrance.value else start
+    }
 
     fun transform(page: Int): PageMotion {
         val start = pages[page] ?: PageMotion(alpha = 0f)
         val p = progress.value.coerceIn(0f, 1f)
         val incoming = page == target
-        val alphaProgress = if (incoming) ((p - 0.25f) / 0.75f).coerceIn(0f, 1f) else (p / 0.35f).coerceIn(0f, 1f)
+        // Reveal the incoming canvas early so its staggered modules remain visible.
+        val alphaProgress = if (incoming) (p / 0.15f).coerceIn(0f, 1f) else (p / 0.35f).coerceIn(0f, 1f)
         val end = if (incoming) PageMotion() else PageMotion(-direction * MotionProfile.Navigation.exitDistance, 0f, MotionProfile.Navigation.exitScale)
         return PageMotion(start.x + (end.x - start.x) * p,
             start.alpha + (end.alpha - start.alpha) * alphaProgress, start.scale + (end.scale - start.scale) * p)
     }
 
     fun select(page: Int, reduced: Boolean, releasedPosition: Float? = null, releasedVelocity: Float? = null) {
-        if (releasedPosition == null && page == target && (!reduced || !progress.isRunning)) return
+        if (initialized && releasedPosition == null && page == target &&
+            (!reduced || !progress.isRunning && !entrance.isRunning)) return
+        initialized = true
         val current = releasedPosition ?: position
         val velocity = releasedVelocity ?: (progress.velocity * (endPosition - startPosition))
         val snapshots = pages.keys.associateWith(::transform).filterValues { it.alpha > 0.001f }.toMutableMap()
+        val moduleSnapshots = pages.keys.associateWith(::moduleProgress).toMutableMap()
+        moduleSnapshots.putIfAbsent(page, 0f)
+        entranceStarts = moduleSnapshots
         animation?.cancel()
         direction = if (page >= current) 1f else -1f
         target = page
@@ -75,10 +91,20 @@ class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
         startPosition = current
         endPosition = page.toFloat()
         animation = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            progress.snapTo(0f)
-            if (reduced) progress.snapTo(1f) else progress.animateTo(1f, MotionProfile.pageSpring(),
-                initialVelocity = if (abs(endPosition - startPosition) > 0.01f) velocity / (endPosition - startPosition) else 0f)
+            coroutineScope {
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    progress.snapTo(0f)
+                    if (reduced) progress.snapTo(1f) else progress.animateTo(1f, MotionProfile.pageSpring(),
+                        initialVelocity = if (abs(endPosition - startPosition) > 0.01f) velocity / (endPosition - startPosition) else 0f)
+                }
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    entrance.snapTo(0f)
+                    if (reduced) entrance.snapTo(1f) else entrance.animateTo(1f,
+                        tween(((1f - (moduleSnapshots[page] ?: 0f)) * ModuleMotion.TimelineMillis).toInt(), easing = LinearEasing))
+                }
+            }
             pages = mapOf(page to PageMotion())
+            entranceStarts = mapOf(page to 1f)
         }
     }
 
@@ -109,7 +135,9 @@ fun NavigationPages(state: NavigationMotionState, modifier: Modifier = Modifier,
                     scaleX = frame.scale
                     scaleY = frame.scale
                 }.then(if (page != state.target) Modifier.clearAndSetSemantics {} else Modifier)) {
-                    content(page)
+                    CompositionLocalProvider(LocalModuleEntrance provides remember(state, page) { { state.moduleProgress(page) } }) {
+                        content(page)
+                    }
                     if (page != state.target) Box(Modifier.fillMaxSize().pointerInput(Unit) {
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false).consume()

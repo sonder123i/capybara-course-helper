@@ -44,6 +44,7 @@ class DampedDragAnimation(
     val onDragStopped: DampedDragAnimation.() -> Unit,
     val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
     val onDragCancelled: DampedDragAnimation.() -> Unit = {},
+    private val pressScaleAnimationSpec: AnimationSpec<Float>? = null,
 ) {
     private val velocityAnimationSpec = spring(0.5f, 300f, visibilityThreshold * 10f)
     // tint/色散转玻璃过渡：略降刚度让\"实色→玻璃\"更平滑，不突兀。
@@ -121,8 +122,8 @@ class DampedDragAnimation(
         velocityTracker.resetTracking()
         interactionJob = animationScope.launch {
             launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
-            launch { scaleXAnimation.animateTo(pressedScale, scaleXAnimationSpec) }
-            launch { scaleYAnimation.animateTo(pressedScale, scaleYAnimationSpec) }
+            launch { scaleXAnimation.animateTo(pressedScale, pressScaleAnimationSpec ?: scaleXAnimationSpec) }
+            launch { scaleYAnimation.animateTo(pressedScale, pressScaleAnimationSpec ?: scaleYAnimationSpec) }
         }
     }
 
@@ -165,8 +166,8 @@ class DampedDragAnimation(
                 // 于是"褪光"与"位移"是重叠的，而不是等位移完全结束才回弹。
                 coroutineScope {
                     launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
-                    launch { scaleXAnimation.animateTo(pressedScale, scaleXAnimationSpec) }
-                    launch { scaleYAnimation.animateTo(pressedScale, scaleYAnimationSpec) }
+                    launch { scaleXAnimation.animateTo(pressedScale, pressScaleAnimationSpec ?: scaleXAnimationSpec) }
+                    launch { scaleYAnimation.animateTo(pressedScale, pressScaleAnimationSpec ?: scaleYAnimationSpec) }
                     launch {
                         // value 被另一路 animateTo 抢占是正常竞争，必须就地消化：
                         // 一旦让它逃逸出去，会连坐取消同作用域的褪光协程，

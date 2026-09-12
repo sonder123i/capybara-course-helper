@@ -1,7 +1,6 @@
 package com.tyust.course.ui.system.glass
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,13 +23,10 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.tyust.course.ui.system.rememberGlassDarkTheme
-import com.tyust.course.ui.system.GlassMaterialRole
-import com.tyust.course.ui.system.GlassMaterials
 import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.isBackdropSupported
 import com.tyust.course.ui.system.isRuntimeLensEnabled
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
-import kotlin.math.abs
 
 /**
  * 液体玻璃芯片：顶栏图标钮、圆钮共用的唯一材质入口。
@@ -48,15 +44,6 @@ import kotlin.math.abs
  */
 
 /**
- * 芯片的静止折射下限。
- *
- * **两条路读这一个值**：API33+ 的 `resolvePhysicalLens` 与 API31/32 的
- * `glassLensOpticsFrom`。底栏指示器上曾经两处各写一个字面量（0.42 / 0），
- * 于是同一枚控件在两种平台上静止态根本不是一回事，描边亮度差两倍。
- */
-private const val ChipRefractionFloor = 0.62f
-
-/**
  * 带真实背景折射的液体芯片。
  *
  * @param optics 交互状态源。折射高度、色散、边缘光位置、形变全部由它驱动，
@@ -69,7 +56,9 @@ fun Modifier.liquidChip(
     optics: InteractiveOptics,
     enabled: Boolean = true,
     elevation: Dp = 0.dp,
-    interactive: Boolean = true
+    interactive: Boolean = true,
+    appearance: GlassChipAppearance = GlassChipAppearance.Default,
+    opticalFeedback: Boolean = interactive
 ): Modifier {
     val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
     val isLight = !rememberGlassDarkTheme()
@@ -83,17 +72,12 @@ fun Modifier.liquidChip(
     // 底栏与分段控件都在这一点上栽过：折射叠在补偿上，颜色立刻不对。
     val hasLensLook = hasRealLens || lensAnchor != null
     val allowInteraction = interactive && enabled && !accessibility.reduceMotion
+    val allowOpticalFeedback = opticalFeedback && enabled && !accessibility.reduceMotion
     val chipDensity = androidx.compose.ui.platform.LocalDensity.current
-    val chipMaterial = GlassMaterials.resolve(
-        role = GlassMaterialRole.Interactive,
-        accessibility = accessibility
-    )
-
-    val baseSurfaceAlpha = if (isLight) {
-        GlassRecipe.ChipSurfaceAlphaLight
-    } else {
-        GlassRecipe.ChipSurfaceAlphaDark
-    }
+    val resolvedMaterial = appearance.material(accessibility)
+    val chipMaterial = resolvedMaterial.copy(optics = resolvedMaterial.optics.copy(
+        chromaticAberration = resolvedMaterial.chromaticAberration && allowOpticalFeedback
+    ))
     val disabledScale = if (enabled) 1f else GlassRecipe.ChipDisabledSurfaceScale
     val rimStrength = if (enabled) 1f else GlassRecipe.ChipDisabledRimScale
     val shadowColor = Color.Black.copy(alpha = 0.16f)
@@ -131,8 +115,10 @@ fun Modifier.liquidChip(
                     ),
                     pressScalesRefraction = true,
                     // 与下面 33+ 的 resolvePhysicalLens 读同一个常量
-                    refractionFloor = ChipRefractionFloor,
-                    chromaticAberrationAtRest = false
+                    refractionFloor = appearance.refractionFloor,
+                    chromaticAberrationAtRest = false,
+                    // Keep legacy chips unchanged; an explicit profile shares AGSL's 40% cap.
+                    maxRefractionAmountPx = minOf(w, h) * if (appearance.refractionAmountDp != null) 0.40f else 1f
                 )
             },
             // 与下面 layerBlock 读**同一个** chipGlassTransform：不一致时按下会
@@ -158,11 +144,7 @@ fun Modifier.liquidChip(
             shape = { shape },
             effects = {
                 vibrancy()
-                val material = GlassMaterials.resolve(
-                    role = GlassMaterialRole.Interactive,
-                    accessibility = accessibility,
-                    interactionProgress = optics.opticalProgress
-                )
+                val material = appearance.material(accessibility, optics.opticalProgress)
                 val params = resolvePhysicalLens(
                     scope = this,
                     material = material,
@@ -176,12 +158,12 @@ fun Modifier.liquidChip(
                     // 判据是 hasLensLook 而不是 hasRealLens：31/32 现在有折射了，
                     // 还加 blur 就是把自己的折射糊掉。
                     enableBlur = !hasLensLook,
-                    allowChromaticAberration = allowInteraction,
+                    allowChromaticAberration = allowOpticalFeedback,
                     // 静止不色散：静止态该像一枚干净玻璃，彩边是交互时才出现的动态特征
                     chromaticAberrationAtRest = false,
                     // 静止保留 floor 折射，按压抬到满额
                     pressScalesRefraction = true,
-                    refractionFloor = ChipRefractionFloor
+                    refractionFloor = appearance.refractionFloor
                 )
                 if (params.blurPx > 0f) blur(params.blurPx)
                 if (params.useLens) {
@@ -216,9 +198,8 @@ fun Modifier.liquidChip(
             onDrawSurface = {
                 // 按压让位给折射：surface 越薄，环境越清楚
                 val press = optics.opticalProgress
-                val alpha = baseSurfaceAlpha * disabledScale *
-                    (1f - press * (1f - GlassRecipe.ChipPressedSurfaceScale))
-                drawRect(if (isLight) Color.White.copy(alpha = alpha) else Color(0xFF171B22).copy(alpha = 0.84f * disabledScale))
+                val alpha = appearance.surfaceAlpha(isLight, press, accessibility.highContrast) * disabledScale
+                drawRect((if (isLight) Color.White else Color(0xFF171B22)).copy(alpha = alpha))
             }
         )
         .glassRim(
@@ -226,7 +207,7 @@ fun Modifier.liquidChip(
             intensity = rimStrength,
             isLightTheme = isLight,
             pressProgress = { optics.pressProgress },
-            pointerOffset = { if (allowInteraction) optics.pointerPosition else Offset.Unspecified }
+            pointerOffset = { if (allowOpticalFeedback) optics.pointerPosition else Offset.Unspecified }
         )
         .then(if (allowInteraction) optics.gestureModifier else Modifier)
 }

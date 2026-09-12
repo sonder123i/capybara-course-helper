@@ -139,6 +139,7 @@ fun ScheduleRoute() {
     // Dialog State
     var showSettingsDialog by rememberSaveable { mutableStateOf(false) }
     var detailId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var detailSourceBounds by remember(routeAccountKey) { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var editingId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var resolvedTermId by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.termId.orEmpty()) }
     var notificationCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
@@ -163,6 +164,7 @@ fun ScheduleRoute() {
     val reminderRequest = CourseReminderNavigation.requestedId
     LaunchedEffect(reminderRequest) {
         if (reminderRequest != null) {
+            detailSourceBounds = null
             reminderScheduler.findById(reminderRequest)?.let {
                 notificationCourseJson = ReminderJson.reminder(it).toString()
                 detailId = it.course.id
@@ -409,7 +411,12 @@ fun ScheduleRoute() {
         periodCount = periodCount,
         firstWeekDate = displayedTimeBase?.firstWeekDate,
         onWeekChange = { currentWeek = it },
-        onCourseClick = { notificationCourseJson = null; detailId = it.id },
+        onCourseClick = {
+            notificationCourseJson = null
+            // Freeze the tapped card before pager neighbours or sheet layout update their bounds.
+            detailSourceBounds = focusRegistry.bounds(it.id)
+            detailId = it.id
+        },
         onSettingsClick = { settingsTermOverride = null; showSettingsDialog = true },
         onExportClick = {
             if (courses.isEmpty()) {
@@ -502,8 +509,9 @@ fun ScheduleRoute() {
     }
     selectedDetail?.let { course ->
         com.tyust.course.ui.screen.ScheduleCourseSheet(course, routeAccountKey, detailTerm, if (detailTerm == resolvedTermId) courses else listOf(course),
-            sourceCenterX = focusRegistry.bounds(course.id)?.center?.x,
-            onDismiss = { detailId = null; notificationCourseJson = null; focusRegistry.restore(course.id) },
+            sourceCenterX = detailSourceBounds?.center?.x,
+            sourceBounds = detailSourceBounds,
+            onDismiss = { detailId = null; detailSourceBounds = null; notificationCourseJson = null; focusRegistry.restore(course.id) },
             onEdit = { editingId = course.customId },
             onConfigureTime = { settingsTermOverride = detailTerm; showSettingsDialog = true },
             onDelete = {
@@ -512,6 +520,7 @@ fun ScheduleRoute() {
                 undoDeadline = System.currentTimeMillis() + 5000L
                 settingsManager.removeCustomCourse(course.customId, routeAccountKey)
                 detailId = null
+                detailSourceBounds = null
                 notificationCourseJson = null
                 focusRegistry.restore(course.id)
             })

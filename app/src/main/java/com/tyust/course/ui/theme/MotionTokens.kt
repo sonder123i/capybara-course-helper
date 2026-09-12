@@ -98,14 +98,14 @@ object MotionSpring {
 
     /** Segmented settle: decisive snap with a single restrained jelly overshoot. */
     fun <T> segmentedSettle() = spring<T>(
-        dampingRatio = 0.78f,
-        stiffness = 460f
+        dampingRatio = 0.50f,
+        stiffness = 360f
     )
 
     /** Segmented release: return to rest with a slight jelly rebound. */
     fun <T> segmentedRelease() = spring<T>(
-        dampingRatio = 0.80f,
-        stiffness = 520f
+        dampingRatio = 0.48f,
+        stiffness = 440f
     )
 
     /** Nav settle: long travel across the bar wants a pronounced jelly overshoot. */

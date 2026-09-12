@@ -20,6 +20,23 @@ class GlassLensOpticsTest {
 
     private val density = Density(3f)
 
+    @Test
+    fun `primary action keeps a refractive resting interior with the AGSL displacement bound`() {
+        val profile = GlassChipAppearance.PrimaryAction
+        val material = profile.material(GlassAccessibilityMode(false, false))
+        val diameter = 64f * density.density
+        for (press in listOf(0f, 0.5f, 1f)) {
+            val optics = glassLensOpticsFrom(material, density, diameter / 2f, diameter,
+                interactionProgress = press, pressScalesRefraction = true,
+                refractionFloor = profile.refractionFloor, maxRefractionAmountPx = diameter * 0.40f)
+            assertTrue("A broad optical interior must remain at rest", optics.thicknessPx >= 18f * density.density)
+            assertEquals("The 64dp primary action shares the AGSL bound", diameter * 0.40f, optics.lensAmountPx, 0.01f)
+            assertTrue(optics.thicknessPx < diameter / 2f)
+        }
+        assertTrue(profile.surfaceAlpha(false, 1f, false) < profile.surfaceAlpha(false, 0f, false))
+        assertTrue(profile.surfaceAlpha(true, 0f, true) > profile.surfaceAlpha(true, 0f, false))
+    }
+
     /** 指示器配方：与库的 `lens(10dp, 14dp)` 同值。 */
     private val indicator = GlassMaterialSpec(
         blurDp = 0f,

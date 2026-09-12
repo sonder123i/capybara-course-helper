@@ -444,11 +444,9 @@ fun LiquidSegmentedControl(
         accessibility = accessibility,
         interactionProgress = 0f
     )
-    val pressedScale = if (accessibility.reduceMotion) {
-        1f
-    } else {
-        GlassRecipe.SegIndicatorPressedScale
-    }
+    // Reduced motion is resolved by the retained animation state, so re-enabling it
+    // restores the normal spring without rebuilding the current drag position.
+    val pressedScale = GlassRecipe.SegIndicatorPressedScale
     val latestSelectedIndex by rememberUpdatedState(clampedSelectedIndex)
     val latestOnSelect by rememberUpdatedState(onSelect)
     val haptics = LocalHapticFeedback.current
@@ -492,6 +490,7 @@ fun LiquidSegmentedControl(
                 directManipulationSpec = MotionSpring.liquidFollow(),
                 settleAnimationSpec = MotionSpring.segmentedSettle(),
                 releaseScaleAnimationSpec = MotionSpring.segmentedRelease(),
+                pressScaleAnimationSpec = spring(dampingRatio = 0.58f, stiffness = 680f),
                 onDragStarted = {},
                 onDragStopped = {},
                 onDrag = { _, _ -> }
@@ -1035,10 +1034,11 @@ fun LiquidSegmentedControl(
 private fun segIndicatorScale(anim: DampedDragAnimation): GlassLensTransform {
     var sx = anim.scaleX
     var sy = anim.scaleY
-    val velocity = anim.velocity / 10f
-    val maxStretch = GlassRecipe.SegIndicatorMaxVelocityStretch
-    sx /= 1f - (velocity * 0.45f).coerceIn(-maxStretch, maxStretch)
-    sy *= 1f - (velocity * 0.15f).coerceIn(-maxStretch, maxStretch)
+    // The position spring already owns physical velocity. A second slow velocity filter
+    // erased short taps before their deformation could become visible.
+    val stretch = (abs(anim.positionVelocity) / 8f).coerceIn(0f, 1f) * GlassRecipe.SegIndicatorMaxVelocityStretch
+    sx *= 1f + stretch
+    sy /= 1f + stretch * 0.72f
     // 平移为 0：滑块的 translationX 在**外层** graphicsLayer 上，
     // glassLens 在它内部，已经跟着走了。见 GlassLensTransform。
     return GlassLensTransform(scaleX = sx, scaleY = sy)

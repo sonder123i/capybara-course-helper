@@ -179,7 +179,9 @@ fun glassLensOpticsFrom(
      * 饱和度提升，必须与调用点在 33+ 那条路上**是否调了 `vibrancy()`** 一致。
      * 详见 [GlassLensOptics.vibrancy]。
      */
-    vibrancy: Float = 1.28f
+    vibrancy: Float = 1.28f,
+    /** Explicit material profiles can use the same displacement bound as the AGSL renderer. */
+    maxRefractionAmountPx: Float = Float.POSITIVE_INFINITY
 ): GlassLensOptics = with(density) {
     val progress = interactionProgress.coerceIn(0f, 1f)
     val motion = motionIntensity.coerceIn(0f, 1f)
@@ -205,7 +207,7 @@ fun glassLensOpticsFrom(
     //     态 lens 参数全乘 pressProgress = 0，压根不折射，所以不可能有这个问题。
     // 只保留一条防御：位移不超过元素短边，避免采样跑到底图之外。
     val amountPx = (material.refractionAmountDp.dp.toPx() * amountScale)
-        .coerceIn(0f, minDimensionPx)
+        .coerceIn(0f, minOf(minDimensionPx, maxRefractionAmountPx))
 
     // 色散：库那边是布尔开关（开 = 1.0）。这里做成连续量，静止弱、交互强，
     // 滑动时蓝黄边随速度浮现而不是硬跳。

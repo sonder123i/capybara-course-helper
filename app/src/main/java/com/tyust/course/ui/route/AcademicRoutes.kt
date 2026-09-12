@@ -1,5 +1,8 @@
 package com.tyust.course.ui.route
 
+import com.tyust.course.ui.theme.moduleEntrance
+import com.tyust.course.ui.theme.ModuleMotion
+
 import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -138,7 +141,7 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
     }
 
     Scaffold(containerColor = Color.Transparent, topBar = {
-        Column(Modifier.fillMaxWidth().reportNoticeAnchor()) {
+        Column(Modifier.fillMaxWidth().moduleEntrance(0).reportNoticeAnchor()) {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp).height(64.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 SystemSegmentedControl(options = listOf("可选", "已选"), selectedIndex = tab,
@@ -161,7 +164,8 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                     maxLines = 2,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
-                AnimatedVisibility(searchVisible) {
+                AnimatedVisibility(searchVisible, enter = ModuleMotion.expand(rememberGlassAccessibilityMode().reduceMotion),
+                    exit = ModuleMotion.collapse(rememberGlassAccessibilityMode().reduceMotion)) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         GlassTextField(value = query, onValueChange = { query = it }, placeholder = "搜索课程、教师或课程号",
                             leadingIcon = Icons.Default.Search, modifier = Modifier.weight(1f))
@@ -179,7 +183,7 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
             }
         }
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).moduleEntrance(1)) {
             if (tab == 1) {
                 AcademicSelectedCoursesRoute(school, selectedRevision)
             } else {

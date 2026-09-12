@@ -140,7 +140,9 @@ class UiRedesignDeviceTest {
         compose.onNodeWithText("编辑课程").assertIsDisplayed()
         val bounds = compose.onNodeWithTag("course-detail-surface", true).fetchSemanticsNode().boundsInRoot
         val root = compose.onNodeWithTag("frame").fetchSemanticsNode().boundsInRoot
-        assertTrue(bounds.height / root.height in 0.60f..0.91f)
+        assertTrue("Long content must stay inside the 85% viewport cap", bounds.height / root.height <= 0.85f)
+        assertTrue("The footer needs a scrollable body above it", compose.onNodeWithTag("course-detail-scroll", true)
+            .fetchSemanticsNode().boundsInRoot.height > 0f)
         capture("03-detail-long-light")
         compose.onNodeWithTag("course-detail-scroll", true).performTouchInput { swipeUp() }
         compose.onNode(isToggleable()).performClick()

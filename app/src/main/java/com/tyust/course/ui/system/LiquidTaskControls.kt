@@ -87,7 +87,8 @@ fun rememberTaskControlsState(): TaskControlsState {
         if (state.expanded) state.pendingAction = null
         val target = if (state.expanded) 1f else 0f
         if (reduced) state.animation.snapTo(target)
-        else state.animation.animateTo(target, spring(dampingRatio = 0.78f, stiffness = 390f))
+        else state.animation.animateTo(target, if (state.expanded) spring(dampingRatio = 0.78f, stiffness = 390f)
+            else androidx.compose.animation.core.tween(com.tyust.course.ui.theme.ModuleMotion.ExitMillis))
         if (!state.expanded) {
             val action = state.pendingAction
             state.pendingAction = null

@@ -7,38 +7,15 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.tyust.course.schedule.*
 import com.tyust.course.ui.system.*
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,20 +23,26 @@ import java.util.Locale
 @Composable
 fun ScheduleCourseSheet(course: ScheduleCourseUi, account: String, term: String,
     allCourses: List<ScheduleCourseUi>, onDismiss: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit,
-    onConfigureTime: () -> Unit, sourceCenterX: Float? = null) {
+    onConfigureTime: () -> Unit, sourceCenterX: Float? = null, sourceBounds: Rect? = null) {
     val host = LocalDialogHost.current
     val ownHost = rememberDialogHostState()
     val targetHost = host ?: ownHost
     val sheet = remember(course.id) { ScheduleBottomSheetState() }
+    SideEffect { sheet.sourceBounds = sourceBounds }
     var handle by remember { mutableStateOf<DialogHandle?>(null) }
+    var deleteAfterExit by remember(course.id) { mutableStateOf(false) }
     val close = { targetHost.dismiss(handle) }
     val currentDismiss by rememberUpdatedState(onDismiss)
+    val currentDelete by rememberUpdatedState(onDelete)
     val body: @Composable () -> Unit = {
-        ScheduleCourseSheetContent(course, account, term, allCourses, sheet, close, onEdit, onDelete, onConfigureTime, sourceCenterX)
+        ScheduleCourseSheetContent(course, account, term, allCourses, sheet, close, onEdit,
+            { deleteAfterExit = true; close() }, onConfigureTime, sourceCenterX)
     }
     val currentBody by rememberUpdatedState(body)
     DisposableEffect(targetHost, course.id) {
-        val owner = targetHost.show({ currentDismiss() }, DialogPresentation.Bottom, bottomSheet = sheet,
+        val owner = targetHost.show({
+            if (deleteAfterExit) { deleteAfterExit = false; currentDelete() } else currentDismiss()
+        }, DialogPresentation.Bottom, bottomSheet = sheet,
             saveableKey = "schedule-detail:$account:$term:${course.id}") { currentBody() }
         handle = owner
         onDispose { targetHost.dismiss(owner, notify = false) }

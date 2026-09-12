@@ -9,9 +9,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,19 +24,27 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import com.tyust.course.ui.system.glass.glassSheet
+import com.tyust.course.ui.theme.ModuleMotion
+import com.tyust.course.ui.theme.MotionEasing
 
-data class SystemMenuAction(val title: String, val icon: ImageVector, val onClick: () -> Unit)
+data class SystemMenuAction(val title: String, val icon: ImageVector, val onClick: () -> Unit, val destructive: Boolean = false)
 
 @Composable
 fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modifier: Modifier = Modifier,
     anchorWidth: Dp = 48.dp, trigger: (@Composable (() -> Unit) -> Unit)? = null) {
     var expanded by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var opensUp by remember { mutableStateOf(false) }
     var space by remember { mutableFloatStateOf(Float.MAX_VALUE) }
     val density = LocalDensity.current
     val reduced = rememberGlassAccessibilityMode().reduceMotion
-    val motion by animateFloatAsState(if (expanded) 1f else 0f, if (reduced) snap() else com.tyust.course.ui.theme.MotionProfile.iconSpring(), label = "actionMenu")
-    val progress = motion.coerceIn(0f, 1f)
+    val motion = animateFloatAsState(if (expanded) 1f else 0f,
+        if (reduced) snap() else if (expanded) com.tyust.course.ui.theme.MotionProfile.iconSpring()
+        else tween(ModuleMotion.ExitMillis, easing = MotionEasing.Accelerate), label = "actionMenu")
+    val progress = motion.value.coerceIn(0f, 1f)
+    LaunchedEffect(expanded) {
+        if (expanded) pendingAction = null
+    }
     val rowHeight = (48f * density.fontScale.coerceAtLeast(1f)).dp
     val desired = rowHeight * actions.size + 8.dp
     val bodyHeight = minOf(desired, with(density) { space.toDp() }).coerceAtLeast(0.dp)
@@ -57,11 +62,12 @@ fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modif
                 .clip(RoundedCornerShape(16.dp)).verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
                 actions.forEachIndexed { index, action ->
                     Row(Modifier.fillMaxWidth().heightIn(min = rowHeight).clickable(
-                        enabled = expanded, role = Role.Button, onClick = { expanded = false; action.onClick() }
+                        enabled = expanded, role = Role.Button, onClick = { pendingAction = action.onClick; expanded = false }
                     ).padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(action.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                        ActionLineIcon(action.icon, null, Modifier.size(20.dp))
+                        val color = if (action.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        Text(action.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = color)
+                        ActionLineIcon(action.icon, null, Modifier.size(20.dp), tint = color)
                     }
                     if (index < actions.lastIndex) SystemDivider()
                 }
@@ -74,6 +80,11 @@ fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modif
         renderedHeight = 48.dp + (bodyHeight + 8.dp) * progress,
         desiredBodyHeight = desired,
         onDismiss = { expanded = false },
+        onClosed = {
+            val action = pendingAction
+            pendingAction = null
+            action?.invoke()
+        },
         onSpaceAvailable = { available, up -> space = available; opensUp = up },
         modifier = modifier.width(anchorWidth).height(48.dp),
         popupWidth = 244.dp

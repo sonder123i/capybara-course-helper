@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.tyust.course.ui.theme.MotionProfile
 import com.tyust.course.ui.system.glass.liquidChip
+import com.tyust.course.ui.system.glass.GlassChipAppearance
 import com.tyust.course.ui.system.glass.rememberInteractiveOptics
 
 val TaskButtonDiameter = 64.dp
@@ -56,7 +57,8 @@ fun LiquidTaskButton(
         if (reduced) snap() else MotionProfile.iconSpring(), label = "primary-press")
     val material = if (backdrop != null) Modifier.liquidChip(
         backdrop, CircleShape, optics, enabled = enabled || menuVisible,
-        elevation = 6.dp, interactive = false
+        elevation = 6.dp, interactive = false,
+        appearance = GlassChipAppearance.PrimaryAction, opticalFeedback = true
     ) else Modifier.background(colors.surfaceContainerHigh, CircleShape)
         .border(1.dp, colors.outlineVariant.copy(alpha = 0.5f), CircleShape)
     val glyphAlpha = if (enabled || menuVisible) 1f else 0.72f
@@ -70,9 +72,9 @@ fun LiquidTaskButton(
             }
             .then(material)
             .background(Brush.linearGradient(listOf(
-                colors.primary.copy(alpha = if (enabled || menuVisible) 0.14f else 0.04f),
+                colors.primary.copy(alpha = if (enabled || menuVisible) 0.035f else 0.015f),
                 Color.Transparent,
-                colors.primary.copy(alpha = 0.05f)
+                colors.primary.copy(alpha = 0.02f)
             )), CircleShape)
             .clip(CircleShape)
             .then(if (!reduced && (enabled || menuVisible)) optics.gestureModifier else Modifier)

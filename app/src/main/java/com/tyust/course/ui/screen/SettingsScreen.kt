@@ -1,5 +1,7 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.moduleEntrance
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -100,11 +102,13 @@ fun SettingsScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
+            Box(Modifier.moduleEntrance(0)) {
             SystemTopBar(
                 title = "设置",
                 subtitle = "账号、外观与应用偏好",
                 collapseFraction = headerCollapse
             )
+            }
         }
     ) { padding ->
         // 内容延伸到玻璃顶栏下方，滚动时从顶栏底下穿过（padding 施加在滚动内容内部）
@@ -132,7 +136,7 @@ fun SettingsScreen(
                 onRefreshCookieClick = onRefreshCookieClick
             )
 
-            InsetGroupedSection(header = "账号与教务") {
+            InsetGroupedSection(Modifier.moduleEntrance(2), header = "账号与教务") {
                 SettingsRow(
                     icon = Icons.Outlined.School,
                     iconTint = Color(0xFF0A84FF),
@@ -175,7 +179,7 @@ fun SettingsScreen(
                 )
             }
 
-            InsetGroupedSection(header = "外观") {
+            InsetGroupedSection(Modifier.moduleEntrance(3), header = "外观") {
                 SettingsRow(
                     icon = Icons.Outlined.Palette,
                     iconTint = MaterialTheme.colorScheme.primary,
@@ -209,7 +213,7 @@ fun SettingsScreen(
                 )
             }
 
-            InsetGroupedSection(header = "应用与支持") {
+            InsetGroupedSection(Modifier.moduleEntrance(3), header = "应用与支持") {
                 SettingsRow(
                     icon = Icons.Outlined.SystemUpdate,
                     iconTint = Color(0xFF34C759),
@@ -248,7 +252,7 @@ fun SettingsScreen(
                 )
             }
 
-            InsetGroupedSection(header = "数据与安全") {
+            InsetGroupedSection(Modifier.moduleEntrance(3), header = "数据与安全") {
                 InsetGroupedRow(
                     title = "匿名使用统计",
                     subtitle = "仅发送随机安装标识和版本，每天一次；关闭后停止上报",
@@ -264,7 +268,7 @@ fun SettingsScreen(
                 )
             }
 
-            InsetGroupedSection {
+            InsetGroupedSection(Modifier.moduleEntrance(3)) {
                 InsetGroupedRow(
                     title = "退出登录",
                     icon = Icons.AutoMirrored.Filled.ExitToApp,
@@ -303,6 +307,7 @@ private fun SettingsHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .moduleEntrance(1)
             .clip(heroShape)
             .background(com.tyust.course.ui.system.glassSurfaceColor())
             .border(0.5.dp, com.tyust.course.ui.system.glassBorderColor(), heroShape)

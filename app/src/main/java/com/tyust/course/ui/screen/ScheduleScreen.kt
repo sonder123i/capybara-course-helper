@@ -1,5 +1,7 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.moduleEntrance
+
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 
@@ -373,7 +375,7 @@ fun ScheduleScreen(
         topBar = {
             // topBar slot 只测量单个子项，两个兄弟节点会叠放并让通知条压到状态栏，
             // 因此顶栏与内联通知必须在同一个 Column 里纵向排布。
-            Column(modifier = Modifier.reportNoticeAnchor()) {
+            Column(modifier = Modifier.moduleEntrance(0).reportNoticeAnchor()) {
                 WeekHeaderCompact(
                     currentWeek = pagerState.currentPage + 1,
                     weekOffset = if (reducedMotion) 0f else pagerState.currentPageOffsetFraction,
@@ -400,6 +402,7 @@ fun ScheduleScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .moduleEntrance(1)
                         .padding(paddingValues),
                     contentAlignment = Alignment.Center
                 ) {
@@ -408,7 +411,7 @@ fun ScheduleScreen(
             }
 
             errorMessage.isNotBlank() -> {
-                Box(Modifier.fillMaxSize().padding(paddingValues).padding(24.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().moduleEntrance(1).padding(paddingValues).padding(24.dp), contentAlignment = Alignment.Center) {
                     com.tyust.course.ui.system.SystemEmptyState(title = "课表同步失败", message = errorMessage) {
                         com.tyust.course.ui.system.SystemSecondaryButton(text = "重新同步", onClick = onRetry)
                     }
@@ -423,6 +426,7 @@ fun ScheduleScreen(
                     modifier = Modifier
                         .testTag("schedule-pager")
                         .fillMaxSize()
+                        .moduleEntrance(1)
                         // 内容捕获层挂在 pager 这个稳定节点上（不要挂进每一页）：
                         // 顶栏玻璃与芯片采样它，才能折射滚动中的网格与课程卡片。
                         .then(
@@ -1114,6 +1118,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
     val darkCard = com.tyust.course.ui.system.rememberGlassDarkTheme()
     val focusRequester = remember { FocusRequester() }
     val focusRegistry = LocalScheduleFocus.current
+    var cardBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     val unknownWeeks = remember(course.weeks) { !com.tyust.course.schedule.ScheduleWeeks.parse(course.weeks).valid }
     DisposableEffect(course.id, focusRegistry) {
         focusRegistry?.register(course.id, focusRequester)
@@ -1148,7 +1153,10 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .focusRequester(focusRequester)
-            .onGloballyPositioned { focusRegistry?.place(course.id, it.boundsInWindow()) }
+            .onGloballyPositioned {
+                cardBounds = it.boundsInWindow()
+                focusRegistry?.place(course.id, it.boundsInWindow())
+            }
             .semantics {
                 stateDescription = listOfNotNull(if (course.hasConflict) "时间冲突" else null,
                     if (course.isCurrent) "正在上课" else null, if (course.isCustom) "自定义课程" else null,
@@ -1158,7 +1166,13 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick
+                onClick = {
+                    // A course can also exist in the pager's adjacent week. The clicked copy
+                    // owns the opening origin and the focus returned after dismissal.
+                    focusRegistry?.register(course.id, focusRequester)
+                    cardBounds?.let { focusRegistry?.place(course.id, it) }
+                    onClick()
+                }
             ),
         shape = RoundedCornerShape(12.dp),
         color = containerColor,

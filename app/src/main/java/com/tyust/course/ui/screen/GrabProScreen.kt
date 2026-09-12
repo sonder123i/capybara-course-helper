@@ -1,29 +1,31 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.moduleEntrance
+import com.tyust.course.ui.theme.ModuleMotion
+import com.tyust.course.ui.theme.LocalModuleEntrance
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
+import com.tyust.course.ui.system.glass.LocalGlassLensAnchor
+import com.tyust.course.ui.system.glass.LocalPageGlassFreshness
+import com.tyust.course.ui.system.glass.rememberGlassLensRegion
+import com.tyust.course.ui.system.glass.glassLensAnchor
+import com.tyust.course.ui.system.glass.drawBackdropSource
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.snapshotFlow
+
 import android.os.Build
 
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.platform.testTag
 import com.tyust.course.ui.system.*
 import com.tyust.course.ui.theme.MotionProfile
 import com.tyust.course.ui.system.GlassToaster
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,8 +38,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -45,19 +45,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccessTime
-import androidx.compose.material.icons.filled.AlarmAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -75,14 +67,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -90,26 +80,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyust.course.model.Course
-import com.tyust.course.ui.system.GlassStatChip
 import com.tyust.course.ui.system.GlassTextField
 import com.tyust.course.ui.system.PagePadding
 import com.tyust.course.ui.system.SystemCard
-import com.tyust.course.ui.system.SystemDestructiveButton
 import com.tyust.course.ui.system.SystemDialog
-import com.tyust.course.ui.system.SystemEmptyState
 import com.tyust.course.ui.system.SystemPrimaryButton
-import com.tyust.course.ui.system.SystemSectionHeader
 import com.tyust.course.ui.system.SystemSecondaryButton
 import com.tyust.course.ui.system.SystemSegmentedControl
-import com.tyust.course.ui.system.SystemStatusBadge
-import com.tyust.course.ui.system.glass.glassChip
-import com.tyust.course.ui.system.glass.rememberInteractiveOptics
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.semantics.Role
-import com.tyust.course.ui.system.SystemTone
 import com.tyust.course.ui.system.SystemTopBar
-import com.tyust.course.ui.theme.SemanticDanger
 import com.tyust.course.ui.theme.SemanticSuccess
 import com.tyust.course.ui.theme.SemanticWarning
 
@@ -274,17 +254,32 @@ fun GrabProScreen(
         add(TaskQuickAction("logs", "运行日志", AnimatedIconSpec.Log, caption = "日志") { logExpanded = true; reveal(advancedIndex + 1) })
         add(TaskQuickAction("queue", "课程队列", AnimatedIconSpec.Courses, caption = "队列") { reveal(queueHeadingIndex) })
     }
-    Box(Modifier.fillMaxSize()) {
+    val wallpaper = LocalAppBackdrop.current
+    val pageBackdrop = if (wallpaper != null && isBackdropSupported()) rememberLayerBackdrop() else null
+    val controlBackdrop = if (wallpaper != null && pageBackdrop != null) rememberCombinedBackdrop(wallpaper, pageBackdrop) else wallpaper
+    val lensDensity = LocalDensity.current
+    val controlsLens = if (controlBackdrop != null) rememberGlassLensRegion("grab-controls", console, queueVersion,
+        controlsState.expanded, freshness = LocalPageGlassFreshness.current) { coordinates ->
+        drawBackdropSource(controlBackdrop, lensDensity, coordinates)
+    } else null
+    val entrance = LocalModuleEntrance.current
+    LaunchedEffect(controlsLens, entrance) {
+        if (controlsLens != null) snapshotFlow { entrance?.invoke() ?: 1f }.collect { controlsLens.invalidate() }
+    }
+    // The source contains wallpaper + the page, while the button and its fan stay outside it.
+    Box(Modifier.fillMaxSize().glassLensAnchor(controlsLens)) {
     Scaffold(
-        modifier = Modifier.graphicsLayer {
+        modifier = Modifier.then(if (pageBackdrop != null) Modifier.layerBackdrop(pageBackdrop) else Modifier).graphicsLayer {
             val blur = controlsState.progress * 14.dp.toPx()
             renderEffect = if (!reduced && Build.VERSION.SDK_INT >= 31 && blur > 0.1f)
                 BlurEffect(blur, blur, TileMode.Clamp) else null
         }.then(if (controlsState.expanded) Modifier.clearAndSetSemantics {} else Modifier),
         containerColor = Color.Transparent,
         topBar = {
+            Box(Modifier.moduleEntrance(0)) {
             SystemTopBar(title = "抢课工作台", collapseFraction = headerCollapse,
                 subtitle = schoolName.takeIf { it.isNotBlank() } ?: "管理队列与执行任务")
+            }
         },
         bottomBar = {
             Spacer(Modifier.height(overlayInset + TaskControlsReservedHeight))
@@ -299,6 +294,7 @@ fun GrabProScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item(key = "current-task") {
+                Box(Modifier.moduleEntrance(1)) {
                 TaskOverviewCard(console,
                     modeControl = {
                         TaskModeBar(isFuzzyMatchMode, localScheduledMode, configurationEnabled,
@@ -310,14 +306,16 @@ fun GrabProScreen(
                         !targetCourseName.isNullOrBlank() -> onClearTargetCourse
                         else -> null
                     })
+                }
             }
             if (systemNotice.isNotBlank()) item(key = "school-notice") {
-                Text(systemNotice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(systemNotice, Modifier.moduleEntrance(1), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item(key = "scheduled-details") {
                 AnimatedVisibility(localScheduledMode,
-                    enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
-                    exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                    modifier = Modifier.moduleEntrance(1),
+                    enter = ModuleMotion.expand(reduced),
+                    exit = ModuleMotion.collapse(reduced)) {
                     SystemCard(Modifier.fillMaxWidth()) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -350,7 +348,7 @@ fun GrabProScreen(
                 }
             }
             item(key = "queue-heading") {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().moduleEntrance(2), verticalAlignment = Alignment.CenterVertically) {
                     Text("课程队列", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     AnimatedValueText(queue.size.toString(), Modifier.padding(start = 8.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -370,6 +368,7 @@ fun GrabProScreen(
                 editable = configurationEnabled
             )
             item(key = "advanced-options") {
+                Box(Modifier.moduleEntrance(3)) {
                 ConsoleDisclosure("高级设置", interval + " ms · 最多 " + maxRetry + " 次", AnimatedIconSpec.Settings, "grab-advanced",
                     expanded = advancedExpanded, onExpandedChange = { advancedExpanded = it }) {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -394,13 +393,17 @@ fun GrabProScreen(
                         }
                     }
                 }
+                }
             }
-            item(key = "runtime-log") { LogConsole(logText, onClearLog, logExpanded, { logExpanded = it }) }
+            item(key = "runtime-log") { Box(Modifier.moduleEntrance(3)) { LogConsole(logText, onClearLog, logExpanded, { logExpanded = it }) } }
         }
     }
+    CompositionLocalProvider(LocalAppBackdrop provides controlBackdrop, LocalControlBackdrop provides controlBackdrop,
+        LocalGlassLensAnchor provides controlsLens) {
     LiquidTaskControls(quickActions, overlayInset, controlsState) { expanded, progress, toggle ->
-        TaskActionDock(console, canStart, isFuzzyMatchMode, { controlsState.close(); action() }, Modifier,
+        TaskActionDock(console, canStart, isFuzzyMatchMode, { controlsState.close(); action() }, Modifier.moduleEntrance(3),
             expanded, progress, toggle)
+    }
     }
     }
 }
@@ -459,8 +462,8 @@ private fun TaskOverviewCard(ui: GrabConsoleUiState, modeControl: @Composable ()
             }
             modeControl()
             AnimatedVisibility(ui.running || ui.attempts + ui.successes + ui.failures > 0,
-                enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
-                exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                enter = ModuleMotion.expand(reduced),
+                exit = ModuleMotion.collapse(reduced)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     ConsoleMetric(ui.attempts, "尝试", Modifier.weight(1f), colors.onSurfaceVariant)
                     ConsoleMetric(ui.successes, "成功", Modifier.weight(1f), SemanticSuccess)
@@ -522,8 +525,8 @@ private fun ConsoleDisclosure(title: String, summary: String, icon: AnimatedIcon
                     state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle)
             }
             AnimatedVisibility(expanded,
-                enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
-                exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                enter = ModuleMotion.expand(reduced),
+                exit = ModuleMotion.collapse(reduced)) {
                 Box(Modifier.padding(top = 14.dp, bottom = 4.dp)) { content() }
             }
         }
@@ -668,8 +671,8 @@ private fun LogConsole(
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
-            exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()
+            enter = ModuleMotion.expand(reduced),
+            exit = ModuleMotion.collapse(reduced)
         ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),

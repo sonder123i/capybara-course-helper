@@ -1,6 +1,5 @@
 package com.tyust.course.ui.system
 
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -12,14 +11,7 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
@@ -44,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
@@ -51,6 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +60,8 @@ import kotlinx.coroutines.launch
 enum class DialogPresentation { Center, Bottom, Page }
 class DialogHandle internal constructor(internal val key: String = java.util.UUID.randomUUID().toString())
 
+internal data class SheetFrame(val x: Float = 0f, val y: Float = 0f, val scaleX: Float = 1f, val scaleY: Float = 1f)
+
 internal class HostedDialog(
     val handle: DialogHandle,
     val onDismiss: () -> Unit,
@@ -73,6 +72,10 @@ internal class HostedDialog(
     val visibility = MutableTransitionState(false).apply { targetState = true }
     var notifyOnClose = true
     var presence by mutableFloatStateOf(0f)
+    var lastSheetFrame = SheetFrame()
+    var lastPresence = 0f
+    var exitSheetFrame by mutableStateOf<SheetFrame?>(null)
+    var exitStartPresence = 1f
 }
 
 class DialogHostState {
@@ -95,6 +98,10 @@ class DialogHostState {
 
     fun dismiss(handle: DialogHandle? = dialogs.lastOrNull()?.handle, notify: Boolean = true) {
         val dialog = dialogs.firstOrNull { it.handle === handle } ?: return
+        if (dialog.visibility.targetState && dialog.bottomSheet != null) {
+            dialog.exitSheetFrame = dialog.lastSheetFrame
+            dialog.exitStartPresence = dialog.lastPresence.coerceAtLeast(0.001f)
+        }
         dialog.notifyOnClose = dialog.notifyOnClose && notify
         dialog.visibility.targetState = false
     }
@@ -112,6 +119,7 @@ fun rememberDialogHostState(): DialogHostState = remember { DialogHostState() }
 
 val LocalDialogHost = compositionLocalOf<DialogHostState?> { null }
 internal val LocalDialogProgress = compositionLocalOf<State<Float>?> { null }
+internal val LocalDialogModuleProgress = compositionLocalOf<State<Float>?> { null }
 
 @Composable
 fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
@@ -129,6 +137,8 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
             val page = dialog.presentation == DialogPresentation.Page
             val backProgress = remember { Animatable(0f) }
             val scope = rememberCoroutineScope()
+            var hostSize by remember { mutableStateOf(IntSize.Zero) }
+            var hostOrigin by remember { mutableStateOf(Offset.Zero) }
             PredictiveBackHandler(enabled = state.dialogs.lastOrNull() === dialog && visibility.targetState) { events ->
                 try {
                     events.collect {
@@ -150,16 +160,26 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
                         reducedMotion -> snap()
                         page -> com.tyust.course.ui.theme.MotionProfile.hierarchySpring()
                         targetState != EnterExitState.Visible -> tween(com.tyust.course.ui.theme.MotionProfile.SheetExitMillis)
+                        bottom && dialog.bottomSheet?.sourceBounds != null -> tween(460, delayMillis = 40,
+                            easing = com.tyust.course.ui.theme.MotionEasing.FastOutSlowIn)
                         bottom -> com.tyust.course.ui.theme.MotionProfile.sheetSpring()
                         else -> spring(0.80f, 420f)
                     }
                 }, label = "dialog-presence") { if (it == EnterExitState.Visible) 1f else 0f }
+                val modules = transition.animateFloat(transitionSpec = {
+                    when {
+                        reducedMotion || dialog.bottomSheet == null -> snap()
+                        targetState != EnterExitState.Visible -> tween(com.tyust.course.ui.theme.MotionProfile.SheetExitMillis)
+                        else -> tween(com.tyust.course.ui.theme.ModuleMotion.TimelineMillis,
+                            delayMillis = if (dialog.bottomSheet.sourceBounds != null) 40 else 0, easing = LinearEasing)
+                    }
+                }, label = "dialog-modules") { if (it == EnterExitState.Visible) 1f else 0f }
                 LaunchedEffect(dialog) {
                     snapshotFlow { progress.value.coerceIn(0f, 1f) * (1f - backProgress.value) }
                         .collect { dialog.presence = it }
                 }
                 Box(
-                    modifier.fillMaxSize(),
+                    modifier.fillMaxSize().onGloballyPositioned { hostSize = it.size; hostOrigin = it.positionInRoot() },
                     contentAlignment = if (bottom) Alignment.BottomCenter else Alignment.Center
                 ) {
                     Box(Modifier.fillMaxSize().graphicsLayer { alpha = progress.value.coerceIn(0f, 1f) }
@@ -181,6 +201,29 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
                                 } else 0f
                                 scaleX = if (!page && !bottom) 0.94f + 0.06f * presence else 1f
                                 scaleY = scaleX
+                                if (bottom && dialog.bottomSheet != null && !reducedMotion) {
+                                    val sheet = dialog.bottomSheet
+                                    val p = presence.coerceIn(0f, 1f)
+                                    val exit = dialog.exitSheetFrame
+                                    val source = sheet.sourceBounds
+                                    if (exit != null) {
+                                        val fraction = (1f - p / dialog.exitStartPresence).coerceIn(0f, 1f)
+                                        translationX = exit.x * (1f - fraction)
+                                        translationY = exit.y + (size.height - exit.y) * fraction
+                                        scaleX = exit.scaleX + (0.97f - exit.scaleX) * fraction
+                                        scaleY = exit.scaleY + (0.97f - exit.scaleY) * fraction
+                                    } else if (source != null && hostSize.height > 0) {
+                                        val sourceCenter = source.center - hostOrigin
+                                        translationX += (sourceCenter.x - hostSize.width / 2f) * (1f - p)
+                                        translationY = sheet.offset + (sourceCenter.y - (hostSize.height - size.height / 2f)) * (1f - p)
+                                        val initialX = (source.width / size.width).coerceIn(0.20f, 0.90f)
+                                        val initialY = (source.height / size.height).coerceIn(0.16f, 0.75f)
+                                        scaleX = initialX + (1f - initialX) * p
+                                        scaleY = initialY + (1f - initialY) * p
+                                    }
+                                    dialog.lastSheetFrame = SheetFrame(translationX, translationY, scaleX, scaleY)
+                                    dialog.lastPresence = p
+                                }
                                 alpha = presence.coerceIn(0f, 1f) * (1f - 0.12f * back) * (1f - 0.03f * above)
                             }
                             .then(if (page) Modifier.fillMaxSize() else Modifier.windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime)).padding(vertical = 12.dp))
@@ -193,7 +236,7 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
                             // switch's semantics and replace its accessibility action with a no-op.
                             .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                     ) {
-                        CompositionLocalProvider(LocalDialogProgress provides progress) { dialog.content() }
+                        CompositionLocalProvider(LocalDialogProgress provides progress, LocalDialogModuleProgress provides modules) { dialog.content() }
                     }
                     if (!visibility.targetState) {
                         Box(Modifier.fillMaxSize().clickable(

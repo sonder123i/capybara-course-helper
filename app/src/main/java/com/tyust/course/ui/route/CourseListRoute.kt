@@ -1,5 +1,7 @@
 package com.tyust.course.ui.route
 
+import com.tyust.course.ui.theme.moduleEntrance
+
 import com.tyust.course.ui.system.GlassToaster
 import com.tyust.course.ui.system.SystemDialog
 import com.tyust.course.ui.system.SystemPrimaryButton
@@ -1340,7 +1342,7 @@ fun CourseListRoute() {
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
             }
-            Column(modifier = Modifier.reportNoticeAnchor()) {
+            Column(modifier = Modifier.moduleEntrance(0).reportNoticeAnchor()) {
             Box(modifier = topBarShellModifier) {
                 Column(
                     modifier = Modifier.fillMaxWidth()
@@ -1506,7 +1508,7 @@ fun CourseListRoute() {
             }
         }
     ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+        Box(modifier = Modifier.fillMaxSize().padding(paddingValues).moduleEntrance(1)) {
             AnimatedContent(
                 targetState = showSelectedCourses,
                 transitionSpec = {

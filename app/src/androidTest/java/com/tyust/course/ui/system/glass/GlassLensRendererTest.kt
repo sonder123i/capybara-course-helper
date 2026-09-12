@@ -85,6 +85,47 @@ class GlassLensRendererTest {
     }
 
     @Test
+    fun primaryActionProfileRefractsInsideCircleWithLegacyRenderer() {
+        val density = androidx.compose.ui.unit.Density(3f)
+        val diameter = 192
+        val appearance = GlassChipAppearance.PrimaryAction
+        val material = appearance.material(com.tyust.course.ui.system.GlassAccessibilityMode(false, false))
+        for (press in listOf(0f, 1f)) {
+            val renderer = RendererPair()
+            try {
+                val source = stripes(384, 384)
+                val optics = glassLensOpticsFrom(material, density, diameter / 2f, diameter.toFloat(),
+                    interactionProgress = press, pressScalesRefraction = true,
+                    refractionFloor = appearance.refractionFloor, maxRefractionAmountPx = diameter * 0.40f)
+                renderer.uploadSource(source, 1)
+                renderer.submit(GlassLensParams(diameter, diameter, 96f, 96f,
+                    optics.cornerRadiusPx, optics.thicknessPx, optics.lensAmountPx, optics.dispersion,
+                    optics.depthEffect, optics.vibrancy))
+                val output = requireNotNull(awaitFrame(renderer)) { "Legacy primary lens produced no frame" }
+                assertFalse(renderer.failed)
+                assertTrue("The lens must keep a circular boundary", Color.alpha(output.getPixel(1, 1)) < 8)
+                var changed = 0
+                var sampled = 0
+                for (y in 0 until diameter) for (x in 0 until diameter) {
+                    val radius = kotlin.math.hypot(x - diameter / 2f, y - diameter / 2f) / (diameter / 2f)
+                    if (radius !in 0.50f..0.87f) continue
+                    sampled++
+                    if (abs(Color.red(source.getPixel(x + 96, y + 96)) - Color.red(output.getPixel(x, y))) > 100) changed++
+                }
+                assertTrue("Primary lens must displace the optical interior at press=$press ($changed/$sampled)",
+                    changed.toFloat() / sampled > 0.08f)
+                val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+                val directory = java.io.File(context.getExternalFilesDir(null), "motion-polish").apply { mkdirs() }
+                java.io.File(directory, "primary-gles-press$press.png").outputStream().use {
+                    output.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+            } finally {
+                renderer.release()
+            }
+        }
+    }
+
+    @Test
     fun rendersRefractedOutput() {
         val srcW = 1002
         val srcH = 168

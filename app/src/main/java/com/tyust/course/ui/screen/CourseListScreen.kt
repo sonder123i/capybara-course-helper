@@ -1,20 +1,17 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.theme.ModuleMotion
+
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.semantics.Role
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.tyust.course.ui.system.GlassCircleButton
 import com.tyust.course.ui.system.LocalAppBackdrop
 import com.tyust.course.ui.system.isBackdropSupported
-import com.tyust.course.ui.system.GlassToaster
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
@@ -22,11 +19,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -37,28 +32,23 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.CircularProgressIndicator
@@ -72,9 +62,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,35 +78,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.tyust.course.model.Course
 import com.tyust.course.academic.catalogGroupKey
 import com.tyust.course.academic.catalogSelectionKey
 import com.tyust.course.utils.CourseParser
 import com.tyust.course.ui.system.GlassPullRefreshBox
 import com.tyust.course.ui.system.PagePadding
-import com.tyust.course.ui.system.SystemActionButton
-import com.tyust.course.ui.system.SystemCapacityIndicator
 import com.tyust.course.ui.system.SystemCard
 import com.tyust.course.ui.system.SystemEmptyState
 import com.tyust.course.ui.system.SystemLoadingState
 import com.tyust.course.ui.system.SystemStatusBadge
 import com.tyust.course.ui.system.SystemTone
-import com.tyust.course.ui.system.rememberGlassDarkTheme
 import com.tyust.course.ui.theme.NeuPrimary
 import com.tyust.course.ui.theme.MotionEasing
 import com.tyust.course.ui.theme.MotionSpecs
 import com.tyust.course.ui.theme.MotionSpring
-import com.tyust.course.ui.system.SystemDivider
 import com.tyust.course.ui.theme.SemanticDanger
 import com.tyust.course.ui.theme.SemanticSuccess
 import com.tyust.course.ui.theme.SemanticWarning
@@ -209,7 +189,7 @@ fun CourseListScreen(
             )
         }
 
-        AnimatedVisibility(visible = isPreloading) {
+        AnimatedVisibility(visible = isPreloading, enter = ModuleMotion.expand(reduceMotion), exit = ModuleMotion.collapse(reduceMotion)) {
             PreloadBanner(
                 preloadProgress = preloadProgress,
                 readyCount = preloadedGroupIds.size
@@ -279,9 +259,9 @@ fun CourseListScreen(
 
                                 CourseGroupItem(
                                     modifier = if (reduceMotion) Modifier else Modifier.animateItem(
-                                        fadeInSpec = tween(com.tyust.course.ui.theme.MotionProfile.IconMillis),
+                                        fadeInSpec = null,
                                         placementSpec = MotionSpring.snappy(),
-                                        fadeOutSpec = tween(com.tyust.course.ui.theme.MotionProfile.IconMillis)
+                                        fadeOutSpec = tween(ModuleMotion.ExitMillis)
                                     ),
                                     courseId = courseId,
                                     courseName = courseName,
@@ -480,6 +460,7 @@ fun CourseGroupItem(
     modifier: Modifier = Modifier
 ) {
     val firstCourse = classes.firstOrNull()
+    val reduced = com.tyust.course.ui.system.rememberGlassAccessibilityMode().reduceMotion
     val credits = firstCourse?.credit ?: "0.0"
     val hasSelected = classes.any { it.isSelected }
     val hasUnknownCapacity = classes.any { it.completeParams["academic_capacity_known"] == "false" || it.completeParams["academic_selected_known"] == "false" }
@@ -577,7 +558,7 @@ fun CourseGroupItem(
 
             AnimatedVisibility(
                 visible = isExpanded,
-                enter = expandVertically(
+                enter = if (reduced) androidx.compose.animation.EnterTransition.None else expandVertically(
                     expandFrom = Alignment.Top,
                     animationSpec = spring(
                         dampingRatio = 0.86f,
@@ -589,18 +570,7 @@ fun CourseGroupItem(
                     transformOrigin = TransformOrigin(0.5f, 0f),
                     animationSpec = MotionSpring.liquidSettle()
                 ),
-                exit = shrinkVertically(
-                    shrinkTowards = Alignment.Top,
-                    animationSpec = spring(
-                        dampingRatio = 1f,
-                        stiffness = 460f,
-                        visibilityThreshold = IntSize.VisibilityThreshold
-                    )
-                ) + fadeOut(animationSpec = tween(120)) + scaleOut(
-                    targetScale = 0.98f,
-                    transformOrigin = TransformOrigin(0.5f, 0f),
-                    animationSpec = tween(150, easing = MotionEasing.Accelerate)
-                )
+                exit = ModuleMotion.collapse(reduced)
             ) {
                 Column(
                     modifier = Modifier.padding(bottom = 4.dp)
