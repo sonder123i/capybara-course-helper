@@ -104,7 +104,7 @@ fun OnboardingScreen(
             OnboardingPage(
                 icon = Icons.Outlined.RocketLaunch,
                 title = "支持四类教务",
-                description = "新正方、旧正方、新强智、旧强智。可自行添加学校地址；各教务的支持范围和限制可在「设置 → 教务支持与限制」查看。"
+                description = "${com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS}。可自行添加学校地址；具体支持范围可在「设置 → 教务支持与限制」查看。"
             )
         )
     }
@@ -116,7 +116,7 @@ fun OnboardingScreen(
     GlassWindowHost(
         modifier = Modifier
             .fillMaxSize()
-            .drawBehind { drawRect(AppearanceSettingsManager.style.baseColor) }
+            .background(MaterialTheme.colorScheme.background)
     ) {
         // 每处都在【绘制 lambda 内部】读 state：rememberLayerBackdrop 没有 key，
         // 捕获外面的快照会让图片壁纸异步解码完成后这一层不重绘。
@@ -137,7 +137,7 @@ fun OnboardingScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(44.dp)) {
                     androidx.compose.foundation.Image(
                         painter = androidx.compose.ui.res.painterResource(com.tyust.course.R.mipmap.ic_launcher),
-                        contentDescription = "正方教务助手",
+                        contentDescription = androidx.compose.ui.res.stringResource(com.tyust.course.R.string.app_name),
                         modifier = Modifier.size(40.dp).align(Alignment.CenterStart)
                     )
                     if (!isLastPage) {

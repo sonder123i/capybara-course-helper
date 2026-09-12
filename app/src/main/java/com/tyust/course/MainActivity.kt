@@ -143,6 +143,9 @@ import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.glass.drawBlurred
 
 class MainActivity : FragmentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.tyust.course.manager.AppThemeCoordinator.wrapContext(newBase))
+    }
 
     companion object {
         private const val PREFS_NAME = "app_prefs"
@@ -150,9 +153,11 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.tyust.course.ui.theme.StartupLogoAnimation.install(this)
         super.onCreate(savedInstanceState)
 
         UserManager.getInstance().init(this)
+        if (savedInstanceState == null) com.tyust.course.schedule.CourseReminderNavigation.accept(intent)
 
         val userManager = UserManager.getInstance()
         if (BuildConfig.UI_PREVIEW) {
@@ -202,8 +207,14 @@ class MainActivity : FragmentActivity() {
                         MainScreen(fragmentActivity = this@MainActivity)
                     }
                 }
+                com.tyust.course.ui.screen.UsageNotice()
             }
         }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        com.tyust.course.schedule.CourseReminderNavigation.accept(intent)
     }
 }
 
@@ -223,6 +234,7 @@ sealed class BottomNavItem(
 @Composable
 fun MainScreen(fragmentActivity: FragmentActivity) {
     val context = LocalContext.current
+    val appWallpaper = com.tyust.course.ui.theme.rememberAppWallpaperStyle()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
     
@@ -239,7 +251,18 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
     var selectedTab by remember(pageData) { pageData.state("navigation.tab") { 0 } }
-    val dialogHostState = rememberDialogHostState()
+    val navigationMotion = com.tyust.course.ui.theme.rememberNavigationMotionState(selectedTab, currentAccountStorageKey, accessibility.reduceMotion)
+    val reminderRequest = com.tyust.course.schedule.CourseReminderNavigation.requestedId
+    LaunchedEffect(reminderRequest, currentAccountStorageKey) {
+        if (reminderRequest != null) {
+            if (com.tyust.course.schedule.ScheduleReminderScheduler.get(context).findById(reminderRequest) != null) selectedTab = 1
+            else {
+                com.tyust.course.ui.system.GlassToaster.show("这条课程提醒已失效或属于其他账号")
+                com.tyust.course.schedule.CourseReminderNavigation.consume()
+            }
+        }
+    }
+    val dialogHostState = key(currentAccountStorageKey) { rememberDialogHostState() }
     val density = LocalDensity.current
     val pageTravelPx = with(density) { 8.dp.roundToPx() }
     val items = remember { listOf(
@@ -492,7 +515,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 ) {
                     // 在绘制 lambda 内部再读一次 state：图片壁纸的位图是异步解码的，
                     // 只读外面那份快照的话，位图到位时这一层不会重绘。
-                    drawWallpaperPattern(AppearanceSettingsManager.style)
+                    drawWallpaperPattern(appWallpaper)
                 }
             } else {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -501,7 +524,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                     // drawWallpaperPattern 是纯 Canvas 绘制，不依赖 backdrop。
                     // 微纹理关掉：它唯一的作用是给折射提供可弯曲的高频内容，这条路径没有折射。
                     drawWallpaperPattern(
-                        AppearanceSettingsManager.style,
+                        appWallpaper,
                         microTexture = false
                     )
                 }
@@ -515,20 +538,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                     ) {
                         key(currentAccountStorageKey) {
                             val savedPages = rememberSaveableStateHolder()
-                            AnimatedContent(
-                                targetState = selectedTab,
-                                modifier = Modifier.fillMaxSize(),
-                                transitionSpec = {
-                                    if (accessibility.reduceMotion) {
-                                        EnterTransition.None togetherWith ExitTransition.None
-                                    } else {
-                                        val direction = if (targetState > initialState) 1 else -1
-                                        ((fadeIn(tween(180)) + slideInHorizontally(tween(180)) { direction * pageTravelPx }) togetherWith
-                                            (fadeOut(tween(120)) + slideOutHorizontally(tween(180)) { -direction * pageTravelPx }))
-                                            .using(SizeTransform(clip = false))
-                                    }
-                                },
-                                label = "mainPage"
+                            com.tyust.course.ui.theme.NavigationPages(navigationMotion,
+                                modifier = Modifier.fillMaxSize().graphicsLayer {
+                                    translationX = -6.dp.toPx() * dialogHostState.pageProgress
+                                    val entry = com.tyust.course.ui.theme.StartupLogoAnimation.contentProgress
+                                    translationY = (1f - entry) * 16.dp.toPx()
+                                    alpha = (1f - 0.03f * dialogHostState.pageProgress) * entry
+                                }
                             ) { page ->
                               savedPages.SaveableStateProvider(items[page].route) {
                                 when (page) {
@@ -549,6 +565,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             } // 关闭 navBarBackdrop 捕获层
 
             // 底栏位于捕获层外，避免采样源包含底栏自身。
+            CompositionLocalProvider(com.tyust.course.ui.theme.LocalNavigationMotion provides navigationMotion) {
             CapsuleNavigationBar(
                 items = items,
                 selectedTab = selectedTab,
@@ -561,14 +578,20 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 onExpandRequest = { navBarMinimized = false },
                 backdrop = navBarBackdrop,
                 lensFreshness = lensFreshness,
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier.align(Alignment.BottomCenter).graphicsLayer {
+                    val entry = ((com.tyust.course.ui.theme.StartupLogoAnimation.contentProgress - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                    alpha = entry
+                    translationY = (1f - entry) * 12.dp.toPx()
+                }
             )
+            }
 
             // 全局玻璃 Toast：悬浮在底栏上方
             GlassToastHost(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = navBarContentInset + 12.dp)
+                    .padding(bottom = navBarContentInset + if (selectedTab == 2)
+                        com.tyust.course.ui.system.TaskControlsReservedHeight + 12.dp else 12.dp)
             )
 
             DialogHost(
@@ -620,7 +643,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 }
 
                 val dialogText = when (dismissCount) {
-                    0 -> "感谢使用正方教务助手。\n\n如果它帮到了你，欢迎去 GitHub 仓库点一个 Star —— 这是项目持续维护最直接的动力。"
+                    0 -> "感谢使用教务助手。\n\n如果它帮到了你，欢迎去 GitHub 仓库点一个 Star，支持项目继续维护。"
                     1 -> "我们仍在持续优化体验。\n\n如果这个应用对你有用，花几秒钟给仓库点个 Star，就是对作者最好的支持。"
                     else -> "这是最后一次提示。\n\n如果你愿意，欢迎去 GitHub 留下一个 Star；无论如何，都感谢你的使用。"
                 }

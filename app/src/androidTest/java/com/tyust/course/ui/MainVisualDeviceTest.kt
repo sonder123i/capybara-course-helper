@@ -20,6 +20,7 @@ class MainVisualDeviceTest {
             val resolver = context.contentResolver
             val appearancePrefs = context.getSharedPreferences("appearance_settings", Context.MODE_PRIVATE)
             val originalAppearance = appearancePrefs.all.toMap()
+            val originalThemeMode = AppearanceSettingsManager.themeMode
             val previousFont = Settings.System.getString(resolver, Settings.System.FONT_SCALE)
             val previousMotion = Settings.Global.getString(resolver, Settings.Global.ANIMATOR_DURATION_SCALE)
             val previousNight = (context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).nightMode
@@ -34,6 +35,7 @@ class MainVisualDeviceTest {
                 }
             }
             try {
+                ui.onMain { AppearanceSettingsManager.updateThemeMode(com.tyust.course.manager.AppThemeMode.System) }
                 ui.shell("cmd uimode night no")
                 ui.shell("settings put system font_scale 1.0")
                 ui.onMain { AppearanceSettingsManager.updateWallpaper(WallpaperPreset.Aurora) }
@@ -42,15 +44,29 @@ class MainVisualDeviceTest {
                 ui.shell("cmd uimode night yes")
                 settle()
                 capture("dark")
+                ui.onMain { AppearanceSettingsManager.updateThemeMode(com.tyust.course.manager.AppThemeMode.Light) }
+                settle()
+                assertTrue("Manual light mode must override a dark system", requireNotNull(ui.main).resources.configuration.uiMode and
+                    android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_NO)
+                capture("manual-light-system-dark")
+                ui.onMain { AppearanceSettingsManager.updateThemeMode(com.tyust.course.manager.AppThemeMode.System) }
                 ui.onMain { AppearanceSettingsManager.updateWallpaper(WallpaperPreset.Aurora) }
                 settle()
                 capture("wallpaper")
+                ui.onMain { AppearanceSettingsManager.updateGlassEffect(false) }
+                settle()
+                capture("material-fallback")
+                ui.onMain { AppearanceSettingsManager.updateGlassEffect(true) }
                 ui.shell("cmd uimode night no")
                 ui.onMain { AppearanceSettingsManager.updateWallpaper(WallpaperPreset.Aurora) }
-                ui.shell("wm size 840x1800 -d $display")
-                settle()
-                assertTrue("Narrow layout was not applied", requireNotNull(ui.main).resources.configuration.screenWidthDp <= 360)
-                capture("narrow")
+                val screenDensity = requireNotNull(ui.main).resources.displayMetrics.density
+                for (widthDp in listOf(320, 360, 412)) {
+                    val pixels = (widthDp * screenDensity).toInt()
+                    ui.shell("wm size " + pixels + "x2400 -d " + display)
+                    settle()
+                    assertTrue("Requested width was not applied", kotlin.math.abs(requireNotNull(ui.main).resources.configuration.screenWidthDp - widthDp) <= 2)
+                    capture("width-" + widthDp)
+                }
                 ui.shell("wm size $override -d $display")
                 ui.shell("settings put system font_scale 1.6")
                 settle()
@@ -78,6 +94,7 @@ class MainVisualDeviceTest {
                 if (previousMotion == null) ui.shell("settings delete global animator_duration_scale") else ui.shell("settings put global animator_duration_scale $previousMotion")
                 ui.shell("cmd uimode night ${when(previousNight) { UiModeManager.MODE_NIGHT_YES -> "yes"; UiModeManager.MODE_NIGHT_NO -> "no"; else -> "auto" }}")
                 ui.onMain {
+                    AppearanceSettingsManager.updateThemeMode(originalThemeMode)
                     appearancePrefs.edit().clear().apply {
                         originalAppearance.forEach { (key, value) ->
                             when (value) {

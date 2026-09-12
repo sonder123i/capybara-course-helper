@@ -10,10 +10,11 @@ fun GlassSubpage(onDismiss: () -> Unit, content: @Composable (close: () -> Unit)
     val host = LocalDialogHost.current
     val currentContent by rememberUpdatedState(content)
     val currentDismiss by rememberUpdatedState(onDismiss)
+    val saveableKey = androidx.compose.runtime.saveable.rememberSaveable { java.util.UUID.randomUUID().toString() }
     if (host != null) {
         var handle by remember { mutableStateOf<DialogHandle?>(null) }
         DisposableEffect(host) {
-            val owner = host.show({ currentDismiss() }, DialogPresentation.Page) {
+            val owner = host.show({ currentDismiss() }, DialogPresentation.Page, saveableKey = saveableKey) {
                 CompositionLocalProvider(LocalAppOverlayBottomInset provides 0.dp, LocalFloatingNotice provides null) {
                     GlassWindowHost { currentContent { host.dismiss(handle) } }
                 }

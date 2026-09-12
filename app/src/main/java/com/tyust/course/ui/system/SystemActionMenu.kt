@@ -38,7 +38,8 @@ fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modif
     var space by remember { mutableFloatStateOf(Float.MAX_VALUE) }
     val density = LocalDensity.current
     val reduced = rememberGlassAccessibilityMode().reduceMotion
-    val progress by animateFloatAsState(if (expanded) 1f else 0f, if (reduced) snap() else tween(240), label = "actionMenu")
+    val motion by animateFloatAsState(if (expanded) 1f else 0f, if (reduced) snap() else com.tyust.course.ui.theme.MotionProfile.iconSpring(), label = "actionMenu")
+    val progress = motion.coerceIn(0f, 1f)
     val rowHeight = (48f * density.fontScale.coerceAtLeast(1f)).dp
     val desired = rowHeight * actions.size + 8.dp
     val bodyHeight = minOf(desired, with(density) { space.toDp() }).coerceAtLeast(0.dp)
@@ -60,7 +61,7 @@ fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modif
                     ).padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(action.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                        Icon(action.icon, null, Modifier.size(20.dp))
+                        ActionLineIcon(action.icon, null, Modifier.size(20.dp))
                     }
                     if (index < actions.lastIndex) SystemDivider()
                 }
@@ -82,7 +83,8 @@ fun SystemActionMenu(description: String, actions: List<SystemMenuAction>, modif
             Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.CenterEnd) {
                 if (trigger != null) trigger { expanded = !expanded }
                 else IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.MoreHoriz, description, Modifier.size(22.dp))
+                    AnimatedLineIcon(AnimatedIconSpec.More, Modifier.size(22.dp),
+                        state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle, description = description)
                 }
             }
             if (!opensUp && progress > 0f) menu()

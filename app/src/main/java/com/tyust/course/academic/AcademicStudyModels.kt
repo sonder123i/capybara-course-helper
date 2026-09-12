@@ -11,7 +11,8 @@ data class AcademicStudyCatalog(val terms: List<AcademicTerm>, val currentTerm: 
 
 data class AcademicScheduleEntry(
     val name: String, val teacher: String, val location: String,
-    val day: Int, val startPeriod: Int, val endPeriod: Int, val weeks: String
+    val day: Int, val startPeriod: Int, val endPeriod: Int, val weeks: String,
+    val sourceId: String = ""
 )
 
 data class AcademicGrade(

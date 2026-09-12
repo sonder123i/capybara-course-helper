@@ -41,6 +41,9 @@ import com.tyust.course.ui.system.SystemSecondaryButton
 import com.tyust.course.ui.theme.CourseSelectorTheme
 
 class CookieWebViewActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.tyust.course.manager.AppThemeCoordinator.wrapContext(newBase))
+    }
 
     companion object {
         const val EXTRA_COOKIE_RESULT = "cookie_result"
@@ -218,6 +221,7 @@ fun CookieWebViewScreen(
                         )
 
                         settings.apply {
+                            com.tyust.course.manager.AppThemeCoordinator.preserveWebContentColors(this)
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             useWideViewPort = true

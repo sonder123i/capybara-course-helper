@@ -37,6 +37,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -286,7 +287,7 @@ private fun MinimizedNavCapsule(
     val containerColor = if (isLightTheme) {
         Color.White.copy(alpha = 0.28f)
     } else {
-        Color.Black.copy(alpha = 0.26f)
+        LocalWallpaperAppearanceColors.current.surface
     }
     Row(
         modifier = modifier
@@ -312,7 +313,7 @@ private fun MinimizedNavCapsule(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        AppSymbol(
+        AnimatedStateIcon(
             spec = item.symbol,
             progress = 1f,
             tint = accentColor,
@@ -338,8 +339,10 @@ private fun GlassNavigationBar(
     enabled: Boolean = true
 ) {
     val tabsCount = items.size
+    val navigationMotion = com.tyust.course.ui.theme.LocalNavigationMotion.current
+    var gestureDragging by remember { mutableStateOf(false) }
     val symbolProgress = items.indices.map { index ->
-        animateFloatAsState(if (index == selectedTab) 1f else 0f, tween(220), label = "symbol-$index").value
+        navigationMotion?.weight(index) ?: animateFloatAsState(if (index == selectedTab) 1f else 0f, tween(220), label = "symbol-$index").value
     }
     // 隐藏 tint 内容层：供选中透镜 combined 采样，避免只看到空雾
     val tabsBackdrop = rememberLayerBackdrop()
@@ -378,13 +381,13 @@ private fun GlassNavigationBar(
     val containerColor = if (hasLensLook) {
         // 提浊：降低穿透内容对比度，深色文字经过栏后不再形成清晰污块
         if (isLightTheme) Color.White.copy(alpha = 0.28f)
-        else Color.Black.copy(alpha = 0.26f)
+        else LocalWallpaperAppearanceColors.current.surface
     } else {
         if (isLightTheme) {
             Color(GlassRecipe.NavLegacyTrackSurfaceLight)
                 .copy(alpha = GlassRecipe.NavLegacyTrackSurfaceAlpha)
         } else {
-            Color.Black.copy(alpha = GlassRecipe.NavLegacyTrackSurfaceAlpha)
+            LocalWallpaperAppearanceColors.current.surface
         }
     }
     val accentColor = if (isLightTheme) NavSelectedAccentLight else NavSelectedAccentDark
@@ -560,6 +563,8 @@ private fun GlassNavigationBar(
             )
         }
 
+        fun selectedPosition(): Float = if (gestureDragging) dampedDragAnimation.value else navigationMotion?.position ?: dampedDragAnimation.value
+
         LaunchedEffect(accessibility.reduceMotion, dampedDragAnimation) {
             dampedDragAnimation.setReducedMotion(accessibility.reduceMotion, selectedTab.toFloat())
             if (accessibility.reduceMotion) offsetAnimation.snapTo(0f)
@@ -655,7 +660,7 @@ private fun GlassNavigationBar(
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                             down.consume()
-                            val startValue = dampedDragAnimation.value
+                            val startValue = selectedPosition()
                             val committedIndex = currentIndex
                             val startX = down.position.x
                             val touchSlop = viewConfiguration.touchSlop
@@ -689,6 +694,7 @@ private fun GlassNavigationBar(
                                         totalDragX += dragAmount.x
                                         if (!dragging && abs(totalDragX) > touchSlop) {
                                             dragging = true
+                                            gestureDragging = true
                                         }
                                         if (dragging) {
                                             change.consume()
@@ -715,6 +721,14 @@ private fun GlassNavigationBar(
                                         .toInt()
                                         .fastCoerceIn(0, tabsCount - 1)
                                 }
+                                if (dragging) {
+                                    // Seed the shared spring before releasing the local gesture. Otherwise
+                                    // the capsule would briefly jump back to the previously committed tab.
+                                    navigationMotion?.select(targetIndex, accessibility.reduceMotion,
+                                        dampedDragAnimation.value, dampedDragAnimation.positionVelocity)
+                                } else if (completed) {
+                                    navigationMotion?.select(targetIndex, accessibility.reduceMotion)
+                                }
                                 if (!completed) {
                                     dampedDragAnimation.animateToValue(committedIndex.toFloat())
                                 } else {
@@ -726,6 +740,7 @@ private fun GlassNavigationBar(
                                         dampedDragAnimation.animateToValue(targetIndex.toFloat())
                                     }
                                 }
+                                gestureDragging = false
                                 if (offsetAnimation.value != 0f) {
                                     animationScope.launch {
                                         offsetAnimation.animateTo(
@@ -740,14 +755,14 @@ private fun GlassNavigationBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 items.forEachIndexed { index, item ->
-                    val selectionWeight = (1f - abs(dampedDragAnimation.value - index))
+                    val selectionWeight = (1f - abs(selectedPosition() - index))
                         .fastCoerceIn(0f, 1f)
                     NavTab(
                         item = item,
                         selected = selectedTab == index,
                         accent = accentColor,
                         selectionWeight = selectionWeight,
-                        symbolProgress = symbolProgress[index],
+                        symbolProgress = if (gestureDragging) selectionWeight else symbolProgress[index],
                         pressProgress = dampedDragAnimation.pressProgress * selectionWeight,
                         onClick = {
                             if (index == currentIndex) {
@@ -831,9 +846,9 @@ private fun GlassNavigationBar(
                     item = item,
                     selected = selectedTab == index,
                     accent = accentColor,
-                    selectionWeight = (1f - abs(dampedDragAnimation.value - index)).fastCoerceIn(0f, 1f),
+                    selectionWeight = (1f - abs(selectedPosition() - index)).fastCoerceIn(0f, 1f),
                     symbolProgress = symbolProgress[index],
-                    pressProgress = dampedDragAnimation.pressProgress * (1f - abs(dampedDragAnimation.value - index)).fastCoerceIn(0f, 1f),
+                    pressProgress = dampedDragAnimation.pressProgress * (1f - abs(selectedPosition() - index)).fastCoerceIn(0f, 1f),
                     onClick = null,
                     forceAccent = true
                 )
@@ -845,7 +860,7 @@ private fun GlassNavigationBar(
             modifier = Modifier
                 .padding(horizontal = barPadding)
                 .graphicsLayer {
-                    translationX = dampedDragAnimation.value * tabWidth + panelOffset
+                    translationX = selectedPosition() * tabWidth + panelOffset
                     clip = false
                 }
                 // API31/32 真折射：画在 drawBackdrop 之前，所以它提供背景，
@@ -1055,6 +1070,7 @@ private fun FallbackNavigationBar(
     selectedTab: Int,
     onTabSelect: (Int) -> Unit
 ) {
+    val navigationMotion = com.tyust.course.ui.theme.LocalNavigationMotion.current
     val capsuleShape = RoundedCornerShape(28.dp)
     val appearance = LocalWallpaperAppearanceColors.current
     val accentColor = if (appearance.usesDarkForeground) {
@@ -1080,7 +1096,7 @@ private fun FallbackNavigationBar(
                     item = item,
                     selected = selectedTab == index,
                     accent = accentColor,
-                    symbolProgress = animateFloatAsState(if (selectedTab == index) 1f else 0f, tween(220), label = "fallbackSymbol-$index").value,
+                    symbolProgress = navigationMotion?.weight(index) ?: animateFloatAsState(if (selectedTab == index) 1f else 0f, tween(220), label = "fallbackSymbol-$index").value,
                     onClick = { onTabSelect(index) }
                 )
             }
@@ -1145,7 +1161,7 @@ private fun RowScope.NavTab(
         verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        AppSymbol(
+        AnimatedStateIcon(
             spec = item.symbol,
             progress = symbolProgress,
             tint = iconTint,

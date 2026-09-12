@@ -29,6 +29,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.tyust.course.schedule.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -77,7 +79,8 @@ private data class ScheduleRouteSnapshot(
     val courses: List<ScheduleCourseUi>,
     val periodTimes: List<PeriodTimeUi>,
     val periodCount: Int,
-    val isNextSemester: Boolean
+    val isNextSemester: Boolean,
+    val termId: String = ""
 )
 
 private object ScheduleRouteMemoryCache {
@@ -113,7 +116,7 @@ fun ScheduleRoute() {
     }
     
     // State
-    var currentWeek by remember(routeAccountKey) {
+    var currentWeek by rememberSaveable(routeAccountKey) {
         mutableIntStateOf(restoredSnapshot?.currentWeek ?: 1)
     }
     var courses by remember(routeAccountKey) {
@@ -129,16 +132,44 @@ fun ScheduleRoute() {
     var periodCount by remember(routeAccountKey) {
         mutableIntStateOf(restoredSnapshot?.periodCount ?: 12)
     }
-    var isNextSemester by remember(routeAccountKey) {
+    var isNextSemester by rememberSaveable(routeAccountKey) {
         mutableStateOf(restoredSnapshot?.isNextSemester ?: false)
     }
     
     // Dialog State
-    var showSettingsDialog by remember { mutableStateOf(false) }
-    var showCourseDetail by remember { mutableStateOf<ScheduleCourseUi?>(null) }
+    var showSettingsDialog by rememberSaveable { mutableStateOf(false) }
+    var detailId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var editingId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var resolvedTermId by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.termId.orEmpty()) }
+    var notificationCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var settingsTermOverride by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var deletedCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var deletedRemindersJson by rememberSaveable(routeAccountKey) { mutableStateOf("[]") }
+    var undoDeadline by rememberSaveable(routeAccountKey) { mutableLongStateOf(0L) }
     
     // Managers
     val settingsManager = remember { ScheduleSettingsManager.getInstance().apply { init(context) } }
+    val reminderScheduler = remember(context) { ScheduleReminderScheduler.get(context) }
+    val customRevision = settingsManager.revision
+    val customCourses = remember(customRevision, routeAccountKey) { settingsManager.getCustomCourses(routeAccountKey) }
+    val remindersRevision = reminderScheduler.revision
+    val settingsTerm = settingsTermOverride ?: resolvedTermId
+    val termTimeBase = remember(settingsTerm, remindersRevision) { reminderScheduler.timeBase(routeAccountKey, settingsTerm) }
+    val displayedTimeBase = remember(resolvedTermId, remindersRevision) { reminderScheduler.timeBase(routeAccountKey, resolvedTermId) }
+    fun periodTimesFor(base: ScheduleTimeBase?): List<ScheduleSettingsManager.PeriodTime> = settingsManager.getPeriodTimes().map {
+        it.copy(startTime = base?.periodStarts?.get(it.period) ?: it.startTime, endTime = base?.periodEnds?.get(it.period) ?: it.endTime)
+    }
+    val focusRegistry = remember { com.tyust.course.ui.screen.ScheduleFocusRegistry() }
+    val reminderRequest = CourseReminderNavigation.requestedId
+    LaunchedEffect(reminderRequest) {
+        if (reminderRequest != null) {
+            reminderScheduler.findById(reminderRequest)?.let {
+                notificationCourseJson = ReminderJson.reminder(it).toString()
+                detailId = it.course.id
+            }
+            CourseReminderNavigation.consume()
+        }
+    }
 
     val snapshotForCache = ScheduleRouteSnapshot(
         savedAtMs = System.currentTimeMillis(),
@@ -146,7 +177,8 @@ fun ScheduleRoute() {
         courses = courses,
         periodTimes = periodTimes,
         periodCount = periodCount,
-        isNextSemester = isNextSemester
+        isNextSemester = isNextSemester,
+        termId = resolvedTermId
     )
     val latestSnapshotForCache by rememberUpdatedState(snapshotForCache)
     val canCacheSnapshot by rememberUpdatedState(hasInitializedRoute && !isLoading && loadError.isBlank())
@@ -181,68 +213,19 @@ fun ScheduleRoute() {
         } catch (e: Exception) { }
     }
 
-    fun parseSchedule(json: String): List<ScheduleCourseUi> {
-         // Copy parsing logic from Fragment
-         val list = mutableListOf<ScheduleCourseUi>()
-         try {
-            val obj = JSONObject(json)
-            var kbList = obj.optJSONArray("kbList")
-            if (kbList == null && obj.has("data")) {
-                val data = obj.get("data")
-                if (data is JSONObject) kbList = data.optJSONArray("kbList")
-                else if (data is JSONArray) kbList = data
-            }
-            if (kbList == null) return emptyList()
-
-            for (i in 0 until kbList.length()) {
-                val item = kbList.getJSONObject(i)
-                var name = item.optString("kcmc", "").ifEmpty { item.optString("KCMC", "未知课程") }
-                val teacher = item.optString("xm", item.optString("XM", ""))
-                
-                val campus = item.optString("xqmc", item.optString("cdxqmc", ""))
-                val building = item.optString("cdlmc", item.optString("jxlmc", ""))
-                val room = item.optString("cdmc", item.optString("CDMC", ""))
-                val jxcd = item.optString("jxcdmc", item.optString("JXCDMC", ""))
-                
-                val location = when {
-                    campus.isNotEmpty() && room.isNotEmpty() -> "$campus $room"
-                    building.isNotEmpty() && room.isNotEmpty() -> "$building $room"
-                    room.isNotEmpty() -> room
-                    jxcd.isNotEmpty() -> jxcd
-                    else -> ""
-                }
-
-                val day = item.optInt("xqj", item.optInt("XQJ", 1))
-                val weeks = item.optString("zcd", item.optString("ZCD", "1-16周"))
-                var jcs = item.optString("jcs", item.optString("JCS", "")).ifEmpty { item.optString("jcor", item.optString("JCOR", "1-2")) }
-                
-                var startPeriod = 1
-                var endPeriod = 2
-                val parts = jcs.replace(",", "-").split("-")
-                if (parts.isNotEmpty()) {
-                    try {
-                        startPeriod = parts[0].trim().toInt()
-                        endPeriod = if (parts.size > 1) parts.last().trim().toInt() else startPeriod
-                    } catch (e: Exception) {}
-                }
-
-                list.add(ScheduleCourseUi(
-                    name = name, teacher = teacher, location = location, day = day,
-                    startPeriod = startPeriod, endPeriod = endPeriod, weeks = weeks,
-                    color = courseColors[i % courseColors.size]
-                ))
-            }
-        } catch (e: Exception) {}
-        return list
+    fun parseSchedule(json: String): List<ScheduleCourseUi>? = ScheduleJson.parse(json)?.map { entry ->
+        val c = entry.course
+        ScheduleCourseUi(c.name, c.teacher, c.location, c.day, c.startPeriod, c.endPeriod, c.weeks,
+            courseColors[ScheduleIdentity.colorIndex(c.id, courseColors.size)], sourceId = entry.sourceId, id = c.id)
     }
 
     fun reloadCustomCourses(currentList: List<ScheduleCourseUi>): List<ScheduleCourseUi> {
-        val customCourses = settingsManager.getCustomCourses()
+        val customCourses = settingsManager.getCustomCourses(routeAccountKey)
         val customUi = customCourses.map { cc ->
             ScheduleCourseUi(
                 name = cc.name, teacher = cc.teacher, location = cc.location, day = cc.day,
                 startPeriod = cc.startPeriod, endPeriod = cc.endPeriod, weeks = cc.weeks,
-                color = Color(0xFF9C27B0), isCustom = true, customId = cc.id
+                color = courseColors[ScheduleIdentity.colorIndex("custom:${cc.id}", courseColors.size)], isCustom = true, customId = cc.id
             )
         }
         val nonCustom = currentList.filter { !it.isCustom }
@@ -270,16 +253,18 @@ fun ScheduleRoute() {
                 courses = emptyList()
                 studyLoadJob = scope.launch {
                     try {
-                        val (cacheKey, json) = withContext(Dispatchers.IO) {
+                        val (cacheKey, json, termId) = withContext(Dispatchers.IO) {
                             val reader = AcademicStudyBridge.reader(school, account, ticket.session)
                             val current = reader.catalog().currentTerm
                             val term = if (isNextSemester) current.next() else current
                             val entries = reader.schedule(term)
-                            "schedule_${account}_${school.id}_${term.id}" to AcademicStudyBridge.scheduleJson(entries)
+                            Triple("schedule_${account}_${school.id}_${term.id}", AcademicStudyBridge.scheduleJson(entries), term.id)
                         }
                         if (!requests.isCurrent(ticket) || studyGeneration != generation) return@launch
                         saveScheduleToCache(cacheKey, json)
-                        courses = reloadCustomCourses(parseSchedule(json))
+                        courses = reloadCustomCourses(requireNotNull(parseSchedule(json)))
+                        resolvedTermId = termId
+                        reminderScheduler.updateSnapshot(routeAccountKey, termId, courses.map { it.record() })
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
                         if (requests.isCurrent(ticket) && studyGeneration == generation)
@@ -312,23 +297,27 @@ fun ScheduleRoute() {
                 return requests.isCurrent(ticket)
             }
             val cacheKey = "schedule_${accountKey}_${school.id}_${xnm}_${xqm}"
+            val requestTermId = "$xnm-${xnm.toInt() + 1}-${if (xqm == "3") 1 else 2}"
+            resolvedTermId = requestTermId
 
             if (!forceRefresh) {
                 // Try cache
                 loadScheduleFromCache(cacheKey)?.let { json ->
                     val cached = parseSchedule(json)
-                    if (cached.isNotEmpty()) {
+                    if (cached != null) {
                         courses = reloadCustomCourses(cached)
                     }
                 }
             }
 
             isLoading = true
+            loadError = ""
             CourseApiClient.getInstance().fetchSchedule(school, "xnm=$xnm&xqm=$xqm", object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     scope.launch(Dispatchers.Main) {
                         if (!isRequestAccountActive()) return@launch
                         isLoading = false
+                        loadError = "加载失败：${e.message}"
                         if (courses.isEmpty()) GlassToaster.show("加载失败：${e.message}")
                     }
                 }
@@ -339,20 +328,23 @@ fun ScheduleRoute() {
                          scope.launch(Dispatchers.Main) { 
                              if (!isRequestAccountActive()) return@launch
                              isLoading = false
+                             loadError = "请先登录"
                              GlassToaster.show("请先登录") 
                          }
                         return
                     }
-                    val parsed = parseSchedule(json)
+                    val parsed = if (response.isSuccessful) parseSchedule(json) else null
                     scope.launch(Dispatchers.Main) {
                         if (!isRequestAccountActive()) return@launch
                         isLoading = false
-                        if (parsed.isNotEmpty()) {
+                        if (parsed != null) {
                             saveScheduleToCache(cacheKey, json)
                             courses = reloadCustomCourses(parsed)
+                            reminderScheduler.updateSnapshot(routeAccountKey, requestTermId, courses.map { it.record() })
                             if (forceRefresh) GlassToaster.show("已刷新")
-                        } else if (courses.isEmpty()) {
-                            GlassToaster.show("暂无课程")
+                        } else {
+                            loadError = "课表响应无效，请重试"
+                            GlassToaster.show(loadError)
                         }
                     }
                 }
@@ -383,7 +375,30 @@ fun ScheduleRoute() {
     }
 
     // Refresh custom courses when dialogs close
+    LaunchedEffect(customRevision, routeAccountKey) {
+        courses = reloadCustomCourses(courses)
+        periodCount = settingsManager.periodCount
+    }
+    LaunchedEffect(resolvedTermId) {
+        if (resolvedTermId.isNotBlank() && !isNextSemester) {
+            reminderScheduler.migrateLegacyTimeBase(routeAccountKey, resolvedTermId, ScheduleTimeBase(
+                ScheduleTimeBase.dateFromMillis(settingsManager.semesterStartDate), periodTimes.associate { it.period to it.startTime },
+                periodTimes.associate { it.period to it.endTime }))
+        }
+    }
+    LaunchedEffect(displayedTimeBase) {
+        periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
+    }
+    LaunchedEffect(undoDeadline) {
+        if (undoDeadline > 0) {
+            kotlinx.coroutines.delay((undoDeadline - System.currentTimeMillis()).coerceAtLeast(0))
+            deletedCourseJson = null
+            deletedRemindersJson = "[]"
+        }
+    }
     com.tyust.course.ui.system.ReportPageContent(courses.isNotEmpty())
+    Box(Modifier.fillMaxSize()) {
+    CompositionLocalProvider(com.tyust.course.ui.screen.LocalScheduleFocus provides focusRegistry) {
     ScheduleScreen(
         currentWeek = currentWeek,
         courses = courses,
@@ -392,22 +407,30 @@ fun ScheduleRoute() {
         onRetry = { loadSchedule(true) },
         periodTimes = periodTimes,
         periodCount = periodCount,
+        firstWeekDate = displayedTimeBase?.firstWeekDate,
         onWeekChange = { currentWeek = it },
-        onCourseClick = { showCourseDetail = it },
-        onSettingsClick = { showSettingsDialog = true },
+        onCourseClick = { notificationCourseJson = null; detailId = it.id },
+        onSettingsClick = { settingsTermOverride = null; showSettingsDialog = true },
         onExportClick = {
             if (courses.isEmpty()) {
                 GlassToaster.show("课表为空，无法导出")
             } else {
                 try {
-                    val semesterStart = settingsManager.getSemesterStartCalendar()
+                    val semesterStart = ScheduleDates.firstMonday(displayedTimeBase?.firstWeekDate)
+                    if (semesterStart == null) {
+                        GlassToaster.show("请先设置这个学期的第一周周一日期")
+                        settingsTermOverride = null
+                        showSettingsDialog = true
+                    } else {
                     ICalExporter.exportAndShare(
                         context = context,
                         courses = courses,
                         semesterStartDate = semesterStart,
-                        totalWeeks = 20
+                        totalWeeks = ScheduleMaxWeeks,
+                        periodTimes = periodTimes.associate { it.period to (it.startTime to it.endTime) }
                     )
                     GlassToaster.show("课表已导出，可导入到系统日历中查看")
+                    }
                 } catch (e: Exception) {
                     GlassToaster.show("导出失败：${e.message}")
                 }
@@ -416,87 +439,97 @@ fun ScheduleRoute() {
         isNextSemester = isNextSemester,
         onToggleSemester = { isNextSemester = !isNextSemester }
     )
+    }
+    if (deletedCourseJson != null) {
+        androidx.compose.material3.Snackbar(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
+                .padding(bottom = com.tyust.course.ui.system.LocalAppOverlayBottomInset.current + 12.dp),
+            action = {
+                androidx.compose.material3.TextButton(onClick = {
+                    if (System.currentTimeMillis() < undoDeadline) {
+                        val record = deletedCourseJson?.let { ReminderJson.course(JSONObject(it)) }
+                        if (record != null) {
+                            settingsManager.updateCustomCourse(ScheduleSettingsManager.CustomCourse(record.id.removePrefix("custom:"), record.name,
+                                record.location, record.teacher, record.day, record.startPeriod, record.endPeriod, record.weeks), routeAccountKey)
+                            reminderScheduler.restoreUndo(deletedRemindersJson)
+                        }
+                    }
+                    deletedCourseJson = null
+                }) { Text("撤销") }
+            }
+        ) { Text("已删除课程") }
+    }
+    }
     
     if (showSettingsDialog) {
-        com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSettingsDialog = false }) { close ->
+        com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSettingsDialog = false; settingsTermOverride = null }) { close ->
             ScheduleSettingsScreen(
                 manager = settingsManager,
+                periodTimesOverride = periodTimesFor(termTimeBase),
+                semesterStartOverride = termTimeBase?.firstWeekDate?.takeIf { it.isNotBlank() }?.let {
+                    runCatching { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).parse(it)?.time }.getOrNull()
+                } ?: 0L,
+                onSemesterStartChange = { millis ->
+                    if (!isNextSemester && settingsTermOverride == null) settingsManager.semesterStartDate = millis
+                    val times = periodTimesFor(termTimeBase)
+                    reminderScheduler.updateTimeBase(routeAccountKey, settingsTerm, ScheduleTimeBase(
+                        ScheduleTimeBase.dateFromMillis(millis), times.associate { it.period to it.startTime }, times.associate { it.period to it.endTime }))
+                },
+                onPeriodTimesChange = { times ->
+                    if (!isNextSemester && settingsTermOverride == null) settingsManager.savePeriodTimes(times)
+                    reminderScheduler.updateTimeBase(routeAccountKey, settingsTerm,
+                        (reminderScheduler.timeBase(routeAccountKey, settingsTerm) ?: ScheduleTimeBase()).copy(
+                            periodStarts = times.associate { it.period to it.startTime }, periodEnds = times.associate { it.period to it.endTime }))
+                },
+                customCourses = customCourses,
+                onAddCustomCourse = { editingId = java.util.UUID.randomUUID().toString() },
+                onEditCustomCourse = { editingId = it },
                 onClose = {
                     periodCount = settingsManager.periodCount
-                    periodTimes = settingsManager.getPeriodTimes().map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
-                    val w = settingsManager.calculateCurrentWeek()
-                    if (w > 0) currentWeek = w
+                    periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
+                    ScheduleDates.weekAt(displayedTimeBase?.firstWeekDate, System.currentTimeMillis())?.let { currentWeek = it }
                     close()
                 }
             )
         }
     }
     
-    // 课程详情弹窗统一走同窗口 portal，复用中性遮罩和光学输入。
-    showCourseDetail?.let { course ->
-        SystemDialog(
-            onDismissRequest = { showCourseDetail = null },
-            title = {
-                Text(
-                    text = course.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            },
-            confirmButton = {
-                SystemPrimaryButton(
-                    text = "确定",
-                    onClick = { showCourseDetail = null },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                CourseInfoRow(
-                    icon = Icons.Default.AccessTime,
-                    label = "时间",
-                    value = "${course.weeks} 周${course.day} 第${course.startPeriod}-${course.endPeriod}节"
-                )
-                CourseInfoRow(
-                    icon = Icons.Default.Place,
-                    label = "教室",
-                    value = course.location.ifEmpty { "未指定" }
-                )
-                CourseInfoRow(
-                    icon = Icons.Default.Person,
-                    label = "教师",
-                    value = course.teacher.ifEmpty { "未指定" }
-                )
-            }
-        }
+    val notificationCourse = notificationCourseJson?.let { runCatching { ReminderJson.reminder(JSONObject(it)) }.getOrNull() }
+    val detailTerm = notificationCourse?.key?.term ?: resolvedTermId
+    val selectedDetail = courses.firstOrNull { it.id == detailId && detailTerm == resolvedTermId } ?: notificationCourse?.course?.let {
+        ScheduleCourseUi(it.name, it.teacher, it.location, it.day, it.startPeriod, it.endPeriod, it.weeks,
+            courseColors[ScheduleIdentity.colorIndex(it.id, courseColors.size)], it.custom, if (it.custom) it.id.removePrefix("custom:") else "", id = it.id)
     }
-}
-
-@Composable
-private fun CourseInfoRow(icon: ImageVector, label: String, value: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-        Column {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium
-            )
+    selectedDetail?.let { course ->
+        com.tyust.course.ui.screen.ScheduleCourseSheet(course, routeAccountKey, detailTerm, if (detailTerm == resolvedTermId) courses else listOf(course),
+            sourceCenterX = focusRegistry.bounds(course.id)?.center?.x,
+            onDismiss = { detailId = null; notificationCourseJson = null; focusRegistry.restore(course.id) },
+            onEdit = { editingId = course.customId },
+            onConfigureTime = { settingsTermOverride = detailTerm; showSettingsDialog = true },
+            onDelete = {
+                deletedCourseJson = ReminderJson.course(course.record()).toString()
+                deletedRemindersJson = reminderScheduler.encodeUndo(reminderScheduler.removeCourse(routeAccountKey, course.id))
+                undoDeadline = System.currentTimeMillis() + 5000L
+                settingsManager.removeCustomCourse(course.customId, routeAccountKey)
+                detailId = null
+                notificationCourseJson = null
+                focusRegistry.restore(course.id)
+            })
+    }
+    editingId?.let { id ->
+        val initial = customCourses.firstOrNull { it.id == id } ?: ScheduleSettingsManager.CustomCourse(
+            id, "", "", "", 1, 1, 2, "1-16周")
+        com.tyust.course.ui.system.GlassSubpage(onDismiss = { editingId = null }) { close ->
+            com.tyust.course.ui.screen.ScheduleCourseEditor(initial, courses, periodCount,
+                isNew = customCourses.none { it.id == id }, onClose = close, onSave = { saved ->
+                    settingsManager.updateCustomCourse(saved, routeAccountKey)
+                    reminderScheduler.updateCustomCourse(routeAccountKey, ScheduleCourseRecord("custom:${saved.id}", saved.name,
+                        saved.teacher, saved.location, saved.day, saved.startPeriod, saved.endPeriod, saved.weeks, true))
+                    notificationCourse?.key?.storageId?.let { reminderScheduler.findById(it) }?.let {
+                        notificationCourseJson = ReminderJson.reminder(it).toString()
+                    }
+                    close()
+                })
         }
     }
 }

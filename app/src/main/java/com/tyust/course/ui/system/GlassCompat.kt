@@ -20,11 +20,11 @@ enum class GlassCapability {
 }
 
 fun currentGlassCapability(): GlassCapability = when {
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> GlassCapability.StaticGlass
     // 用户在设置里显式关掉：直接落到 Material，走各组件已有的不透明回退分支
     // （低于 API 31 的设备一直走那条路径，不需要新写任何渲染分支）。
     // 读的是 Compose state，而 isBackdropSupported() 都在组合期被调用，拨动即时重绘。
     !AppearanceSettingsManager.glassEffectEnabled -> GlassCapability.Material
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> GlassCapability.StaticGlass
     !GlassRuntimeGuard.isBackdropEnabled() -> GlassCapability.Material
     // 实验期：Android 12（API 31/32）也进入 lens 尝试路径，不预先按版本屏蔽。
     // 库内部 isRuntimeShaderSupported() 仍会在 <33 时 no-op，属于平台能力上限。
@@ -112,10 +112,10 @@ fun canUseLiquidLens(
         refractionHeightPx <= minCornerRadiusPx &&
         refractionAmountPx <= minDimensionPx
 
-/** 全局材质明暗只跟随系统；自定义壁纸的颜色由局部外观解析器处理。 */
+/** Material and glass use the same resolved application appearance. */
 @Composable
 fun rememberGlassDarkTheme(): Boolean =
-    isSystemInDarkTheme()
+    com.tyust.course.ui.theme.LocalAppAppearance.current.isDark
 
 /**
  * 根 Backdrop 由页面入口注入；为空时组件使用非玻璃实现。

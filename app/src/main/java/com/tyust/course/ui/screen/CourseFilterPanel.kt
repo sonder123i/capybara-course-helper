@@ -110,7 +110,7 @@ fun CourseFilterPanel(
     val surfaceColor = if (isLightTheme) {
         Color(0xFFF4F5F7).copy(alpha = 0.30f)
     } else {
-        Color(0xFF1E2024).copy(alpha = 0.34f)
+        com.tyust.course.ui.system.LocalWallpaperAppearanceColors.current.surface
     }
     // 无 backdrop 时（API<31 或运行时降级）玻璃无从谈起，退回一层实面保证可读
     val fallbackSurface = if (isLightTheme) {

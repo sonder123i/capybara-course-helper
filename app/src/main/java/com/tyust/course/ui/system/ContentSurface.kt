@@ -26,7 +26,7 @@ internal fun Modifier.frostedContentSurface(
     val light = appearance.usesDarkForeground
     val baseAlpha = if (light) 0.42f else 0.58f
     val alpha = if (highContrast) 0.96f else maxOf(baseAlpha, appearance.surface.alpha).coerceAtMost(0.88f)
-    val tint = (if (light) Color.White else Color(0xFF242A28)).copy(alpha = alpha)
+    val tint = (if (light) Color.White else Color(0xFF171B22)).copy(alpha = alpha)
     val surface = if (backdrop != null && isBackdropSupported()) {
         Modifier.drawBackdrop(
             backdrop = backdrop,

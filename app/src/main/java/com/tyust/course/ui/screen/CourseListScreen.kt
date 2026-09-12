@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +48,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.CheckCircle
@@ -75,6 +77,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
@@ -139,6 +149,7 @@ fun CourseListScreen(
     onEnterMultiSelect: (String) -> Unit = {},
     // 筛选相关
     showFilterPanel: Boolean = false,
+    filterAnchor: Offset? = null,
     onToggleFilterPanel: () -> Unit = {},
     activeFilter: com.tyust.course.model.CourseFilter? = null,
     draftFilter: com.tyust.course.model.CourseFilter = com.tyust.course.model.CourseFilter(),
@@ -151,6 +162,9 @@ fun CourseListScreen(
     filterCategories: List<CourseParser.FilterCategory> = emptyList(),
     showTargetAction: Boolean = true
 ) {
+    val reduceMotion = com.tyust.course.ui.system.rememberGlassAccessibilityMode().reduceMotion
+    val listState = rememberLazyListState()
+    var filterContainerBounds by remember { mutableStateOf(Rect.Zero) }
     val expandedGroups = rememberSaveable(saver = mapSaver(
         save = { it.toMap() },
         restore = { saved -> mutableStateMapOf<String, Boolean>().apply {
@@ -215,7 +229,7 @@ fun CourseListScreen(
 
         // 列表与筛选浮层同属一个 Box：面板浮在列表之上，不占布局高度，
         // 于是展开筛选不再把列表整体顶下去、列表滚动位置也不会被打断。
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { filterContainerBounds = it.boundsInWindow() }) {
             GlassPullRefreshBox(
                 isRefreshing = isLoading,
                 onRefresh = onRefresh,
@@ -243,6 +257,7 @@ fun CourseListScreen(
 
                     else -> {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(
                                 start = PagePadding,
@@ -263,6 +278,11 @@ fun CourseListScreen(
                                 val isExpanded = expandedGroups[groupId] == true
 
                                 CourseGroupItem(
+                                    modifier = if (reduceMotion) Modifier else Modifier.animateItem(
+                                        fadeInSpec = tween(com.tyust.course.ui.theme.MotionProfile.IconMillis),
+                                        placementSpec = MotionSpring.snappy(),
+                                        fadeOutSpec = tween(com.tyust.course.ui.theme.MotionProfile.IconMillis)
+                                    ),
                                     courseId = courseId,
                                     courseName = courseName,
                                     classes = classes,
@@ -314,6 +334,8 @@ fun CourseListScreen(
                 isFilterOptionsLoading = isFilterOptionsLoading,
                 filterOptionsMessage = filterOptionsMessage,
                 panelBackdrop = panelBackdrop,
+                anchor = filterAnchor,
+                containerBounds = filterContainerBounds,
                 onDismiss = onToggleFilterPanel
             )
         }
@@ -331,8 +353,14 @@ private fun BoxScope.FilterPanelOverlay(
     isFilterOptionsLoading: Boolean,
     filterOptionsMessage: String,
     panelBackdrop: com.kyant.backdrop.Backdrop?,
+    anchor: Offset?,
+    containerBounds: Rect,
     onDismiss: () -> Unit
 ) {
+    val reduced = com.tyust.course.ui.system.rememberGlassAccessibilityMode().reduceMotion
+    val padding = with(LocalDensity.current) { PagePadding.toPx() }
+    val anchorX = anchor?.let { ((it.x - containerBounds.left - padding) / (containerBounds.width - 2 * padding).coerceAtLeast(1f)).coerceIn(0f, 1f) } ?: 1f
+    val origin = TransformOrigin(anchorX, 0f)
     // 极轻压暗让列表读起来被推远——不做重压暗：把手和顶部区域在这个 Box 之外，
     // 盖不到，深压暗会在分界处露出一条硬边。
     AnimatedVisibility(
@@ -352,26 +380,20 @@ private fun BoxScope.FilterPanelOverlay(
         )
     }
 
-    // 从顶栏那枚筛选钮"长出来"：以按钮为原点缩放 + 淡入。
-    //
-    // 原点写常量而不是 onGloballyPositioned 实测：面板左右各内缩 PagePadding(20dp)，
-    // 筛选钮是顶栏最右一枚（中心约在 W-21dp），算出来的 originX≈0.99；
-    // 0.96 已经落在按钮上，省掉一条跨 Route/Screen 的位置状态。
-    //
-    // 刻意不再用 expandVertically：那是"从无到有长高"，与"从哪个按钮打开的"无关。
+    // The untransformed list bounds and measured trigger center define the reveal anchor.
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.align(Alignment.TopCenter),
-        enter = fadeIn(animationSpec = tween(140)) +
+        enter = fadeIn(animationSpec = tween(if (reduced) 0 else com.tyust.course.ui.theme.MotionProfile.IconMillis)) +
             scaleIn(
-                initialScale = 0.86f,
-                transformOrigin = TransformOrigin(0.96f, 0f),
-                animationSpec = MotionSpring.liquidSettle()
+                initialScale = if (reduced) 1f else 0.96f,
+                transformOrigin = origin,
+                animationSpec = com.tyust.course.ui.theme.MotionProfile.hierarchySpring()
             ),
         exit = fadeOut(animationSpec = tween(120, easing = MotionEasing.Accelerate)) +
             scaleOut(
-                targetScale = 0.90f,
-                transformOrigin = TransformOrigin(0.96f, 0f),
+                targetScale = if (reduced) 1f else 0.97f,
+                transformOrigin = origin,
                 animationSpec = tween(160, easing = MotionEasing.Accelerate)
             )
     ) {
@@ -454,7 +476,8 @@ fun CourseGroupItem(
     onAddToQueue: (Course) -> Unit = {},
     onSetTargetCourse: (Course) -> Unit = {},
     onSetFuzzyMatchTarget: ((String, String, String?, String?) -> Unit)? = null,
-    showTargetAction: Boolean = true
+    showTargetAction: Boolean = true,
+    modifier: Modifier = Modifier
 ) {
     val firstCourse = classes.firstOrNull()
     val credits = firstCourse?.credit ?: "0.0"
@@ -473,7 +496,7 @@ fun CourseGroupItem(
     )
     // 满员组不再整卡灰底（会在玻璃页面里形成"死块"），状态由"紧张"徽章表达
     SystemCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         backgroundColor = MaterialTheme.colorScheme.surface,
         borderColor = cardBorderColor,
         contentPadding = PaddingValues(0.dp)
@@ -538,27 +561,15 @@ fun CourseGroupItem(
                         }
 
                         IconButton(onClick = onExpandClick, enabled = isDetailsReady && !isLoading) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    color = NeuPrimary,
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                val arrowRotation by animateFloatAsState(
-                                    targetValue = if (isExpanded) 180f else 0f,
-                                    animationSpec = MotionSpecs.emphasized(),
-                                    label = "arrowRotation"
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (isExpanded) "收起教学班" else "展开教学班",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .rotate(arrowRotation)
-                                )
-                            }
+                            com.tyust.course.ui.system.AnimatedLineIcon(
+                                com.tyust.course.ui.system.AnimatedIconSpec.Expand, Modifier.size(20.dp),
+                                state = when {
+                                    isLoading -> com.tyust.course.ui.system.IconVisualState.Running
+                                    isExpanded -> com.tyust.course.ui.system.IconVisualState.Expanded
+                                    else -> com.tyust.course.ui.system.IconVisualState.Idle
+                                },
+                                description = if (isLoading) "加载教学班" else if (isExpanded) "收起教学班" else "展开教学班",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -765,10 +776,9 @@ private fun ActiveFilterBar(
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
-        FlowRow(
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
+        Row(
+            modifier = Modifier.weight(1f).then(Modifier.testTag("active-filter-summary")).horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             tags.forEach { tag ->
                 // 与面板里的筛选芯片同一枚组件，只是更小且不可点

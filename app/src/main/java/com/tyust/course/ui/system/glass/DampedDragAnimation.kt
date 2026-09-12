@@ -73,6 +73,7 @@ class DampedDragAnimation(
     val scaleX: Float get() = if (reducedMotion) initialScale else scaleXAnimation.value
     val scaleY: Float get() = if (reducedMotion) initialScale else scaleYAnimation.value
     val velocity: Float get() = if (reducedMotion) 0f else velocityAnimation.value
+    val positionVelocity: Float get() = if (reducedMotion) 0f else valueAnimation.velocity
 
     fun setReducedMotion(reduced: Boolean, selectedValue: Float = targetValue) {
         reducedMotion = reduced

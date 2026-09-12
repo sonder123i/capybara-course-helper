@@ -43,6 +43,9 @@ import com.tyust.course.ui.theme.CourseSelectorTheme
  * JavaScript bridge and only follows explicitly configured school hosts.
  */
 class AcademicWebViewActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.tyust.course.manager.AppThemeCoordinator.wrapContext(newBase))
+    }
     companion object {
         const val EXTRA_START_URL = "academic_webview_start_url"
         const val EXTRA_ALLOWED_HOSTS = "academic_webview_allowed_hosts"
@@ -132,6 +135,7 @@ class AcademicWebViewActivity : ComponentActivity() {
     private fun createWebView(): WebView = WebView(this).apply {
         val webViewInstance = this
         settings.javaScriptEnabled = true
+        com.tyust.course.manager.AppThemeCoordinator.preserveWebContentColors(settings)
         settings.domStorageEnabled = true
         settings.allowFileAccess = false
         settings.allowContentAccess = false

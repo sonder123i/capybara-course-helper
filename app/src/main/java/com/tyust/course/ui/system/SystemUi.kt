@@ -195,6 +195,7 @@ fun SystemTopBar(
     val useGlass = backdrop != null && isBackdropSupported()
     val regionState = rememberWallpaperRegionState()
     val appearance = rememberWallpaperRegionAppearance(regionState)
+    val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
     val isLightTheme = appearance.usesDarkForeground
     val titleColor = appearance.onSurface
 
@@ -209,6 +210,7 @@ fun SystemTopBar(
     val surfaceTint = appearance.surface.copy(
         alpha = maxOf(appearance.surface.alpha, if (isLightTheme) 0.46f else 0.34f)
     )
+    com.tyust.course.ui.theme.ReportStatusBarSurface(surfaceTint.copy(alpha = surfaceTint.alpha * (if (customWallpaper) 1f else 0.85f + 0.15f * collapse)))
 
     ProvideWallpaperAppearance(appearance) {
     Column(
@@ -217,7 +219,7 @@ fun SystemTopBar(
             .wallpaperRegion(regionState)
             .reportNoticeAnchor()
     ) {
-        val showShell = collapse > 0.01f
+        val showShell = customWallpaper || collapse > 0.01f
         val shellModifier = when {
             useGlass && backdrop != null && showShell -> Modifier
                 // 下缘【齐边】收尾：渐隐抹在模糊结果上只是把"模糊的那一份"按 alpha 混到
@@ -239,13 +241,13 @@ fun SystemTopBar(
                     onDrawSurface = {
                         // 平铺即可：渐隐由 glassEdgeFadeBottom 统一做，
                         // 这里再叠一条渐变会让尾巴衰减得比线性更快。
-                        drawRect(surfaceTint.copy(alpha = surfaceTint.alpha * collapse))
+                        drawRect(surfaceTint.copy(alpha = surfaceTint.alpha * (if (customWallpaper) 1f else collapse)))
                     }
                 )
             !useGlass && showShell -> Modifier.background(
                 Brush.verticalGradient(
-                    0f to appearance.solidSurface.copy(alpha = collapse),
-                    0.86f to appearance.solidSurface.copy(alpha = collapse),
+                    0f to appearance.solidSurface.copy(alpha = if (customWallpaper) 1f else collapse),
+                    0.86f to appearance.solidSurface.copy(alpha = if (customWallpaper) 1f else collapse),
                     1f to Color.Transparent
                 )
             )
@@ -254,7 +256,7 @@ fun SystemTopBar(
         Box(modifier = Modifier.fillMaxWidth().then(shellModifier)) {
             // 展开态：大标题背后铺一层自上而下的软渐变，
             // 内容滚入标题区域时被渐隐吞没而不是直接撞字；随折叠淡出交棒给玻璃条。
-            if (collapse < 0.99f) {
+            if (collapse < 0.99f && !customWallpaper) {
                 Box(
                     modifier = Modifier
                         .matchParentSize()
@@ -715,7 +717,8 @@ fun SystemPrimaryButton(
         modifier = modifier.height(52.dp),
         enabled = enabled,
         style = LiquidButtonStyle.SolidTinted,
-        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSBlueLight else IOSBlueDark,
+        tint = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
         shape = Capsule()
     ) {
         if (leadingIcon != null) leadingIcon()
@@ -767,7 +770,8 @@ fun SystemDestructiveButton(
         modifier = modifier.height(52.dp),
         enabled = enabled,
         style = LiquidButtonStyle.SolidTinted,
-        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSRedLight else IOSRedDark,
+        tint = MaterialTheme.colorScheme.error,
+        contentColor = MaterialTheme.colorScheme.onError,
         shape = Capsule()
     ) {
         if (leadingIcon != null) leadingIcon()
@@ -885,7 +889,7 @@ fun SystemActionButton(
     backdrop: Backdrop? = LocalControlBackdrop.current
 ) {
     val contentColor = if (primary) {
-        Color.White
+        MaterialTheme.colorScheme.onPrimary
     } else {
         MaterialTheme.colorScheme.onSurface
     }
@@ -896,7 +900,7 @@ fun SystemActionButton(
         modifier = modifier,
         enabled = enabled,
         style = if (primary) LiquidButtonStyle.SolidTinted else LiquidButtonStyle.SolidSurface,
-        tint = if (LocalWallpaperAppearanceColors.current.usesDarkForeground) IOSBlueLight else IOSBlueDark,
+        tint = MaterialTheme.colorScheme.primary,
         contentColor = contentColor,
         shape = Capsule(),
         minHeight = 36.dp,

@@ -1,6 +1,9 @@
 package com.tyust.course.ui.screen
 
 import androidx.compose.animation.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.testTag
+import com.tyust.course.ui.system.*
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -53,6 +56,8 @@ import com.tyust.course.ui.system.glass.rememberInteractiveOptics
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 /**
  * 抢课队列项状态
  */
@@ -79,7 +84,8 @@ fun LazyListScope.grabQueueItems(
     onAddCourse: () -> Unit,
     onToggleMode: (index: Int) -> Unit = {}, // 🔧 切换精确/智能模式
     showMode: Boolean = true, // 🔧 控制是否显示模式标签和切换
-    supportsManualAdd: Boolean = true
+    supportsManualAdd: Boolean = true,
+    editable: Boolean = !isRunning
 ) {
     if (queue.isEmpty()) {
         item {
@@ -109,16 +115,15 @@ fun LazyListScope.grabQueueItems(
                     index = index,
                     status = status,
                     isActive = index == currentIndex && isRunning,
-                    enabled = !isRunning,
+                    enabled = editable,
                     onRemove = { onRemoveItem(index) },
-                    onMoveUp = if (index > 0 && !isRunning) {{ onMoveItem(index, index - 1) }} else null,
-                    onMoveDown = if (index < queue.size - 1 && !isRunning) {{ onMoveItem(index, index + 1) }} else null,
+                    onMoveUp = if (index > 0) {{ onMoveItem(index, index - 1) }} else null,
+                    onMoveDown = if (index < queue.size - 1) {{ onMoveItem(index, index + 1) }} else null,
                     onToggleMode = { onToggleMode(index) }, // 🔧 传递模式切换回调
                     showMode = showMode, // 🔧 控制显示模式
                     useExactMatch = currentExactMode // 🔧 显式传递模式，修复刷新问题
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
         }
         
         if (supportsManualAdd) item {
@@ -129,9 +134,9 @@ fun LazyListScope.grabQueueItems(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
-                enabled = !isRunning,
+                enabled = editable,
                 leadingIcon = {
-                    Icon(
+                    ActionLineIcon(
                         Icons.Default.Add,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
@@ -243,139 +248,78 @@ fun GrabQueueEmptyState(onAddCourse: () -> Unit, supportsManualAdd: Boolean = tr
 
 @Composable
 fun GrabQueueItem(
-    course: Course,
-    index: Int,
-    status: GrabQueueItemStatus,
-    isActive: Boolean,
-    enabled: Boolean,
-    onRemove: () -> Unit,
-    onMoveUp: (() -> Unit)?,
-    onMoveDown: (() -> Unit)?,
-    onToggleMode: () -> Unit = {},
-    showMode: Boolean = true,
-    useExactMatch: Boolean = false,
+    course: Course, index: Int, status: GrabQueueItemStatus, isActive: Boolean,
+    enabled: Boolean, onRemove: () -> Unit, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?,
+    onToggleMode: () -> Unit = {}, showMode: Boolean = true, useExactMatch: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val colors = MaterialTheme.colorScheme
+    val canToggleMode = showMode && !course.classId.isNullOrEmpty()
     val statusColor by animateColorAsState(
         when (status) {
-            GrabQueueItemStatus.WAITING -> Color.LightGray
-            GrabQueueItemStatus.GRABBING -> SemanticWarning
+            GrabQueueItemStatus.WAITING -> colors.onSurfaceVariant
+            GrabQueueItemStatus.GRABBING -> colors.primary
             GrabQueueItemStatus.SUCCESS -> SemanticSuccess
-            GrabQueueItemStatus.FAILED -> SemanticDanger
-        },
-        label = "statusColor"
-    )
-    
-    SystemCard(
-        modifier = modifier.fillMaxWidth(),
-        backgroundColor = if (isActive) NeuInsetBackground else MaterialTheme.colorScheme.surface,
-        contentPadding = PaddingValues(0.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .padding(end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            GrabQueueItemStatus.FAILED -> colors.error
+        }, animationSpec = if (reduced) androidx.compose.animation.core.snap()
+            else androidx.compose.animation.core.tween(com.tyust.course.ui.theme.MotionProfile.IconMillis),
+        label = "queue-status-color")
+    val result = when (status) {
+        GrabQueueItemStatus.SUCCESS -> SymbolResult.Success
+        GrabQueueItemStatus.FAILED -> SymbolResult.Failure
+        else -> SymbolResult.None
+    }
+    val statusLabel = when (status) {
+        GrabQueueItemStatus.WAITING -> "待命"
+        GrabQueueItemStatus.GRABBING -> "执行中"
+        GrabQueueItemStatus.SUCCESS -> "已成功"
+        GrabQueueItemStatus.FAILED -> "未成功"
+    }
+    Box(modifier.fillMaxWidth().testTag("queue-row-" + course.uuid)) {
+        LiquidTaskSurface(
+            modifier = Modifier.fillMaxWidth().testTag("queue-item-" + course.uuid)
+                .semantics { stateDescription = statusLabel },
+            accent = statusColor, emphasized = isActive,
+            contentPadding = PaddingValues(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            cornerRadius = 18.dp
         ) {
-            // 左侧状态圆点
-            Box(
-                modifier = Modifier
-                    .padding(start = 12.dp)
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(statusColor.copy(alpha = 0.7f))
-            )
-        
-        Spacer(modifier = Modifier.width(12.dp))
-        
-        // 状态小标/Loading
-        Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            when (status) {
-                GrabQueueItemStatus.SUCCESS -> Icon(Icons.Default.Check, contentDescription = null, tint = SemanticSuccess, modifier = Modifier.size(16.dp))
-                GrabQueueItemStatus.FAILED -> Icon(Icons.Default.Close, contentDescription = null, tint = SemanticDanger, modifier = Modifier.size(16.dp))
-                GrabQueueItemStatus.GRABBING -> CircularProgressIndicator(modifier = Modifier.size(16.dp), color = SemanticWarning, strokeWidth = 2.dp)
-                else -> Text("${index + 1}", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            }
-        }
-        
-        Spacer(modifier = Modifier.width(12.dp))
-            
-            // 课程信息
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = course.name ?: "未知",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = Neutral900,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${course.teacher ?: ""} | ${course.time ?: ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Neutral500,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (showMode) {
-                    val hasClassId = !course.classId.isNullOrEmpty()
-                    val effectiveExactMode = hasClassId && useExactMatch
-                    Text(
-                        text = if (effectiveExactMode) "精确模式" else "智能模式",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (effectiveExactMode) NeuPrimary else SemanticSuccess,
-                        fontSize = 10.sp
-                    )
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).background(statusColor.copy(alpha = if (status == GrabQueueItemStatus.WAITING) 0.25f else 0.8f), CircleShape))
+                Spacer(Modifier.width(6.dp))
+                QueueStateSymbol(index, status == GrabQueueItemStatus.GRABBING, result, Modifier.size(20.dp), statusColor)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f).heightIn(min = 48.dp)
+                    .then(if (canToggleMode) Modifier.clickable(
+                        enabled = enabled, role = Role.Button,
+                        onClickLabel = if (useExactMatch) "切换为智能匹配" else "切换为精确匹配",
+                        onClick = onToggleMode
+                    ).semantics { stateDescription = if (useExactMatch) "精确匹配" else "智能匹配" }
+                    else Modifier), verticalArrangement = Arrangement.Center) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(course.name ?: "未命名课程", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium, color = colors.onSurface,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (canToggleMode) Text(if (useExactMatch) "精确" else "智能",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.primary.copy(alpha = if (enabled) 1f else 0.38f))
+                    }
+                    Text(listOfNotNull(course.teacher?.takeIf { it.isNotBlank() }, course.time?.takeIf { it.isNotBlank() }).joinToString(" | "),
+                        style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-            }
-            
-            // 操作按钮
-            if (enabled) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 🔧 模式切换 (当 showMode 为 true 且有 classId 时显示)
-                    if (showMode) {
-                        val hasClassId = !course.classId.isNullOrEmpty()
-                        if (hasClassId) {
-                            GlassQueueIconButton(
-                                icon = if (useExactMatch) Icons.Default.Lock else Icons.Default.Refresh,
-                                contentDescription = if (useExactMatch) "切换为智能模式" else "切换为精确模式",
-                                tint = if (useExactMatch) NeuPrimary else SemanticSuccess,
-                                onClick = onToggleMode
-                            )
-                        }
-                    }
-                    // 上移
-                    onMoveUp?.let {
-                        GlassQueueIconButton(
-                            icon = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "上移",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            onClick = it
-                        )
-                    }
-                    // 下移
-                    onMoveDown?.let {
-                        GlassQueueIconButton(
-                            icon = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "下移",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            onClick = it
-                        )
-                    }
-                    // 删除
-                    GlassQueueIconButton(
-                        icon = Icons.Default.Delete,
-                        contentDescription = "删除",
-                        tint = SemanticDanger,
-                        onClick = onRemove
-                    )
-                }
+                if (onMoveUp != null) GlassQueueIconButton(Icons.Default.KeyboardArrowUp, "上移", colors.onSurfaceVariant,
+                    enabled, Modifier.testTag("queue-up-" + course.uuid), onMoveUp)
+                else Spacer(Modifier.width(48.dp))
+                if (onMoveDown != null) GlassQueueIconButton(Icons.Default.KeyboardArrowDown, "下移", colors.onSurfaceVariant,
+                    enabled, Modifier.testTag("queue-down-" + course.uuid), onMoveDown)
+                else Spacer(Modifier.width(48.dp))
+                GlassQueueIconButton(Icons.Default.Delete, "删除", colors.error,
+                    enabled, Modifier.testTag("queue-delete-" + course.uuid), onRemove)
             }
         }
     }
 }
-
 /**
  * 队列行内的无轮廓玻璃图标钮：保留轻微表面层，不绘制外轮廓——
  * 它们待在 SystemCard 半透面板【里面】，逐枚采样等于玻璃叠玻璃
@@ -388,42 +332,9 @@ private fun GlassQueueIconButton(
     contentDescription: String,
     tint: Color,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val optics = rememberInteractiveOptics()
-    val interactive = enabled && !rememberGlassAccessibilityMode().reduceMotion
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            // 必须在 glassChip 之前：graphicsLayer 只变换它右侧的内容
-            .graphicsLayer {
-                if (!interactive) return@graphicsLayer
-                applyPressSquash(
-                    progress = optics.pressProgress,
-                    depth = GlassRecipe.ChipFallbackPressDepth
-                )
-            }
-            .glassChip(
-                shape = RoundedCornerShape(10.dp),
-                rimIntensity = 0f,
-                dimmed = !enabled,
-                pressProgress = { optics.pressProgress }
-            )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                enabled = enabled,
-                role = Role.Button,
-                onClick = onClick
-            )
-            .then(if (interactive) optics.gestureModifier else Modifier),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) tint else tint.copy(alpha = 0.38f),
-            modifier = Modifier.size(17.dp)
-        )
-    }
+    AnimatedIconButton(onClick = onClick, icon = icon, contentDescription = contentDescription, modifier = modifier,
+        enabled = enabled, buttonSize = 48.dp, iconSize = 18.dp, tint = tint, chip = false)
 }

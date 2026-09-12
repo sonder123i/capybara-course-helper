@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.CourseSelector" parent="Base.Theme.CourseSelector">
+        <item name="android:windowLightNavigationBar">@bool/light_system_bars</item>
+    </style>
+</resources>

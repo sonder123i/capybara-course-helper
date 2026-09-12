@@ -1,5 +1,8 @@
 package com.tyust.course.ui.system
 
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.scale
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -215,6 +218,8 @@ private fun smoothStep(value: Float): Float {
 
 @Stable
 private class PickerMotionState(initialPosition: Float) {
+    var isSettled by mutableStateOf(true)
+        private set
     var travelPosition by mutableFloatStateOf(initialPosition)
         private set
     var travelVelocity by mutableFloatStateOf(0f)
@@ -230,6 +235,7 @@ private class PickerMotionState(initialPosition: Float) {
         expanded: Boolean,
         reducedMotion: Boolean
     ) {
+        isSettled = false
         phaseTimeSeconds = 0f
         val target = if (expanded) 1f else 0f
         if (reducedMotion) {
@@ -274,6 +280,7 @@ private class PickerMotionState(initialPosition: Float) {
         travelVelocity = 0f
         extentPosition = target
         extentVelocity = 0f
+        isSettled = true
     }
 }
 
@@ -352,6 +359,11 @@ private fun PickerLensLayer(
             .drawBackdrop(
             backdrop = backdrop,
             shape = { shape },
+            // Each persistent lens needs its own optical edge. Only the temporary generic
+            // bridge omits it; that surface already has the SDF rim below.
+            highlight = { if (forceBlurFallback) null else Highlight.Default },
+            shadow = { if (forceBlurFallback) null else Shadow(alpha = if (isLightTheme) 0.14f else 0.22f) },
+            innerShadow = null,
             effects = {
                 val effectiveCornerRadius = minOf(
                     cornerRadius.toPx(),
@@ -403,7 +415,8 @@ fun LiquidSegmentedControl(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     backdrop: Backdrop? = LocalControlBackdrop.current,
-    height: Dp = 52.dp
+    height: Dp = 52.dp,
+    labelContent: (@Composable (index: Int, selection: Float, color: Color) -> Unit)? = null
 ) {
     if (options.isEmpty()) return
 
@@ -649,7 +662,7 @@ fun LiquidSegmentedControl(
                     // 分段栏嵌在页面里，只靠字重差提示太弱：选中直接走主色，
                     // 未选中压到低对比，两端拉开后"当前在哪一段"一眼可见。
                     lerpColor(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f),
+                        MaterialTheme.colorScheme.onSurfaceVariant,
                         MaterialTheme.colorScheme.primary,
                         selectionAmount
                     )
@@ -678,10 +691,12 @@ fun LiquidSegmentedControl(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = { requestSelection(index) }
-                        ),
+                        )
+                        .then(if (labelContent != null) Modifier.semantics { contentDescription = label } else Modifier),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    if (labelContent != null) labelContent(index, selectionAmount, textColor)
+                    else Text(
                         text = label,
                         modifier = Modifier.padding(horizontal = if (compact) 6.dp else 10.dp),
                         style = if (compact) {
@@ -704,6 +719,7 @@ fun LiquidSegmentedControl(
         }
         }
 
+        val fallbackIndicatorColor = MaterialTheme.colorScheme.surface
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -760,6 +776,18 @@ fun LiquidSegmentedControl(
                             .clip(trackShape)
                             .background(trackBackgroundColor)
                             .border(0.75.dp, trackBorderColor, trackShape)
+                            .drawBehind {
+                                val transform = segIndicatorScale(dragAnimation)
+                                val left = horizontalPaddingPx + dragAnimation.value * segmentWidthPx
+                                val top = verticalPadding.toPx()
+                                val w = segmentWidthPx
+                                val h = indicatorHeight.toPx()
+                                scale(transform.scaleX, transform.scaleY, Offset(left + w / 2f, top + h / 2f)) {
+                                    drawRoundRect(fallbackIndicatorColor, Offset(left, top),
+                                        androidx.compose.ui.geometry.Size(w, h),
+                                        androidx.compose.ui.geometry.CornerRadius(h / 2f))
+                                }
+                            }
                     }
                 )
         ) {
@@ -790,18 +818,20 @@ fun LiquidSegmentedControl(
                     .fillMaxWidth()
                     .padding(horizontal = horizontalPadding)
                     .graphicsLayer(
-                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
+                        colorFilter = ColorFilter.tint(if (enabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                     ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                options.forEach { label ->
+                options.forEachIndexed { index, label ->
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
+                        if (labelContent != null) labelContent(index, 1f, MaterialTheme.colorScheme.primary)
+                        else Text(
                             text = label,
                             modifier = Modifier.padding(
                                 horizontal = if (compact) 6.dp else 10.dp
@@ -990,13 +1020,6 @@ fun LiquidSegmentedControl(
                     }
                 )
             )
-        } else {
-            Box(
-                modifier = indicatorBaseModifier
-                    .shadow(1.dp, indicatorShape, clip = false)
-                    .clip(indicatorShape)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
-            )
         }
 
     }
@@ -1045,6 +1068,8 @@ fun LiquidPicker(
     maxLabelLines: Int = 1
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var actionPending by remember { mutableStateOf(false) }
+    val latestAction by rememberUpdatedState(onAction)
     var portalBodySpace by remember { mutableStateOf(PickerMaxBodyHeight) }
     var portalOpensUp by remember { mutableStateOf(false) }
     var highlightedRow by remember { mutableStateOf<Int?>(null) }
@@ -1106,7 +1131,7 @@ fun LiquidPicker(
     // pop-in. The subtree stays clipped and undrawn until the physical body leaves the header.
     val bodyPrecomposed = rowCount > 0
     val bodyActive = rowCount > 0 && (
-        expanded || maxOf(motionProgress, extentProgress) > 0.005f
+        expanded || !motion.isSettled || maxOf(abs(motionProgress), abs(extentProgress)) > 0.005f
     )
     val arrowRotation = 180f * smoothStep(settledProgress)
 
@@ -1207,7 +1232,10 @@ fun LiquidPicker(
     }
 
     LaunchedEffect(canOpen) {
-        if (!canOpen) expanded = false
+        if (!canOpen) {
+            expanded = false
+            actionPending = false
+        }
     }
     LaunchedEffect(expanded, validSelectedIndex, bodyHeight) {
         if (expanded) {
@@ -1346,7 +1374,15 @@ fun LiquidPicker(
         anchorHeight = headerHeight,
         renderedHeight = resolvedLayoutHeight,
         desiredBodyHeight = minOf(bodyContentHeight, PickerMaxBodyHeight),
+        // A second tap can land on the scrim as the action row retracts. Keep the
+        // accepted action pending; removing this picker from its page cancels it.
         onDismiss = { expanded = false },
+        onClosed = {
+            if (actionPending) {
+                actionPending = false
+                latestAction?.invoke()
+            }
+        },
         onSpaceAvailable = { space, up ->
             portalBodySpace = with(density) { space.toDp() }
             portalOpensUp = up
@@ -1439,6 +1475,13 @@ fun LiquidPicker(
                     scaleX = headerScale * collisionScaleX
                     scaleY = headerScale * collisionScaleY
                 }
+                .drawWithContent {
+                    if (glassBackdrop != null && !accessibility.highContrast) {
+                        val top = if (portalOpensUp) 0f else headerHeight.toPx().coerceAtMost(size.height)
+                        val bottom = if (portalOpensUp) headerOffset.toPx() else size.height
+                        clipRect(top = top, bottom = bottom) { this@drawWithContent.drawContent() }
+                    } else drawContent()
+                }
                 .then(surfaceModifier)
         )
 
@@ -1456,7 +1499,7 @@ fun LiquidPicker(
                 .clickable(
                     interactionSource = headerInteraction,
                     indication = null,
-                    enabled = canOpen,
+                    enabled = canOpen && !actionPending,
                     role = Role.Button,
                     onClick = { expanded = !expanded }
                 )
@@ -1639,8 +1682,10 @@ fun LiquidPicker(
                                     action = true,
                                     onHighlight = { highlightedRow = options.size },
                                     onClick = {
-                                        expanded = false
-                                        onAction()
+                                        if (!actionPending) {
+                                            actionPending = true
+                                            expanded = false
+                                        }
                                     }
                                 )
                             }

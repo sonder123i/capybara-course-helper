@@ -59,6 +59,7 @@ fun EditSchoolConfigDialog(
 
     // URL input for smart parsing
     var urlInput by remember { mutableStateOf("") }
+    var addressError by remember { mutableStateOf<String?>(null) }
 
     // Advanced paths
     var showAdvanced by remember { mutableStateOf(false) }
@@ -69,9 +70,12 @@ fun EditSchoolConfigDialog(
     var schedulePath by remember { mutableStateOf(school.schedulePath) }
     var gradesPath by remember { mutableStateOf(school.gradesPath) }
     val supportsZfModulePaths = academicSystem in setOf("auto", "legacy_zf", "zf")
+    val draft = com.tyust.course.model.SchoolFormDraft(name, domain, protocol, basePath, academicSystem)
 
     fun parseUrl(url: String) {
-        val parsed = com.tyust.course.academic.AcademicAddress.parse(url) ?: return
+        val parsed = com.tyust.course.academic.AcademicAddress.parse(url)
+        if (parsed == null) { addressError = "无法解析，请检查教务网址"; return }
+        addressError = null
         protocol = parsed.protocol
         domain = parsed.domain
         basePath = parsed.basePath
@@ -92,11 +96,7 @@ fun EditSchoolConfigDialog(
                 text = "保存",
                 onClick = {
                     // Create updated config
-                    val updatedSchool = SchoolConfig.fromJson(school.toJson()).apply {
-                        this.name = name
-                        this.domain = domain
-                        this.protocol = protocol
-                        this.basePath = basePath
+                    val updatedSchool = draft.applyTo(school).apply {
                         this.courseGnmkdm = courseGnmkdm
                         this.gradeGnmkdm = gradeGnmkdm
                         this.scheduleGnmkdm = scheduleGnmkdm
@@ -106,15 +106,15 @@ fun EditSchoolConfigDialog(
                         this.selectCoursePath = selectCoursePath
                         this.schedulePath = schedulePath
                         this.gradesPath = gradesPath
-                        this.academicSystem = academicSystem
-                        this.detectionSource = if (academicSystem == school.academicSystem) school.detectionSource else "manual"
                         this.pageCharset = pageCharset
                         this.allowedAcademicHosts = java.util.ArrayList(allowedHosts.split(',', '，', '\n').map(String::trim).filter(String::isNotBlank))
+                        if (!this.allowedAcademicHosts.contains(this.domain)) this.allowedAcademicHosts.add(this.domain)
                         this.academicConfigVersion = school.academicConfigVersion
                     }
                     onSave(updatedSchool)
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = addressError == null && draft.isValid
             )
         },
         dismissButton = {
@@ -135,17 +135,18 @@ fun EditSchoolConfigDialog(
             SchoolFormPanel {
                 SchoolFormPanelTitle(
                     icon = Icons.Default.AutoAwesome,
-                    text = "智能识别"
+                    text = "从网址填写"
                 )
                 SchoolFormField(
                     label = "教务系统网址",
                     value = urlInput,
-                    onValueChange = { urlInput = it },
+                    onValueChange = { urlInput = it; addressError = null },
                     placeholder = "http://jwxt.example.edu.cn/jwglxt",
-                    helper = "识别后会覆盖下方的域名、协议与基础路径"
+                    helper = "解析后填写域名、协议和基础路径，保留所选教务类型",
+                    error = addressError
                 )
                 SystemPrimaryButton(
-                    text = "识别并填充",
+                    text = "解析网址",
                     onClick = { parseUrl(urlInput) },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = urlInput.isNotBlank()
@@ -154,19 +155,7 @@ fun EditSchoolConfigDialog(
 
             SchoolFormSectionTitle("基本配置")
 
-            val systems = listOf("auto" to "自动识别（四类教务）", "legacy_zf" to "新正方（兼容流程）", "zf" to "新正方", "zf_old" to "旧正方", "qz" to "新强智", "qz_old" to "旧强智")
-            Text("教务系统类型", style = MaterialTheme.typography.labelMedium)
-            com.tyust.course.ui.system.SystemPicker(
-                options = systems.map { it.second },
-                selectedIndex = systems.indexOfFirst { it.first == academicSystem }.takeIf { it >= 0 },
-                onSelect = { academicSystem = systems[it].first },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            com.tyust.course.academic.AcademicCapabilities.support(academicSystem)?.let { support ->
-                Text(support.login, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(support.limits, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            SchoolAcademicSystemField(academicSystem) { academicSystem = it }
 
             SchoolFormField(
                 label = "学校名称",
@@ -206,8 +195,8 @@ fun EditSchoolConfigDialog(
                 label = "基础路径",
                 value = basePath,
                 onValueChange = { basePath = it },
-                placeholder = "/jwglxt",
-                helper = "如 /jwglxt 或 /jwxt"
+                placeholder = "/jwglxt、/jsxsd 或留空",
+                helper = "教务位于网站根目录时留空"
             )
 
             if (supportsZfModulePaths) {

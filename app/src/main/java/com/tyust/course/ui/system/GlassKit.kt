@@ -74,10 +74,12 @@ private val GlassRowShape = RoundedCornerShape(16.dp)
 @Composable
 internal fun glassSurfaceColor(): Color {
     val highContrast = rememberGlassAccessibilityMode().highContrast
-    return if (LocalWallpaperAppearanceColors.current.usesDarkForeground) {
-        Color.White.copy(alpha = if (highContrast) 0.92f else 0.62f)
+    val appearance = LocalWallpaperAppearanceColors.current
+    if (!com.tyust.course.manager.AppearanceSettingsManager.glassEffectEnabled) return MaterialTheme.colorScheme.surface
+    return if (!rememberGlassDarkTheme()) {
+        Color.White.copy(alpha = if (highContrast) 0.96f else if (appearance.usesDarkForeground) 0.62f else 0.90f)
     } else {
-        Color(0xFF1C1C1E).copy(alpha = if (highContrast) 0.92f else 0.55f)
+        Color(0xFF171B22).copy(alpha = if (highContrast) 0.96f else maxOf(0.78f, appearance.surface.alpha))
     }
 }
 
@@ -108,14 +110,8 @@ fun GlassStatChip(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = valueColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        AnimatedValueText(value, color = valueColor,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
@@ -357,14 +353,20 @@ fun GlassTextField(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
     val borderAlpha by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
-        animationSpec = MotionSpring.liquidTap(),
+        animationSpec = if (reduced) androidx.compose.animation.core.snap() else com.tyust.course.ui.theme.MotionProfile.iconSpring(),
         label = "glassFieldFocus"
     )
     val shape = GlassRowShape
     val textColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f)
     val highContrast = rememberGlassAccessibilityMode().highContrast
+    val fieldBorder by androidx.compose.animation.animateColorAsState(
+        if (isError) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.lerp(
+            glassBorderColor(), MaterialTheme.colorScheme.primary, borderAlpha.coerceIn(0f, 1f)),
+        animationSpec = androidx.compose.animation.core.tween(if (reduced) 0 else com.tyust.course.ui.theme.MotionProfile.PressMillis),
+        label = "field-validation-color")
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -373,17 +375,11 @@ fun GlassTextField(
             .heightIn(min = minHeight)
             .clip(shape)
             .background(
-                if (highContrast) glassSurfaceColor()
-                else if (isLightTheme) Color.White.copy(alpha = 0.55f)
-                else Color.White.copy(alpha = 0.10f)
+                glassSurfaceColor()
             )
             .border(
-                width = if (isFocused) 1.5.dp else 0.5.dp,
-                color = androidx.compose.ui.graphics.lerp(
-                    glassBorderColor(),
-                    if (isError) MaterialTheme.colorScheme.error else NeuPrimary.copy(alpha = 0.85f),
-                    if (isError) 1f else borderAlpha
-                ),
+                width = (0.5f + borderAlpha.coerceIn(0f, 1f)).dp,
+                color = fieldBorder,
                 shape = shape
             ),
         enabled = enabled,
@@ -404,11 +400,12 @@ fun GlassTextField(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (leadingIcon != null) {
-                    Icon(
-                        imageVector = leadingIcon,
+                    ActionLineIcon(
+                        icon = leadingIcon,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp),
+                        state = if (isFocused) IconVisualState.Selected else IconVisualState.Idle
                     )
                 }
                 Box(
@@ -442,8 +439,10 @@ fun GlassLoadingIndicator(
     size: Dp = 44.dp,
     arcColor: Color = NeuPrimary
 ) {
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val rotation = if (reduced) 0f else {
     val transition = rememberInfiniteTransition(label = "glassLoading")
-    val rotation by transition.animateFloat(
+    val spin by transition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
@@ -451,6 +450,8 @@ fun GlassLoadingIndicator(
         ),
         label = "glassLoadingRotation"
     )
+    spin
+    }
     val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     Box(
         modifier = modifier

@@ -174,7 +174,7 @@ fun LoginScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                     
                     Text(
-                        text = "正方教务助手",
+                        text = androidx.compose.ui.res.stringResource(com.tyust.course.R.string.app_name),
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold,
@@ -184,7 +184,7 @@ fun LoginScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     
                     Text(
-                        text = com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS,
+                        text = "课表、成绩与选课",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Medium
@@ -255,14 +255,14 @@ fun LoginScreen(
                         var selectedSchool by remember { mutableStateOf<SchoolConfig?>(null) }
                         var showAddSchoolDialog by remember { mutableStateOf(false) }
                         
-                        // Initialize selected school
+                        // Keep the user's current choice when the list refreshes after add/edit.
                         LaunchedEffect(schools) {
-                            val userManager = UserManager.getInstance()
-                            if (userManager.getCurrentSchool() != null) {
-                                selectedSchool = userManager.getCurrentSchool()
-                            } else if (schools.isNotEmpty() && selectedSchool == null) {
-                                selectedSchool = schools[0]
-                                onSchoolSelected(schools[0])
+                            val chosenId = selectedSchool?.id
+                                ?: UserManager.getInstance().currentSchool?.id
+                            val school = schools.firstOrNull { it.id == chosenId } ?: schools.firstOrNull()
+                            if (school != null) {
+                                selectedSchool = school
+                                onSchoolSelected(school)
                             }
                         }
 
@@ -284,7 +284,8 @@ fun LoginScreen(
                             maxLabelLines = 2
                         )
                         Text(
-                            text = com.tyust.course.academic.AcademicCapabilities.name(selectedSchool?.academicSystem) + " · 跨学校合计最多 3 个学生账号",
+                            text = if (selectedSchoolIndex == null) com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS
+                                else com.tyust.course.academic.AcademicCapabilities.name(schools[selectedSchoolIndex].academicSystem),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
@@ -294,29 +295,13 @@ fun LoginScreen(
                         if (showAddSchoolDialog) {
                             AddSchoolDialog(
                                 onDismiss = { showAddSchoolDialog = false },
-                                onConfirm = { name, urlData, protocol ->
-                                    val parts = urlData.split("|")
-                                    val domain = parts[0].trim()
-                                    val basePath = if (parts.size > 1) parts[1] else "/jwglxt"
-                                    
-                                    // 🔧 支持带端口的域名（如 zfjw.mnust.edu.cn:30443）
-                                    val domainPattern = Regex("^[a-zA-Z0-9][a-zA-Z0-9.\\-]*[a-zA-Z0-9](:[0-9]{1,5})?$")
-                                    val isValidDomain = domain.length >= 2 && domainPattern.matches(domain)
-                                    
-                                    if (isValidDomain) {
-                                        showAddSchoolDialog = false
-                                        val schoolId = "custom_${System.currentTimeMillis()}"
-                                        val schoolName = if (name.isNotBlank()) name else domain.split(".").firstOrNull()?.uppercase() ?: domain
-                                        val newSchool = SchoolConfig(schoolId, schoolName, domain, protocol).apply {
-                                            this.basePath = basePath
-                                            this.academicSystem = "auto"
-                                            this.detectionSource = "pending"
-                                        }
-                                        com.tyust.course.manager.UserManager.getInstance().addCustomSchool(newSchool)
-                                        onSchoolAdded()
-                                        selectedSchool = newSchool
-                                        onSchoolSelected(newSchool)
-                                    }
+                                onConfirm = { draft ->
+                                    val newSchool = draft.toSchoolConfig()
+                                    com.tyust.course.manager.UserManager.getInstance().addCustomSchool(newSchool)
+                                    selectedSchool = newSchool
+                                    onSchoolSelected(newSchool)
+                                    onSchoolAdded()
+                                    showAddSchoolDialog = false
                                 }
                             )
                         }
@@ -559,7 +544,7 @@ fun LoginScreen(
             // Version Text
             AnimatedVisibility(visible = visible, enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(800))) {
                 Text(
-                    text = "正方教务助手 · 第三方客户端",
+                    text = "教务助手 · 第三方客户端",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     letterSpacing = 0.sp
@@ -767,26 +752,30 @@ fun BindingConfirmationDialog(
 @Composable
 fun AddSchoolDialog(
     onDismiss: () -> Unit,
-    onConfirm: (name: String, url: String, protocol: String) -> Unit
+    onConfirm: (com.tyust.course.model.SchoolFormDraft) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var urlInput by remember { mutableStateOf("") }
     var domain by remember { mutableStateOf("") }
-    var basePath by remember { mutableStateOf("/jwglxt") }
+    var basePath by remember { mutableStateOf("") }
     var protocol by remember { mutableStateOf("https") }
+    var academicSystem by remember { mutableStateOf("auto") }
+    var addressError by remember { mutableStateOf<String?>(null) }
     
     fun parseUrl(url: String) {
-        val parsed = com.tyust.course.academic.AcademicAddress.parse(url) ?: return
+        val parsed = com.tyust.course.academic.AcademicAddress.parse(url)
+        if (parsed == null) {
+            addressError = "无法解析，请检查教务网址"
+            return
+        }
+        addressError = null
         protocol = parsed.protocol
         domain = parsed.domain
         basePath = parsed.basePath
     }
     
-    // Domain validation
-    // 🔧 支持带端口的域名（如 zfjw.mnust.edu.cn:30443）
-    val domainPattern = Regex("^[a-zA-Z0-9][a-zA-Z0-9.\\-]*[a-zA-Z0-9](:[0-9]{1,5})?$")
-    val isValidDomain = domain.length >= 2 && domainPattern.matches(domain) && domain.contains(".")
-    val showError = urlInput.isNotBlank() && domain.isNotBlank() && !isValidDomain
+    val draft = com.tyust.course.model.SchoolFormDraft(name, domain, protocol, basePath, academicSystem)
+    val showError = domain.isNotBlank() && !draft.isValidDomain
     
     SystemDialog(
         onDismissRequest = onDismiss,
@@ -801,9 +790,9 @@ fun AddSchoolDialog(
             SystemPrimaryButton(
                 text = "添加",
                 onClick = {
-                    onConfirm(name, "$domain|$basePath", protocol)
+                    onConfirm(draft)
                 },
-                enabled = isValidDomain,
+                enabled = draft.isValid && addressError == null,
                 modifier = Modifier.fillMaxWidth()
             )
         },
@@ -824,17 +813,18 @@ fun AddSchoolDialog(
             SchoolFormPanel {
                 SchoolFormPanelTitle(
                     icon = Icons.Default.AutoAwesome,
-                    text = "智能识别"
+                    text = "从网址填写"
                 )
                 SchoolFormField(
                     label = "教务系统网址",
                     value = urlInput,
-                    onValueChange = { urlInput = it },
+                    onValueChange = { urlInput = it; addressError = null },
                     placeholder = "http://jwxt.example.edu.cn/jwglxt",
-                    helper = "粘贴登录后的任意教务页面地址，下面的字段会自动填好"
+                    helper = "粘贴教务登录页或登录后的页面网址，解析域名、协议和基础路径",
+                    error = addressError
                 )
                 SystemPrimaryButton(
-                    text = "自动识别",
+                    text = "解析网址",
                     onClick = { parseUrl(urlInput) },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = urlInput.isNotBlank()
@@ -842,6 +832,8 @@ fun AddSchoolDialog(
             }
 
             SchoolFormSectionTitle("基本信息")
+
+            SchoolAcademicSystemField(academicSystem) { academicSystem = it }
 
             SchoolFormField(
                 label = "学校名称（可选）",
@@ -863,8 +855,8 @@ fun AddSchoolDialog(
                 label = "基础路径",
                 value = basePath,
                 onValueChange = { basePath = it },
-                placeholder = "/jwglxt 或留空",
-                helper = "如 /jwglxt、/jwxt；模块直接挂在根目录时留空"
+                placeholder = "/jwglxt、/jsxsd 或留空",
+                helper = "优先从完整网址解析；教务位于网站根目录时留空"
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

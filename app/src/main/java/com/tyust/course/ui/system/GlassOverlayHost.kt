@@ -107,6 +107,7 @@ internal fun AnchoredGlassPortal(
     onSpaceAvailable: (Float, Boolean) -> Unit,
     modifier: Modifier = Modifier,
     popupWidth: Dp? = null,
+    onClosed: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val host = LocalGlassPortals.current
@@ -119,6 +120,7 @@ internal fun AnchoredGlassPortal(
     val currentContent by rememberUpdatedState(content)
     val currentDismiss by rememberUpdatedState(onDismiss)
     val currentSpace by rememberUpdatedState(onSpaceAvailable)
+    val currentClosed by rememberUpdatedState(onClosed)
     val locals by rememberUpdatedState(currentCompositionLocalContext)
     val movable = remember { movableContentOf { CompositionLocalProvider(locals) { currentContent() } } }
     val entry = remember { GlassPortalEntry(movable, { currentDismiss() }, { space, up -> currentSpace(space, up) }) }
@@ -135,6 +137,11 @@ internal fun AnchoredGlassPortal(
         }
     }
     DisposableEffect(host, entry) { onDispose { host?.entries?.remove(entry) } }
+    val inPortal = host?.entries?.contains(entry) == true
+    LaunchedEffect(active, inPortal) {
+        // The next surface may open only after this entry has left the overlay host.
+        if (!active && !inPortal) currentClosed?.invoke()
+    }
     BoxWithConstraints(modifier.height(anchorHeight).onGloballyPositioned {
         entry.anchor = Rect(it.positionInWindow(), Size(it.size.width.toFloat(), it.size.height.toFloat()))
     }) {

@@ -1,6 +1,7 @@
 package com.tyust.course.ui.system
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +14,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
@@ -90,6 +92,26 @@ internal fun Modifier.glassEdgeFadeBottom(fadeHeight: Dp): Modifier =
 /** 状态栏磨砂的下缘渐隐带。只要 6dp——它是"别以硬边收尾"，不是一层软阴影。 */
 private val StatusBarFrostFade = 6.dp
 
+@Composable
+private fun wallpaperHeaderTint(): Color {
+    val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
+    // An opaque parent mask is absent from the slab's wallpaper sample. It therefore
+    // shows through around the sampled rounded rectangle as a pale frame and seam.
+    // Ordinary image/color wallpapers stay continuous; a solid scrim is an explicit
+    // high-contrast accommodation only.
+    return if (customWallpaper && rememberGlassAccessibilityMode().highContrast)
+        androidx.compose.material3.MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
+    else Color.Transparent
+}
+
+@Composable
+internal fun wallpaperHeaderScrim(): Modifier {
+    val tint = wallpaperHeaderTint()
+    com.tyust.course.ui.theme.ReportStatusBarSurface(tint)
+    if (tint.alpha == 0f) return Modifier
+    return Modifier.background(Brush.verticalGradient(0f to tint, 0.94f to tint, 1f to Color.Transparent))
+}
+
 /**
  * 状态栏细磨砂。唯一职责是让内容滚过时时钟仍可读，
  * 所以直角、不加 lens（minCornerRadius = 0 会让 canUseLiquidLens 静默退化）。
@@ -106,6 +128,8 @@ internal fun StatusBarFrost(
     } else {
         Color(0xFF1E2024).copy(alpha = 0.52f * collapse)
     }
+    val baseTint = wallpaperHeaderTint()
+    com.tyust.course.ui.theme.ReportStatusBarSurface(tint.compositeOver(baseTint))
     Box(
         modifier = Modifier
             .fillMaxWidth()

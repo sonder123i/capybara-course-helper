@@ -485,7 +485,11 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         onQueueToggleAllMode = { exact -> replace(items.map { it.copy(useExactMatch = exact && it.stableSectionId.isNotBlank()) }) },
         onAddCourse = { showManualAdd = true },
         supportsParallel = AcademicCapabilities.supportsParallel(school))
-    if (showDateTimePicker) GlassDateTimePickerDialog(title = "选择抢课时间", onConfirm = { millis ->
+    if (showDateTimePicker) GlassDateTimePickerDialog(title = "选择抢课时间",
+        initialMillis = remember(scheduledDateTime) {
+            runCatching { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).apply { isLenient = false }
+                .parse(scheduledDateTime)?.time }.getOrNull() ?: System.currentTimeMillis()
+        }, onConfirm = { millis ->
         scheduledDateTime = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).format(Date(millis))
         prefs.edit().putString("scheduled_datetime_$account", scheduledDateTime).apply()
         showDateTimePicker = false

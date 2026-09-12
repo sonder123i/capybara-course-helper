@@ -25,6 +25,29 @@ import androidx.compose.ui.unit.dp
 import com.tyust.course.ui.system.GlassTextField
 import com.tyust.course.ui.system.glass.glassChip
 import com.tyust.course.ui.theme.SemanticDanger
+import com.tyust.course.academic.AcademicCapabilities
+import com.tyust.course.academic.AcademicSystem
+import com.tyust.course.ui.system.SystemPicker
+import androidx.compose.ui.platform.testTag
+
+@Composable
+internal fun SchoolAcademicSystemField(value: String, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("教务类型", style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SystemPicker(
+            options = AcademicCapabilities.selectableSystems.map(AcademicCapabilities::selectionLabel),
+            selectedIndex = AcademicCapabilities.selectionIndex(value),
+            onSelect = { onSelect(AcademicCapabilities.selectedTypeId(value, AcademicCapabilities.selectableSystems[it])) },
+            modifier = Modifier.fillMaxWidth().testTag("school-system-picker")
+        )
+        Text(
+            if (value == AcademicSystem.AUTO.id) "登录时自动识别，也可以手动选择学校使用的教务类型。"
+            else AcademicCapabilities.support(value)?.login.orEmpty(),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
 
 /**
  * 学校配置表单的共用件（「添加学校」与「编辑学校配置」两个弹窗）。

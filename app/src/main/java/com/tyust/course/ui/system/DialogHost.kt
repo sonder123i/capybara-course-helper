@@ -21,6 +21,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -40,8 +41,14 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -54,16 +61,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 enum class DialogPresentation { Center, Bottom, Page }
-class DialogHandle internal constructor()
+class DialogHandle internal constructor(internal val key: String = java.util.UUID.randomUUID().toString())
 
 internal class HostedDialog(
     val handle: DialogHandle,
     val onDismiss: () -> Unit,
     val presentation: DialogPresentation,
+    val bottomSheet: ScheduleBottomSheetState?,
     val content: @Composable () -> Unit
 ) {
     val visibility = MutableTransitionState(false).apply { targetState = true }
     var notifyOnClose = true
+    var presence by mutableFloatStateOf(0f)
 }
 
 class DialogHostState {
@@ -74,12 +83,15 @@ class DialogHostState {
     internal val dialogs = mutableStateListOf<HostedDialog>()
     val currentDialog: (@Composable () -> Unit)? get() = dialogs.lastOrNull()?.content
     val isVisible: Boolean get() = dialogs.lastOrNull()?.visibility?.targetState == true
+    val pageProgress: Float get() = dialogs.lastOrNull { it.presentation == DialogPresentation.Page }?.presence ?: 0f
 
     fun show(
         onDismiss: () -> Unit,
         presentation: DialogPresentation = DialogPresentation.Center,
+        bottomSheet: ScheduleBottomSheetState? = null,
+        saveableKey: String? = null,
         content: @Composable () -> Unit
-    ): DialogHandle = DialogHandle().also { dialogs.add(HostedDialog(it, onDismiss, presentation, content)) }
+    ): DialogHandle = (saveableKey?.let(::DialogHandle) ?: DialogHandle()).also { dialogs.add(HostedDialog(it, onDismiss, presentation, bottomSheet, content)) }
 
     fun dismiss(handle: DialogHandle? = dialogs.lastOrNull()?.handle, notify: Boolean = true) {
         val dialog = dialogs.firstOrNull { it.handle === handle } ?: return
@@ -104,8 +116,9 @@ internal val LocalDialogProgress = compositionLocalOf<State<Float>?> { null }
 @Composable
 fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
     val reducedMotion = rememberGlassAccessibilityMode().reduceMotion
+    val density = LocalDensity.current
     state.dialogs.forEach { dialog ->
-        key(dialog.handle) {
+        key(dialog.handle.key) {
             val visibility = dialog.visibility
             LaunchedEffect(visibility.isIdle, visibility.currentState, visibility.targetState) {
                 if (visibility.isIdle && !visibility.currentState && !visibility.targetState) {
@@ -118,47 +131,67 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
             val scope = rememberCoroutineScope()
             PredictiveBackHandler(enabled = state.dialogs.lastOrNull() === dialog && visibility.targetState) { events ->
                 try {
-                    events.collect { if (!reducedMotion && (page || bottom)) backProgress.snapTo(it.progress) }
+                    events.collect {
+                        if (dialog.bottomSheet != null) dialog.bottomSheet.predictiveProgress(it.progress)
+                        else if (!reducedMotion && (page || bottom)) {
+                            backProgress.snapTo(it.progress)
+                        }
+                    }
                     state.dismiss(dialog.handle)
                 } catch (_: CancellationException) {
-                    scope.launch { backProgress.animateTo(0f, spring(0.9f, 500f)) }
+                    scope.launch {
+                        dialog.bottomSheet?.restore() ?: backProgress.animateTo(0f, com.tyust.course.ui.theme.MotionSpring.snappy())
+                    }
                 }
             }
             AnimatedVisibility(visibleState = visibility, enter = EnterTransition.None, exit = ExitTransition.None) {
                 val progress = transition.animateFloat(transitionSpec = {
                     when {
                         reducedMotion -> snap()
-                        targetState != EnterExitState.Visible -> tween(if (page) 240 else 190)
-                        page -> tween(240)
+                        page -> com.tyust.course.ui.theme.MotionProfile.hierarchySpring()
+                        targetState != EnterExitState.Visible -> tween(com.tyust.course.ui.theme.MotionProfile.SheetExitMillis)
+                        bottom -> com.tyust.course.ui.theme.MotionProfile.sheetSpring()
                         else -> spring(0.80f, 420f)
                     }
                 }, label = "dialog-presence") { if (it == EnterExitState.Visible) 1f else 0f }
+                LaunchedEffect(dialog) {
+                    snapshotFlow { progress.value.coerceIn(0f, 1f) * (1f - backProgress.value) }
+                        .collect { dialog.presence = it }
+                }
                 Box(
-                    modifier.fillMaxSize().clickable(
-                        interactionSource = remember { MutableInteractionSource() }, indication = null,
-                        onClick = { state.dismiss(dialog.handle) }
-                    ),
+                    modifier.fillMaxSize(),
                     contentAlignment = if (bottom) Alignment.BottomCenter else Alignment.Center
                 ) {
                     Box(Modifier.fillMaxSize().graphicsLayer { alpha = progress.value.coerceIn(0f, 1f) }
-                        .background(Color.Black.copy(alpha = 0.22f)))
+                        .background(Color.Black.copy(alpha = 0.22f))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
+                            onClick = { state.dismiss(dialog.handle) }).clearAndSetSemantics {})
                     Box(
                         Modifier.graphicsLayer {
                                 val presence = progress.value
                                 val back = backProgress.value
-                                translationX = if (page) size.width * ((1f - presence) / 4f + 0.18f * back) else 0f
-                                translationY = if (bottom) size.height * ((1f - presence) / 3f + 0.18f * back) else 0f
+                                val above = state.dialogs.lastOrNull { it.presentation == DialogPresentation.Page }
+                                    ?.takeIf { state.dialogs.indexOf(it) > state.dialogs.indexOf(dialog) }?.presence ?: 0f
+                                translationX = (if (page) with(density) { com.tyust.course.ui.theme.MotionProfile.HierarchyEnterDp.dp.toPx() } *
+                                    (1f - presence + back) else 0f) - with(density) { com.tyust.course.ui.theme.MotionProfile.HierarchyBehindDp.dp.toPx() } * above
+                                translationY = if (bottom) {
+                                    val drag = dialog.bottomSheet?.offset ?: 0f
+                                    if (dialog.bottomSheet != null) drag + (size.height - drag) * (1f - presence.coerceIn(0f, 1f))
+                                    else size.height * ((1f - presence) / 3f + 0.18f * back)
+                                } else 0f
                                 scaleX = if (!page && !bottom) 0.94f + 0.06f * presence else 1f
                                 scaleY = scaleX
-                                alpha = presence.coerceIn(0f, 1f) * (1f - 0.12f * back)
+                                alpha = presence.coerceIn(0f, 1f) * (1f - 0.12f * back) * (1f - 0.03f * above)
                             }
                             .then(if (page) Modifier.fillMaxSize() else Modifier.windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime)).padding(vertical = 12.dp))
                             .semantics {
-                                paneTitle = "对话框"
+                                paneTitle = if (dialog.bottomSheet != null) "课程详情" else "对话框"
                                 isTraversalGroup = true
                                 if (!visibility.targetState || state.dialogs.lastOrNull() !== dialog) hideFromAccessibility()
                             }
-                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                            // Eat only unhandled taps; a clickable parent would merge the
+                            // switch's semantics and replace its accessibility action with a no-op.
+                            .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                     ) {
                         CompositionLocalProvider(LocalDialogProgress provides progress) { dialog.content() }
                     }

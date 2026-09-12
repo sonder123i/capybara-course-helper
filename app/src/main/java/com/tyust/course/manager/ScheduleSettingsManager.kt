@@ -5,13 +5,16 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 /**
  * 课表设置管理器 - 管理节次时间、第一周日期、自定义课程
  */
-class ScheduleSettingsManager private constructor() {
-    
-    private var prefs: SharedPreferences? = null
+class ScheduleSettingsManager internal constructor(private var prefs: SharedPreferences? = null) {
+    var revision by mutableIntStateOf(0)
+        private set
     
     companion object {
         private const val PREFS_NAME = "schedule_settings"
@@ -83,6 +86,7 @@ class ScheduleSettingsManager private constructor() {
         get() = getScopedInt(KEY_PERIOD_COUNT, 12)
         set(value) {
             prefs?.edit()?.putInt(scopedKey(KEY_PERIOD_COUNT), value)?.remove(KEY_PERIOD_COUNT)?.apply()
+            revision++
         }
     
     // ============ 第一周日期 ============
@@ -201,12 +205,12 @@ class ScheduleSettingsManager private constructor() {
         val weeks: String
     )
     
-    private fun customCoursesKey(): String {
-        return scopedKey(KEY_CUSTOM_COURSES)
+    private fun customCoursesKey(accountKey: String): String {
+        return "${KEY_CUSTOM_COURSES}_$accountKey"
     }
     
-    fun getCustomCourses(): List<CustomCourse> {
-        val scoped = customCoursesKey()
+    fun getCustomCourses(accountKey: String = accountStorageKey()): List<CustomCourse> {
+        val scoped = customCoursesKey(accountKey)
         val json = prefs?.getString(scoped, null)
             ?: prefs?.getString(KEY_CUSTOM_COURSES, null)?.also { legacy ->
                 prefs?.edit()
@@ -231,24 +235,35 @@ class ScheduleSettingsManager private constructor() {
                     weeks = obj.optString("weeks", "1-16周")
                 ))
             }
-            return list
+            val seen = mutableSetOf<String>()
+            val repaired = list.map { course ->
+                if (course.id.isNotBlank() && seen.add(course.id)) course
+                else course.copy(id = java.util.UUID.randomUUID().toString()).also { seen.add(it.id) }
+            }
+            if (repaired != list) saveCustomCourses(repaired, accountKey)
+            return repaired
         } catch (e: Exception) {
             return emptyList()
         }
     }
     
-    fun addCustomCourse(course: CustomCourse) {
-        val courses = getCustomCourses().toMutableList()
-        courses.add(course)
-        saveCustomCourses(courses)
+    fun addCustomCourse(course: CustomCourse, accountKey: String = accountStorageKey()) {
+        updateCustomCourse(course, accountKey)
     }
     
-    fun removeCustomCourse(courseId: String) {
-        val courses = getCustomCourses().filter { it.id != courseId }
-        saveCustomCourses(courses)
+    fun updateCustomCourse(course: CustomCourse, accountKey: String = accountStorageKey()) {
+        require(accountKey.isNotBlank() && course.id.isNotBlank())
+        val existing = getCustomCourses(accountKey)
+        val courses = if (existing.any { it.id == course.id }) existing.map { if (it.id == course.id) course else it }
+            else existing + course
+        saveCustomCourses(courses, accountKey)
     }
     
-    private fun saveCustomCourses(courses: List<CustomCourse>) {
+    fun removeCustomCourse(courseId: String, accountKey: String = accountStorageKey()) {
+        saveCustomCourses(getCustomCourses(accountKey).filter { it.id != courseId }, accountKey)
+    }
+
+    private fun saveCustomCourses(courses: List<CustomCourse>, accountKey: String) {
         val array = JSONArray()
         courses.forEach { c ->
             val obj = JSONObject()
@@ -263,8 +278,9 @@ class ScheduleSettingsManager private constructor() {
             array.put(obj)
         }
         prefs?.edit()
-            ?.putString(customCoursesKey(), array.toString())
+            ?.putString(customCoursesKey(accountKey), array.toString())
             ?.remove(KEY_CUSTOM_COURSES)
             ?.apply()
+        revision++
     }
 }

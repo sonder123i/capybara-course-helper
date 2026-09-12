@@ -1,5 +1,19 @@
 package com.tyust.course.ui.screen
 
+import android.os.Build
+
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.platform.testTag
+import com.tyust.course.ui.system.*
+import com.tyust.course.ui.theme.MotionProfile
 import com.tyust.course.ui.system.GlassToaster
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -48,12 +62,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,6 +78,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -149,576 +170,372 @@ fun GrabProScreen(
     supportsImmediateManual: Boolean = false,
     systemNotice: String = ""
 ) {
-    val context = LocalContext.current
     val scrollState = rememberLazyListState()
-    var localScheduledMode by remember { mutableStateOf(isScheduledMode && supportsScheduling) }
+    var localScheduledMode by rememberSaveable { mutableStateOf(isScheduledMode && supportsScheduling) }
     var showWarningDialog by remember { mutableStateOf(false) }
-
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+    var logExpanded by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val overlayInset = LocalAppOverlayBottomInset.current
+    val controlsState = rememberTaskControlsState()
+    val configurationEnabled = !isRunning && !hasScheduledTask
+    val activateScheduleSetup: () -> Unit = {
+        if (configurationEnabled) {
+            localScheduledMode = true
+            onScheduledModeChange?.invoke(true)
+            onPickDateTime?.invoke()
+        }
+    }
     LaunchedEffect(isScheduledMode, supportsScheduling) {
         localScheduledMode = isScheduledMode && supportsScheduling
     }
+    if (showWarningDialog) ScheduleWarningDialog(
+        onConfirm = {
+            showWarningDialog = false
+            activateScheduleSetup()
+        },
+        onDismissForever = {
+            showWarningDialog = false
+            onDismissWarningForever?.invoke()
+            activateScheduleSetup()
+        },
+        onDismiss = { showWarningDialog = false }
+    )
 
-    if (showWarningDialog) {
-        ScheduleWarningDialog(
-            onConfirm = {
-                showWarningDialog = false
-                localScheduledMode = true
-                onScheduledModeChange?.invoke(true)
-            },
-            onDismissForever = {
-                showWarningDialog = false
-                localScheduledMode = true
-                onScheduledModeChange?.invoke(true)
-                onDismissWarningForever?.invoke()
-            },
-            onDismiss = { showWarningDialog = false }
-        )
-    }
-
+    val currentCourse = queue.getOrNull(currentQueueIndex)
+    val console = GrabConsoleUiState(
+        running = isRunning, scheduled = localScheduledMode,
+        waitingForSchedule = hasScheduledTask && !isRunning,
+        courseCount = queue.size, attempts = retryCount, successes = successCount, failures = failCount,
+        taskTitle = when {
+            isFuzzyMatchMode && !localScheduledMode -> fuzzyMatchTarget?.takeIf { it.isNotBlank() } ?: "选择要监控的课程组"
+            isRunning -> currentCourse?.name ?: targetCourseName ?: "正在执行队列"
+            !targetCourseName.isNullOrBlank() -> targetCourseName
+            queue.isNotEmpty() -> queue.size.toString() + " 门课程待执行"
+            else -> "添加你的第一门课程"
+        },
+        taskSubtitle = when {
+            hasScheduledTask && localScheduledMode -> scheduledTaskInfo.ifBlank { "等待计划时间" }
+            !targetCourseName.isNullOrBlank() -> targetCourseTeacher.orEmpty()
+            isFuzzyMatchMode && !localScheduledMode -> "持续检查所选课程组"
+            queue.isNotEmpty() -> if (isParallelMode) "并行处理 · 最多 2 门" else "按队列顺序执行"
+            else -> "从课程列表添加到队列"
+        }
+    )
     val collapseTravel = with(LocalDensity.current) { 96.dp.toPx() }
     val headerCollapse by remember(collapseTravel) {
         derivedStateOf {
-            if (scrollState.firstVisibleItemIndex > 0) {
-                1f
-            } else {
-                (scrollState.firstVisibleItemScrollOffset / collapseTravel).coerceIn(0f, 1f)
+            if (scrollState.firstVisibleItemIndex > 0) 1f
+            else (scrollState.firstVisibleItemScrollOffset / collapseTravel).coerceIn(0f, 1f)
+        }
+    }
+    val canStart = when {
+        isRunning -> true
+        localScheduledMode && hasScheduledTask -> onCancelScheduledTask != null
+        localScheduledMode -> scheduledDateTime.isNotBlank() && queue.isNotEmpty() && onScheduledStart != null
+        isFuzzyMatchMode -> !fuzzyMatchTarget.isNullOrBlank() && onStartFuzzyMatch != null
+        else -> !targetCourseName.isNullOrBlank() || queue.isNotEmpty()
+    }
+    val action: () -> Unit = {
+        when {
+            isRunning -> onStop()
+            localScheduledMode && hasScheduledTask -> onCancelScheduledTask?.invoke()
+            localScheduledMode -> onScheduledStart?.invoke()
+            isFuzzyMatchMode -> onStartFuzzyMatch?.invoke()
+            else -> {
+                val manualCount = queue.count { it.classId.isNullOrEmpty() }
+                if (!supportsImmediateManual && manualCount > 0 && targetCourseName.isNullOrBlank()) {
+                    GlassToaster.show("包含 " + manualCount + " 门手动添加课程，即时模式暂不支持这些条目")
+                } else onStart()
             }
         }
     }
+    val openSchedule: () -> Unit = {
+        if (configurationEnabled) {
+            if (!localScheduledMode && showScheduleWarning) showWarningDialog = true
+            else activateScheduleSetup()
+        }
+    }
+    val queueHeadingIndex = 2 + if (systemNotice.isNotBlank()) 1 else 0
+    val advancedIndex = queueHeadingIndex + 1 + if (queue.isEmpty()) 1 else queue.size + if (supportsManualAdd && onAddCourse != null) 1 else 0
+    fun reveal(index: Int) { scope.launch { if (reduced) scrollState.scrollToItem(index) else scrollState.animateScrollToItem(index) } }
+    val quickActions = buildList {
+        if (supportsManualAdd && onAddCourse != null) add(TaskQuickAction("add", "添加课程", AnimatedIconSpec.Add,
+            configurationEnabled, caption = "添加", onClick = onAddCourse))
+        if (onFuzzyMatchModeChange != null) add(TaskQuickAction("match", if (isFuzzyMatchMode) "切换为精确执行" else "切换为模糊监控",
+            AnimatedIconSpec.ScanLock, configurationEnabled && !localScheduledMode, isFuzzyMatchMode,
+            caption = if (isFuzzyMatchMode) "精确" else "监控",
+            iconProgress = if (isFuzzyMatchMode) 0f else 1f) { onFuzzyMatchModeChange(!isFuzzyMatchMode); reveal(0) })
+        if (supportsScheduling && onPickDateTime != null) add(TaskQuickAction("schedule", "设置定时任务",
+            AnimatedIconSpec.Clock, configurationEnabled, localScheduledMode,
+            caption = "定时") { openSchedule(); reveal(0) })
+        add(TaskQuickAction("advanced", "高级设置", AnimatedIconSpec.Settings, configurationEnabled, caption = "参数") { advancedExpanded = true; reveal(advancedIndex) })
+        add(TaskQuickAction("logs", "运行日志", AnimatedIconSpec.Log, caption = "日志") { logExpanded = true; reveal(advancedIndex + 1) })
+        add(TaskQuickAction("queue", "课程队列", AnimatedIconSpec.Courses, caption = "队列") { reveal(queueHeadingIndex) })
+    }
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
+        modifier = Modifier.graphicsLayer {
+            val blur = controlsState.progress * 14.dp.toPx()
+            renderEffect = if (!reduced && Build.VERSION.SDK_INT >= 31 && blur > 0.1f)
+                BlurEffect(blur, blur, TileMode.Clamp) else null
+        }.then(if (controlsState.expanded) Modifier.clearAndSetSemantics {} else Modifier),
         containerColor = Color.Transparent,
         topBar = {
-            SystemTopBar(
-                title = "抢课工作台",
-                collapseFraction = headerCollapse,
-                subtitle = when {
-                    localScheduledMode -> "定时任务模式"
-                    isFuzzyMatchMode -> "模糊监控模式"
-                    else -> "即时执行模式"
-                }
-            )
+            SystemTopBar(title = "抢课工作台", collapseFraction = headerCollapse,
+                subtitle = schoolName.takeIf { it.isNotBlank() } ?: "管理队列与执行任务")
+        },
+        bottomBar = {
+            Spacer(Modifier.height(overlayInset + TaskControlsReservedHeight))
         }
     ) { paddingValues ->
-        // 内容延伸到玻璃顶栏下方，滚动时从顶栏底下穿过
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("grab-console-list"),
             state = scrollState,
-            contentPadding = PaddingValues(
-                start = PagePadding,
-                end = PagePadding,
+            contentPadding = PaddingValues(start = PagePadding, end = PagePadding,
                 top = paddingValues.calculateTopPadding() + 8.dp,
-                // 滚到底时最后一项停在底栏上方；滚动中内容仍可从栏后穿过
-                bottom = com.tyust.course.ui.system.LocalAppOverlayBottomInset.current + 24.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                bottom = paddingValues.calculateBottomPadding() + 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (systemNotice.isNotBlank()) item {
+            item(key = "current-task") {
+                TaskOverviewCard(console,
+                    modeControl = {
+                        TaskModeBar(isFuzzyMatchMode, localScheduledMode, configurationEnabled,
+                            onFuzzyMatchModeChange, if (supportsScheduling && onPickDateTime != null) openSchedule else null)
+                    },
+                    onClearTarget = when {
+                        !configurationEnabled -> null
+                        isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> onClearFuzzyMatchTarget
+                        !targetCourseName.isNullOrBlank() -> onClearTargetCourse
+                        else -> null
+                    })
+            }
+            if (systemNotice.isNotBlank()) item(key = "school-notice") {
                 Text(systemNotice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            item {
-                RuntimeStatusCard(
-                    isRunning = isRunning,
-                    hasScheduledTask = hasScheduledTask,
-                    successCount = successCount,
-                    failCount = failCount,
-                    retryCount = retryCount,
-                    queueSize = queue.size
-                )
-            }
-
-            if (supportsScheduling) item {
-                SystemSegmentedControl(
-                    options = listOf("即时执行", "定时任务"),
-                    selectedIndex = if (localScheduledMode) 1 else 0,
-                    onSelect = { index ->
-                        val newMode = index == 1
-                        if (newMode && !localScheduledMode && showScheduleWarning) {
-                            showWarningDialog = true
-                        } else {
-                            localScheduledMode = newMode
-                            onScheduledModeChange?.invoke(newMode)
+            item(key = "scheduled-details") {
+                AnimatedVisibility(localScheduledMode,
+                    enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
+                    exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                    SystemCard(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("定时设置", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                TextButton(
+                                    enabled = configurationEnabled,
+                                    onClick = {
+                                        localScheduledMode = false
+                                        onScheduledModeChange?.invoke(false)
+                                    },
+                                    modifier = Modifier.testTag("task-cancel-timing")
+                                ) { Text("取消定时设置", style = MaterialTheme.typography.labelMedium) }
+                            }
+                            if (onCourseKeywordsChange != null) GlassTextField(
+                                courseKeywords, onCourseKeywordsChange, Modifier.fillMaxWidth(),
+                                placeholder = "课程或教师关键词", enabled = !isRunning && !hasScheduledTask)
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                                .clickable(enabled = configurationEnabled && onPickDateTime != null, role = androidx.compose.ui.semantics.Role.Button) { onPickDateTime?.invoke() }
+                                .testTag("task-scheduled-time"),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                AnimatedLineIcon(AnimatedIconSpec.Clock, tint = MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f)) {
+                                    Text("计划开始时间", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    AnimatedValueText(scheduledDateTime.ifBlank { "选择日期和时间" }, style = MaterialTheme.typography.titleSmall)
+                                }
+                                AnimatedLineIcon(AnimatedIconSpec.Forward, Modifier.size(18.dp))
+                            }
                         }
                     }
-                )
-            }
-
-            item {
-                AnimatedContent(
-                    targetState = localScheduledMode,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "grab_mode_switch"
-                ) { scheduledMode ->
-                    if (scheduledMode) {
-                        ScheduledTaskForm(
-                            schoolName = schoolName,
-                            courseKeywords = courseKeywords,
-                            onCourseKeywordsChange = onCourseKeywordsChange,
-                            dateTime = scheduledDateTime,
-                            onDateTimeClick = { onPickDateTime?.invoke() },
-                            hasTask = hasScheduledTask,
-                            taskInfo = scheduledTaskInfo,
-                            onCancelTask = { onCancelScheduledTask?.invoke() },
-                            queueSize = queue.size,
-                            isRunning = isRunning,
-                            onStop = onStop,
-                            onCreateTask = { onScheduledStart?.invoke() }
-                        )
-                    } else {
-                        ImmediateGrabForm(
-                            targetCourseName = targetCourseName,
-                            targetCourseTeacher = targetCourseTeacher,
-                            interval = interval,
-                            onIntervalChange = onIntervalChange,
-                            maxRetry = maxRetry,
-                            onMaxRetryChange = onMaxRetryChange,
-                            isRunning = isRunning,
-                            onStart = {
-                                val manualCourses = queue.filter { it.classId.isNullOrEmpty() }
-                                if (!supportsImmediateManual && manualCourses.isNotEmpty() && targetCourseName.isNullOrBlank()) {
-                                    GlassToaster.show("包含 ${manualCourses.size} 门手动添加课程，即时模式暂不支持这些条目")
-                                } else {
-                                    onStart()
-                                }
-                            },
-                            onStop = onStop,
-                            onClearTargetCourse = onClearTargetCourse,
-                            queueSize = queue.size,
-                            isFuzzyMatchMode = isFuzzyMatchMode,
-                            onFuzzyMatchModeChange = onFuzzyMatchModeChange,
-                            fuzzyMatchTarget = fuzzyMatchTarget,
-                            onStartFuzzyMatch = onStartFuzzyMatch,
-                            onClearFuzzyMatchTarget = onClearFuzzyMatchTarget
-                        )
-                    }
                 }
             }
-
-            item {
-                Column(Modifier.fillMaxWidth()) {
-                    GrabQueueHeader(
-                        queueSize = queue.size,
-                        isParallelMode = isParallelMode,
-                        onParallelModeChange = { onParallelModeChange?.invoke(it) },
-                        onClearQueue = { onQueueClear?.invoke() },
-                        isRunning = isRunning,
-                        supportsParallel = supportsParallel,
-                        showMode = showQueueModeLabels,
-                        isExactModeGlobal = isExactModeGlobal,
-                        onToggleAllMode = onQueueToggleAllMode
-                    )
+            item(key = "queue-heading") {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("课程队列", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    AnimatedValueText(queue.size.toString(), Modifier.padding(start = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    SystemIconButton(Icons.Default.DeleteSweep, "清空队列", { onQueueClear?.invoke() },
+                        enabled = configurationEnabled && queue.isNotEmpty() && onQueueClear != null, chip = false)
                 }
             }
-
             grabQueueItems(
-                queue = queue,
-                currentIndex = currentQueueIndex,
-                itemStatuses = queueItemStatuses,
-                isRunning = isRunning,
-                isParallelMode = isParallelMode,
-                queueVersion = queueVersion,
+                queue = queue, currentIndex = currentQueueIndex, itemStatuses = queueItemStatuses,
+                isRunning = isRunning, isParallelMode = isParallelMode, queueVersion = queueVersion,
                 onMoveItem = { from, to -> onQueueMoveItem?.invoke(from, to) },
                 onRemoveItem = { onQueueRemoveItem?.invoke(it) },
                 onAddCourse = { onAddCourse?.invoke() },
                 onToggleMode = { onQueueToggleMode?.invoke(it) },
-                showMode = showQueueModeLabels,
-                supportsManualAdd = supportsManualAdd
+                showMode = showQueueModeLabels, supportsManualAdd = supportsManualAdd && onAddCourse != null,
+                editable = configurationEnabled
             )
-
-            item {
-                LogConsole(
-                    logText = logText,
-                    onClearLog = onClearLog
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RuntimeStatusCard(
-    isRunning: Boolean,
-    hasScheduledTask: Boolean,
-    successCount: Int,
-    failCount: Int,
-    retryCount: Int,
-    queueSize: Int
-) {
-    val (statusText, tone) = when {
-        hasScheduledTask && !isRunning -> "定时待命" to SystemTone.Warning
-        isRunning -> "执行中" to SystemTone.Success
-        else -> "已就绪" to SystemTone.Neutral
-    }
-
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "运行状态",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = if (queueSize > 0) "当前队列 $queueSize 门课程" else "当前队列为空",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            SystemStatusBadge(
-                text = statusText,
-                tone = tone
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            GlassStatChip(retryCount.toString(), "尝试", Modifier.weight(1f))
-            GlassStatChip(successCount.toString(), "成功", Modifier.weight(1f), SemanticSuccess)
-            GlassStatChip(failCount.toString(), "失败", Modifier.weight(1f), SemanticDanger)
-        }
-    }
-}
-
-@Composable
-private fun ImmediateGrabForm(
-    targetCourseName: String?,
-    targetCourseTeacher: String?,
-    interval: String,
-    onIntervalChange: (String) -> Unit,
-    maxRetry: String,
-    onMaxRetryChange: (String) -> Unit,
-    isRunning: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onClearTargetCourse: (() -> Unit)? = null,
-    queueSize: Int = 0,
-    isFuzzyMatchMode: Boolean = false,
-    onFuzzyMatchModeChange: ((Boolean) -> Unit)? = null,
-    fuzzyMatchTarget: String? = null,
-    onStartFuzzyMatch: (() -> Unit)? = null,
-    onClearFuzzyMatchTarget: (() -> Unit)? = null
-) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SystemSectionHeader(
-            title = "即时执行",
-            subtitle = null
-        )
-
-        if (onFuzzyMatchModeChange != null) {
-            SystemSegmentedControl(
-                options = listOf("精确模式", "模糊监控"),
-                selectedIndex = if (isFuzzyMatchMode) 1 else 0,
-                onSelect = { onFuzzyMatchModeChange(it == 1) }
-            )
-        }
-
-        TargetSummaryCard(
-            title = if (isFuzzyMatchMode) "监控目标" else "目标课程",
-            primaryText = when {
-                isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> fuzzyMatchTarget
-                !isFuzzyMatchMode && !targetCourseName.isNullOrBlank() -> targetCourseName
-                !isFuzzyMatchMode && queueSize > 0 -> "已选择 $queueSize 门课程"
-                else -> "未设置目标"
-            },
-            secondaryText = when {
-                isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> "课程组监控"
-                isFuzzyMatchMode -> "暂无监控目标"
-                !isFuzzyMatchMode && !targetCourseName.isNullOrBlank() -> "教师：${targetCourseTeacher ?: "未知"}"
-                !isFuzzyMatchMode && queueSize > 0 -> "按队列顺序执行"
-                else -> "队列为空"
-            },
-            tone = when {
-                isFuzzyMatchMode -> SystemTone.Warning
-                !targetCourseName.isNullOrBlank() || queueSize > 0 -> SystemTone.Info
-                else -> SystemTone.Neutral
-            },
-            onClear = when {
-                isFuzzyMatchMode && !fuzzyMatchTarget.isNullOrBlank() -> onClearFuzzyMatchTarget
-                !isFuzzyMatchMode && !targetCourseName.isNullOrBlank() -> onClearTargetCourse
-                else -> null
-            }
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            SystemPrimaryButton(
-                text = if (isFuzzyMatchMode) "开始监控" else "开始执行",
-                onClick = { if (isFuzzyMatchMode) onStartFuzzyMatch?.invoke() else onStart() },
-                modifier = Modifier.weight(1f),
-                enabled = if (isFuzzyMatchMode) !isRunning && !fuzzyMatchTarget.isNullOrBlank() else !isRunning && (!targetCourseName.isNullOrBlank() || queueSize > 0),
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            )
-            SystemDestructiveButton(
-                text = "停止",
-                onClick = onStop,
-                modifier = Modifier.weight(1f),
-                enabled = isRunning,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            NumericField(
-                value = interval,
-                onValueChange = onIntervalChange,
-                label = "轮询间隔 (ms)",
-                modifier = Modifier.weight(1f)
-            )
-            NumericField(
-                value = maxRetry,
-                onValueChange = onMaxRetryChange,
-                label = "最大重试次数",
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScheduledTaskForm(
-    schoolName: String,
-    courseKeywords: String = "",
-    onCourseKeywordsChange: ((String) -> Unit)? = null,
-    dateTime: String,
-    onDateTimeClick: () -> Unit,
-    hasTask: Boolean,
-    taskInfo: String,
-    onCancelTask: () -> Unit,
-    queueSize: Int = 0,
-    isRunning: Boolean = false,
-    onStop: (() -> Unit)? = null,
-    onCreateTask: () -> Unit
-) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SystemSectionHeader(
-            title = "定时任务",
-            subtitle = if (hasTask) "等待触发" else null
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SystemStatusBadge(
-                text = schoolName.ifBlank { "未登录" },
-                tone = SystemTone.Neutral
-            )
-            SystemStatusBadge(
-                text = if (queueSize > 0) "队列 $queueSize 门" else "队列为空",
-                tone = if (queueSize > 0) SystemTone.Info else SystemTone.Warning
-            )
-        }
-
-        if (onCourseKeywordsChange != null) {
-            GlassTextField(
-                value = courseKeywords,
-                onValueChange = onCourseKeywordsChange,
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = "输入课程名、教师名等关键词"
-            )
-        }
-
-        // 时间选择字段：边缘光玻璃（同成绩页 SemesterSelector 的紧凑字段语言）。
-        // 旧版硬编码 White.copy(0.35) 假玻璃在深色主题下会泛白。
-        val timeOptics = rememberInteractiveOptics()
-        val timeInteractive = !rememberGlassAccessibilityMode().reduceMotion
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassChip(
-                    shape = RoundedCornerShape(16.dp),
-                    pressProgress = { timeOptics.pressProgress }
-                )
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onDateTimeClick
-                )
-                .then(if (timeInteractive) timeOptics.gestureModifier else Modifier)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccessTime,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "开始时间",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = dateTime.ifBlank { "尚未设置" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = if (dateTime.isBlank()) FontWeight.Normal else FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        if (hasTask) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = if (isRunning) SemanticSuccess.copy(alpha = 0.12f) else SemanticWarning.copy(alpha = 0.12f),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = if (isRunning) "任务正在执行" else "任务已计划",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isRunning) SemanticSuccess else SemanticWarning
-                    )
-                    Text(
-                        text = taskInfo.ifBlank { "等待到达计划时间后自动执行。" },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            if (isRunning && onStop != null) {
-                SystemDestructiveButton(
-                    text = "停止抢课",
-                    onClick = onStop,
-                    modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Stop,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+            item(key = "advanced-options") {
+                ConsoleDisclosure("高级设置", interval + " ms · 最多 " + maxRetry + " 次", AnimatedIconSpec.Settings, "grab-advanced",
+                    expanded = advancedExpanded, onExpandedChange = { advancedExpanded = it }) {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NumericField(interval, onIntervalChange, "重试间隔 (ms)", Modifier.weight(1f), configurationEnabled)
+                            NumericField(maxRetry, onMaxRetryChange, "最大重试次数", Modifier.weight(1f), configurationEnabled)
+                        }
+                        if (supportsParallel && queue.size > 1 && onParallelModeChange != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("并行执行", style = MaterialTheme.typography.titleSmall)
+                                    Text("同时处理最多 2 门课程", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                LiquidSwitch(isParallelMode, onParallelModeChange, enabled = configurationEnabled)
+                            }
+                        }
+                        if (showQueueModeLabels && onQueueToggleAllMode != null && queue.isNotEmpty()) {
+                            Text("队列匹配方式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            SystemSegmentedControl(listOf("智能匹配", "精确匹配"), if (isExactModeGlobal) 1 else 0,
+                                enabled = configurationEnabled,
+                                onSelect = { if (configurationEnabled) onQueueToggleAllMode(it == 1) })
+                        }
                     }
-                )
-            } else {
-                SystemSecondaryButton(
-                    text = "取消任务",
-                    onClick = onCancelTask,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        } else {
-            SystemPrimaryButton(
-                text = "创建定时任务",
-                onClick = onCreateTask,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = dateTime.isNotBlank() && queueSize > 0,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.AlarmAdd,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
                 }
-            )
-            if (queueSize == 0) {
-                SystemEmptyState(
-                    title = "队列为空",
-                    message = "请先在课程页或队列区添加待抢课程后，再创建定时任务。"
-                )
+            }
+            item(key = "runtime-log") { LogConsole(logText, onClearLog, logExpanded, { logExpanded = it }) }
+        }
+    }
+    LiquidTaskControls(quickActions, overlayInset, controlsState) { expanded, progress, toggle ->
+        TaskActionDock(console, canStart, isFuzzyMatchMode, { controlsState.close(); action() }, Modifier,
+            expanded, progress, toggle)
+    }
+    }
+}
+
+@Immutable
+data class GrabConsoleUiState(
+    val running: Boolean, val scheduled: Boolean, val waitingForSchedule: Boolean,
+    val courseCount: Int, val attempts: Int, val successes: Int, val failures: Int,
+    val taskTitle: String, val taskSubtitle: String
+) {
+    val status: String get() = when {
+        running -> "执行中"
+        waitingForSchedule -> "定时待命"
+        successes + failures > 0 -> if (failures > 0) "执行结束 · 有失败" else "执行完成"
+        courseCount > 0 -> "准备就绪"
+        else -> "等待添加"
+    }
+}
+
+@Composable
+private fun TaskOverviewCard(ui: GrabConsoleUiState, modeControl: @Composable () -> Unit, onClearTarget: (() -> Unit)?) {
+    val colors = MaterialTheme.colorScheme
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val stateColor by animateColorAsState(
+        when {
+            ui.running -> colors.primary
+            ui.waitingForSchedule -> SemanticWarning
+            ui.failures > 0 -> colors.error
+            ui.successes > 0 -> SemanticSuccess
+            else -> colors.onSurfaceVariant
+        }, animationSpec = if (reduced) snap() else tween(MotionProfile.IconMillis), label = "console-status-color")
+    LiquidTaskSurface(Modifier.fillMaxWidth().testTag("grab-current-task"),
+        contentPadding = PaddingValues(12.dp), cornerRadius = 20.dp,
+        accent = stateColor, emphasized = ui.running) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(shape = RoundedCornerShape(12.dp), color = stateColor.copy(alpha = 0.08f)) {
+                    RequestStateSymbol(ui.running, when {
+                        ui.running || ui.waitingForSchedule -> SymbolResult.None
+                        ui.failures > 0 -> SymbolResult.Failure
+                        ui.successes > 0 -> SymbolResult.Success
+                        else -> SymbolResult.None
+                    }, modifier = Modifier.padding(8.dp).size(20.dp), tint = stateColor)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(ui.taskTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AnimatedValueText(ui.status, color = stateColor, style = MaterialTheme.typography.labelSmall)
+                        if (ui.taskSubtitle.isNotBlank()) Text("· " + ui.taskSubtitle, Modifier.weight(1f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                    }
+                }
+                if (onClearTarget != null) SystemIconButton(Icons.Default.Close, "清除当前目标", onClearTarget, chip = false)
+            }
+            modeControl()
+            AnimatedVisibility(ui.running || ui.attempts + ui.successes + ui.failures > 0,
+                enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
+                exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    ConsoleMetric(ui.attempts, "尝试", Modifier.weight(1f), colors.onSurfaceVariant)
+                    ConsoleMetric(ui.successes, "成功", Modifier.weight(1f), SemanticSuccess)
+                    ConsoleMetric(ui.failures, "失败", Modifier.weight(1f), colors.error)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TargetSummaryCard(
-    title: String,
-    primaryText: String,
-    secondaryText: String,
-    tone: SystemTone,
-    onClear: (() -> Unit)?
-) {
-    // 目标摘要：边缘光玻璃字段，与时间选择字段同一语言
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassChip(shape = RoundedCornerShape(16.dp))
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SystemStatusBadge(text = title, tone = tone)
+private fun ConsoleMetric(value: Int, label: String, modifier: Modifier, color: Color) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedValueText(value.toString(), color = color, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+    }
+}
+
+@Composable
+private fun TaskActionDock(ui: GrabConsoleUiState, enabled: Boolean, fuzzy: Boolean, onAction: () -> Unit, modifier: Modifier,
+    expanded: Boolean, menuProgress: Float, onToggleMenu: () -> Unit) {
+    val stopping = ui.running || ui.scheduled && ui.waitingForSchedule
+    val label = when {
+        ui.running -> "停止执行"
+        ui.scheduled && ui.waitingForSchedule -> "取消定时任务"
+        ui.scheduled -> "创建定时任务"
+        fuzzy -> "开始监控"
+        else -> "开始执行"
+    }
+    LiquidTaskButton(
+        text = label,
+        supportingText = when {
+            ui.running -> "任务进行中 · 轻点停止"
+            ui.waitingForSchedule && ui.scheduled -> "已安排 · 等待开始"
+            ui.courseCount > 0 -> ui.courseCount.toString() + " 门课程已就绪"
+            else -> "先添加待执行课程"
+        },
+        running = ui.running, stopping = stopping, enabled = enabled, onClick = onAction,
+        expanded = expanded, menuProgress = menuProgress, onToggleMenu = onToggleMenu,
+        modifier = modifier
+    )
+}
+@Composable
+private fun ConsoleDisclosure(title: String, summary: String, icon: AnimatedIconSpec, tag: String,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, content: @Composable () -> Unit) {
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    SystemCard(Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(tag)
+                .clickable(role = Role.Button) { onExpandedChange(!expanded) },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AnimatedLineIcon(icon, Modifier.size(20.dp), state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle)
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(
-                    text = primaryText,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = secondaryText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                AnimatedLineIcon(AnimatedIconSpec.Chevron, Modifier.size(20.dp),
+                    state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle)
             }
-            if (onClear != null) {
-                IconButton(onClick = onClear) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "清除",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            AnimatedVisibility(expanded,
+                enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
+                exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()) {
+                Box(Modifier.padding(top = 14.dp, bottom = 4.dp)) { content() }
             }
         }
     }
 }
-
 @Composable
 private fun NumericField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Column(
         modifier = modifier,
@@ -733,6 +550,7 @@ private fun NumericField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
+            enabled = enabled,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
         )
     }
@@ -793,12 +611,13 @@ private fun ScheduleWarningDialog(
 @Composable
 private fun LogConsole(
     logText: String,
-    onClearLog: () -> Unit
+    onClearLog: () -> Unit,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit
 ) {
     val scrollState = rememberScrollState()
-    var expanded by rememberSaveable { mutableStateOf(false) }
     var followTail by remember { mutableStateOf(true) }
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "logChevron")
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
     val lastLine = remember(logText) { logText.lineSequence().lastOrNull { it.isNotBlank() } }
 
     LaunchedEffect(scrollState.isScrollInProgress) {
@@ -817,13 +636,13 @@ private fun LogConsole(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                modifier = Modifier.weight(1f).clickable { expanded = !expanded }.padding(vertical = 12.dp),
+                modifier = Modifier.weight(1f).clickable { onExpandedChange(!expanded) }.padding(vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
+                AnimatedLineIcon(
+                    spec = AnimatedIconSpec.Log,
+                    state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp)
                 )
@@ -833,8 +652,8 @@ private fun LogConsole(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Icon(Icons.Default.KeyboardArrowDown, null,
-                    modifier = Modifier.size(18.dp).rotate(rotation))
+                AnimatedLineIcon(AnimatedIconSpec.Chevron, Modifier.size(18.dp),
+                    state = if (expanded) IconVisualState.Expanded else IconVisualState.Idle)
             }
             com.tyust.course.ui.system.SystemIconButton(
                 onClick = onClearLog, icon = Icons.Default.DeleteSweep,
@@ -843,15 +662,14 @@ private fun LogConsole(
         }
 
         if (!expanded) {
-            Text(lastLine ?: "暂无运行记录", maxLines = 2, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
+            AnimatedValueText(lastLine ?: "暂无运行记录", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().clickable { expanded = true })
+                modifier = Modifier.fillMaxWidth().clickable { onExpandedChange(true) })
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
+            enter = if (reduced) EnterTransition.None else expandVertically() + fadeIn(),
+            exit = if (reduced) ExitTransition.None else shrinkVertically() + fadeOut()
         ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),

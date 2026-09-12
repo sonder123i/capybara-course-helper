@@ -91,7 +91,8 @@ internal object AcademicStudyParser {
         if (day !in 1..7 || periods.isEmpty()) throw AcademicException(AcademicStatus.PAGE_CHANGED, "课表缺少可识别的星期或节次")
         periods.map { (start, end) -> AcademicScheduleEntry(name, text(row, "xm", "XM", "jsxm"),
             listOf(text(row, "xqmc", "cdxqmc"), text(row, "cdmc", "CDMC", "jxcdmc")).filter(String::isNotBlank).joinToString(" "),
-            day!!, start, end, text(row, "zcd", "ZCD", "weeks")) }
+            day!!, start, end, text(row, "zcd", "ZCD", "weeks"),
+            text(row, "schedule_source_id", "kcb_id", "kb_id", "jxb_id", "jx0404id", "kch_id")) }
     }
 
     private data class Cell(val row: Int, val col: Int, val element: Element)

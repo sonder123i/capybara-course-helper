@@ -1,0 +1,9 @@
+<resources>
+    <color name="startup_background">#F0F2F4</color>
+    <style name="Theme.CourseSelector.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/startup_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_startup_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.CourseSelector</item>
+        <item name="android:windowLightStatusBar">@bool/light_system_bars</item>
+    </style>
+</resources>

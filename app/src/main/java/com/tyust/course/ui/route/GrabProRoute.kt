@@ -717,7 +717,7 @@ fun GrabProRoute() {
         showQueueModeLabels = false, // 🔧 隐藏单项模式标签，只用全局开关控制
         scheduledDateTime = scheduledDateTime,
         isScheduledMode = isScheduledMode,
-        onScheduledModeChange = { isScheduledMode = it },
+        onScheduledModeChange = { isScheduledMode = it; saveState() },
         onScheduledStart = { createScheduledTask() },
         hasScheduledTask = hasScheduledTask,
         scheduledTaskInfo = scheduledTaskInfo,
@@ -827,6 +827,11 @@ fun GrabProRoute() {
     if (showGlassDateTimePicker) {
         com.tyust.course.ui.system.GlassDateTimePickerDialog(
             title = "选择抢课时间",
+            initialMillis = remember(scheduledDateTime) {
+                runCatching { java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
+                    .apply { isLenient = false }.parse(scheduledDateTime)?.time }.getOrNull()
+                    ?: System.currentTimeMillis()
+            },
             onConfirm = { millis ->
                 val cal = Calendar.getInstance().apply { timeInMillis = millis }
                 scheduledDateTime = String.format(
@@ -883,21 +888,27 @@ fun GrabProRoute() {
                     
                     // 时间选择（选填）
                     Text("上课时间（选填）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("周几", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         SystemPicker(
                             options = weekdays.map { it.ifBlank { "不限" } },
                             selectedIndex = weekdays.indexOf(selectedWeekday).takeIf { it >= 0 },
                             onSelect = { index -> selectedWeekday = weekdays[index] },
                             modifier = Modifier.fillMaxWidth(),
-                            label = "周几"
+                            label = ""
                         )
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("节次", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         SystemPicker(
                             options = periods.map { it.ifBlank { "不限" } },
                             selectedIndex = periods.indexOf(selectedPeriod).takeIf { it >= 0 },
                             onSelect = { index -> selectedPeriod = periods[index] },
                             modifier = Modifier.fillMaxWidth(),
-                            label = "节次"
+                            label = ""
                         )
+                        }
                     }
                 }
             },

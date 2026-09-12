@@ -76,6 +76,14 @@ internal class WallpaperToneMap(
         return buffer.array().toByteString().base64()
     }
 
+    fun usesDarkBarIcons(viewportWidth: Int, viewportHeight: Int, region: WallpaperRegion,
+        blur: Float, dim: Float, overlayArgb: Int = WhiteSurface, overlayAlpha: Float = 0f): Boolean {
+        val samples = sampleRegion(viewportWidth.coerceAtLeast(1), viewportHeight.coerceAtLeast(1), region,
+            blur.coerceIn(0f, 1f), dim.coerceIn(0f, 1f))
+        return minimumContrast(DarkForeground, overlayArgb, overlayAlpha, samples) >=
+            minimumContrast(LightForeground, overlayArgb, overlayAlpha, samples)
+    }
+
     private fun sampleRegion(
         viewportWidth: Int,
         viewportHeight: Int,

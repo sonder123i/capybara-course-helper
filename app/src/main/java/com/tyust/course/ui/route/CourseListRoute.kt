@@ -44,6 +44,9 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Color.Companion.White
@@ -309,6 +312,7 @@ fun CourseListRoute() {
     
     // Filter State
     var showFilterPanel by remember { mutableStateOf(false) }
+    var filterAnchor by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     var activeFilter by remember(routeAccountKey) {
         mutableStateOf(restoredSnapshot?.activeFilter)
     }
@@ -1297,13 +1301,15 @@ fun CourseListRoute() {
     }
     // 顶栏几何按屏幕余量收：宽屏与 20:9 上算出来就是原来的 64dp / 52dp / 200dp。
     val screen = com.tyust.course.ui.system.rememberScreenMetrics()
-    val topBarHeight = screen.tall(64.dp, 56.dp)
-    val topBarSegmentHeight = screen.tall(52.dp, 44.dp)
+    val topBarHeight = com.tyust.course.ui.system.TopBarLayoutMetrics.height()
+    val topBarSegmentHeight = com.tyust.course.ui.system.TopBarLayoutMetrics.segmentHeight()
     // 右侧芯片组占掉约 118dp（三枚 34dp 芯片 + 两道 4dp 间距 + 8dp 右边距），
     // M3 的居中逻辑只能把标题往左推：360dp 宽的屏幕上 200dp 的分段栏会被挤到
     // 只剩 26dp 左边距。窄屏收窄它，左右留白才回到一个能读的比例
     //（真正的居中要求控件 ≤ 108dp，那就太小了）。
-    val topBarSegmentWidth = screen.wide(200.dp, 152.dp)
+    val topBarSegmentWidth = com.tyust.course.ui.system.TopBarLayoutMetrics.segmentWidth()
+    val topBarTint = if (com.tyust.course.ui.system.rememberGlassDarkTheme()) MaterialTheme.colorScheme.surface.copy(alpha = 0.9f) else White.copy(alpha = 0.60f)
+    com.tyust.course.ui.theme.ReportStatusBarSurface(topBarTint)
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -1327,12 +1333,12 @@ fun CourseListRoute() {
                         highlight = { null },
                         shadow = { null },
                         innerShadow = { null },
-                        onDrawSurface = { drawRect(White.copy(alpha = 0.60f)) }
+                        onDrawSurface = { drawRect(topBarTint) }
                     )
             } else {
                 Modifier
                     .fillMaxWidth()
-                    .background(NeuSurface)
+                    .background(MaterialTheme.colorScheme.surface)
             }
             Column(modifier = Modifier.reportNoticeAnchor()) {
             Box(modifier = topBarShellModifier) {
@@ -1371,7 +1377,7 @@ fun CourseListRoute() {
                                     isSearchActive = false
                                     onSearch("")
                                 }) { 
-                                    Icon(Icons.Default.Close, contentDescription = "取消搜索", tint = Neutral900) 
+                                    Icon(Icons.Default.Close, contentDescription = "取消搜索", tint = MaterialTheme.colorScheme.onSurface)
                                 }
                                 com.tyust.course.ui.system.GlassTextField(
                                     value = searchQuery,
@@ -1386,10 +1392,10 @@ fun CourseListRoute() {
                         "multiSelect" -> {
                             //  Sélection 模式顶栏
                             TopAppBar(
-                                title = { Text("已选 ${selectedClassIds.size} 门课程", style = MaterialTheme.typography.titleMedium, color = Neutral900) },
+                                title = { Text("已选 ${selectedClassIds.size} 门课程", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) },
                                 navigationIcon = {
                                     IconButton(onClick = { exitMultiSelectMode() }) {
-                                        Icon(Icons.Default.Close, contentDescription = "取消", tint = Neutral900)
+                                        Icon(Icons.Default.Close, contentDescription = "取消", tint = MaterialTheme.colorScheme.onSurface)
                                     }
                                 },
                                 actions = {
@@ -1406,8 +1412,8 @@ fun CourseListRoute() {
                                 },
                                 colors = TopAppBarDefaults.topAppBarColors(
                                     containerColor = Color.Transparent,
-                                    titleContentColor = Neutral900,
-                                    navigationIconContentColor = Neutral900
+                                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                                 )
                             )
                         }
@@ -1445,7 +1451,7 @@ fun CourseListRoute() {
                                         (chipsPresence / 0.72f).coerceIn(0f, 1f)
                                     val filterPresence =
                                         ((chipsPresence - 0.28f) / 0.72f).coerceIn(0f, 1f)
-                                    com.tyust.course.ui.system.glass.LiquidActionGroup(
+                                    com.tyust.course.ui.system.TopBarActionRail(
                                         spacing = 4.dp,
                                         modifier = Modifier.padding(end = 8.dp)
                                     ) {
@@ -1461,11 +1467,16 @@ fun CourseListRoute() {
                                         )
                                         action(
                                             index = 1,
-                                            icon = Icons.Default.Refresh,
-                                            contentDescription = "刷新",
+                                            contentDescription = if (busy) "正在刷新" else "刷新",
                                             onClick = { if (showSelectedCourses) selectedRevision++ else loadCourses() },
                                             enabled = !busy
-                                        )
+                                        ) {
+                                            com.tyust.course.ui.system.AnimatedLineIcon(
+                                                com.tyust.course.ui.system.AnimatedIconSpec.Refresh,
+                                                Modifier.size(com.tyust.course.ui.system.TopBarLayoutMetrics.IconSize),
+                                                state = if (busy) com.tyust.course.ui.system.IconVisualState.Running
+                                                    else com.tyust.course.ui.system.IconVisualState.Idle)
+                                        }
                                         // 筛选入口从"列表上方那条居中把手"搬到这里：
                                         // 把手是抽屉的语言，也白吃一条 36dp 横带。
                                         action(
@@ -1474,7 +1485,8 @@ fun CourseListRoute() {
                                             onClick = { showFilterPanel = !showFilterPanel },
                                             presence = filterPresence
                                         ) {
-                                            FilterActionContent(activeCount = activeFilterCount)
+                                            FilterActionContent(activeCount = activeFilterCount, expanded = showFilterPanel,
+                                                onAnchor = { filterAnchor = it })
                                         }
                                     }
                                 },
@@ -1606,6 +1618,7 @@ fun CourseListRoute() {
                         },
                         // 筛选相关
                         showFilterPanel = showFilterPanel,
+                        filterAnchor = filterAnchor,
                         onToggleFilterPanel = { showFilterPanel = !showFilterPanel },
                         activeFilter = activeFilter,
                         draftFilter = draftFilter,
@@ -1712,35 +1725,18 @@ fun CourseListRoute() {
  * 芯片组间距只有 4dp，越界就会压到隔壁那枚。
  */
 @Composable
-private fun FilterActionContent(activeCount: Int) {
+internal fun FilterActionContent(activeCount: Int, expanded: Boolean, onAnchor: (androidx.compose.ui.geometry.Offset) -> Unit) {
     val active = activeCount > 0
-    Box(contentAlignment = Alignment.Center) {
-        Icon(
-            imageVector = Icons.Default.FilterList,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
+    Box(modifier = Modifier.size(com.tyust.course.ui.system.TopBarLayoutMetrics.TouchTarget)
+        .onGloballyPositioned { onAnchor(it.boundsInWindow().center) }, contentAlignment = Alignment.Center) {
+        com.tyust.course.ui.system.AnimatedLineIcon(
+            spec = com.tyust.course.ui.system.AnimatedIconSpec.Filter,
+            state = if (expanded) com.tyust.course.ui.system.IconVisualState.Expanded else com.tyust.course.ui.system.IconVisualState.Idle,
+            modifier = Modifier.size(com.tyust.course.ui.system.TopBarLayoutMetrics.IconSize),
             tint = if (active) NeuPrimary else androidx.compose.material3.LocalContentColor.current
         )
-        if (active) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 6.dp, y = (-6).dp)
-                    .defaultMinSize(minWidth = 13.dp, minHeight = 13.dp)
-                    .clip(com.kyant.shapes.Capsule())
-                    .background(NeuPrimary),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (activeCount > 9) "9+" else activeCount.toString(),
-                    modifier = Modifier.padding(horizontal = 3.dp),
-                    color = White,
-                    fontSize = 9.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    maxLines = 1
-                )
-            }
-        }
+        com.tyust.course.ui.system.FilterCountBadge(activeCount,
+            Modifier.align(Alignment.TopEnd).padding(top = 1.dp, end = 1.dp))
     }
 }
 

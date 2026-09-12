@@ -429,6 +429,10 @@ public class UserManager {
         if (accountKey == null || accountKey.isEmpty()) return "";
         String storageKey = toStorageKey(accountKey);
 
+        if (appContext != null) {
+            com.tyust.course.schedule.ScheduleReminderScheduler.get(appContext).clearAccount(storageKey);
+        }
+
         List<AccountRecord> records = loadAccountRecords();
         boolean removed = records.removeIf(record -> accountKey.equals(record.key));
         if (removed) {
@@ -849,6 +853,7 @@ public class UserManager {
         currentAccountKey = "demo::preview";
         selectedCourses = new ArrayList<>();
         isDemoMode = true;
+        com.tyust.course.usage.UsageStatsManager.refreshEligibility();
         isLoggedIn = true;
         if (!sessionState.getToken().getAccountStorageKey().equals(getCurrentAccountStorageKey())) {
             sessionState.replace(getCurrentAccountStorageKey());
@@ -857,6 +862,7 @@ public class UserManager {
 
     public void setDemoMode(boolean demoMode) {
         this.isDemoMode = demoMode;
+        com.tyust.course.usage.UsageStatsManager.refreshEligibility();
     }
 
     public boolean isDemoMode() {

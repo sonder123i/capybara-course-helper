@@ -17,7 +17,7 @@ import java.util.*
 object ICalExporter {
     
     // 节次对应的时间（根据学校作息时间调整）
-    private val periodTimes = mapOf(
+    private val defaultPeriodTimes = mapOf(
         1 to Pair("08:00", "08:45"),
         2 to Pair("08:55", "09:40"),
         3 to Pair("10:00", "10:45"),
@@ -42,7 +42,8 @@ object ICalExporter {
     fun generateICalContent(
         courses: List<ScheduleCourseUi>,
         semesterStartDate: Calendar,
-        totalWeeks: Int = 20
+        totalWeeks: Int = 20,
+        periodTimes: Map<Int, Pair<String, String>> = defaultPeriodTimes
     ): String {
         val sb = StringBuilder()
         
@@ -65,21 +66,22 @@ object ICalExporter {
         sb.appendLine("END:STANDARD")
         sb.appendLine("END:VTIMEZONE")
         
-        val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
-        val timeFormat = SimpleDateFormat("HHmmss", Locale.getDefault())
-        val now = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.getDefault()).apply {
+        val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.ROOT).apply { timeZone = semesterStartDate.timeZone }
+        val now = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.ROOT).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date())
         
-        var eventIndex = 0
         courses.forEach { course ->
             // 解析周次
             val weekList = parseWeeks(course.weeks, totalWeeks)
             if (weekList.isEmpty()) return@forEach
             
             // 获取上课时间
-            val startTime = periodTimes[course.startPeriod]?.first ?: "08:00"
-            val endTime = periodTimes[course.endPeriod]?.second ?: "09:40"
+            if (course.day !in 1..7 || course.startPeriod < 1 || course.endPeriod < course.startPeriod) return@forEach
+            val startTime = periodTimes[course.startPeriod]?.first ?: return@forEach
+            val endTime = periodTimes[course.endPeriod]?.second ?: return@forEach
+            val validTime = Regex("(?:[01]\\d|2[0-3]):[0-5]\\d")
+            if (!validTime.matches(startTime) || !validTime.matches(endTime)) return@forEach
             val startTimeStr = startTime.replace(":", "") + "00"
             val endTimeStr = endTime.replace(":", "") + "00"
             
@@ -88,32 +90,27 @@ object ICalExporter {
                 val eventDate = semesterStartDate.clone() as Calendar
                 // 移动到对应周
                 eventDate.add(Calendar.DAY_OF_YEAR, (week - 1) * 7)
-                // 移动到对应的周几 (course.day: 1=周一, 7=周日)
-                // Calendar 默认周日是第一天，需要调整
-                val currentDayOfWeek = eventDate.get(Calendar.DAY_OF_WEEK)
-                // 周一在 Calendar 中是 2,  course.day 1 对应周一
-                val targetDayOfWeek = if (course.day == 7) Calendar.SUNDAY else course.day + 1
-                val dayOffset = targetDayOfWeek - currentDayOfWeek
-                eventDate.add(Calendar.DAY_OF_YEAR, dayOffset)
+                // The time base is Monday; Sunday is six days later, never the preceding day.
+                eventDate.add(Calendar.DAY_OF_YEAR, course.day - 1)
                 
                 val eventDateStr = dateFormat.format(eventDate.time)
                 
                 // 生成 VEVENT
                 sb.appendLine("BEGIN:VEVENT")
-                sb.appendLine("UID:course-${eventIndex++}-${course.name.hashCode()}-w${week}@tyust.edu.cn")
+                sb.appendLine("UID:course-${com.tyust.course.schedule.ScheduleIdentity.digest(course.id)}-$eventDateStr@tyust.edu.cn")
                 sb.appendLine("DTSTAMP:$now")
                 sb.appendLine("DTSTART;TZID=Asia/Shanghai:${eventDateStr}T$startTimeStr")
                 sb.appendLine("DTEND;TZID=Asia/Shanghai:${eventDateStr}T$endTimeStr")
-                sb.appendLine("SUMMARY:${course.name}")
+                sb.appendLine("SUMMARY:${escapeText(course.name)}")
                 if (course.location.isNotEmpty()) {
-                    sb.appendLine("LOCATION:${course.location}")
+                    sb.appendLine("LOCATION:${escapeText(course.location)}")
                 }
                 val description = buildString {
                     if (course.teacher.isNotEmpty()) append("授课教师: ${course.teacher}")
                     append(if (isNotEmpty()) "\n" else "")
                     append("第${week}周")
                 }
-                sb.appendLine("DESCRIPTION:$description")
+                sb.appendLine("DESCRIPTION:${escapeText(description)}")
                 sb.appendLine("END:VEVENT")
             }
         }
@@ -121,38 +118,16 @@ object ICalExporter {
         sb.appendLine("END:VCALENDAR")
         return sb.toString()
     }
+
+    private fun escapeText(value: String): String = value.replace("\\", "\\\\")
+        .replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
     
     /**
      * 解析周次字符串
      * 支持格式: "1-16周", "1,3,5,7周", "1-8,10-16周", "1-16周(单)" 等
      */
     private fun parseWeeks(weeksStr: String, totalWeeks: Int): List<Int> {
-        val weeks = mutableListOf<Int>()
-        val cleanStr = weeksStr.replace("周", "").replace("(", "").replace(")", "")
-        
-        val isSingleWeek = weeksStr.contains("单")
-        val isDoubleWeek = weeksStr.contains("双")
-        
-        val rangeStr = cleanStr.replace("单", "").replace("双", "").trim()
-        
-        // 解析范围
-        rangeStr.split(",").forEach { part ->
-            if (part.contains("-")) {
-                val (start, end) = part.split("-").map { it.trim().toIntOrNull() ?: 0 }
-                for (w in start..end.coerceAtMost(totalWeeks)) {
-                    weeks.add(w)
-                }
-            } else {
-                part.trim().toIntOrNull()?.let { weeks.add(it) }
-            }
-        }
-        
-        // 过滤单/双周
-        return when {
-            isSingleWeek -> weeks.filter { it % 2 == 1 }
-            isDoubleWeek -> weeks.filter { it % 2 == 0 }
-            else -> weeks
-        }.sorted()
+        return com.tyust.course.schedule.ScheduleWeeks.parse(weeksStr).weeks.filter { it <= totalWeeks }.sorted()
     }
     
     /**
@@ -173,10 +148,11 @@ object ICalExporter {
         context: Context,
         courses: List<ScheduleCourseUi>,
         semesterStartDate: Calendar,
-        totalWeeks: Int = 20
+        totalWeeks: Int = 20,
+        periodTimes: Map<Int, Pair<String, String>> = defaultPeriodTimes
     ) {
         try {
-            val icsContent = generateICalContent(courses, semesterStartDate, totalWeeks)
+            val icsContent = generateICalContent(courses, semesterStartDate, totalWeeks, periodTimes)
             
             // 保存到临时文件
             val fileName = "课表_${SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())}.ics"

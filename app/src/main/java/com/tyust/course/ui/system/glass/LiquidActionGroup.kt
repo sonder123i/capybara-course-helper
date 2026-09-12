@@ -101,6 +101,7 @@ fun LiquidActionGroup(
     modifier: Modifier = Modifier,
     spacing: Dp = 4.dp,
     backdrop: Backdrop? = LocalControlBackdrop.current,
+    mergeEnabled: Boolean = true,
     content: @Composable LiquidActionGroupScope.() -> Unit
 ) {
     val isLight = !rememberGlassDarkTheme()
@@ -127,7 +128,7 @@ fun LiquidActionGroup(
     } else {
         GlassRecipe.ChipRimAlphaDark
     }
-    val allowMerge = !accessibility.reduceMotion
+    val allowMerge = mergeEnabled && !accessibility.reduceMotion
 
     val scope = remember(bounds, enabledFlags, presenceFlags, animationScope, backdrop) {
         object : LiquidActionGroupScope {
@@ -142,15 +143,23 @@ fun LiquidActionGroup(
                 iconSize: Dp,
                 presence: Float
             ) {
+                var iconEvent by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+                val lineSpec = remember(icon) { com.tyust.course.ui.system.animatedIconSpec(icon) }
+                val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
                 action(
                     index = index,
                     contentDescription = contentDescription,
-                    onClick = onClick,
+                    onClick = { iconEvent++; onClick() },
                     enabled = enabled,
                     buttonSize = buttonSize,
                     presence = presence
                 ) {
-                    Icon(
+                    if (lineSpec != null) com.tyust.course.ui.system.AnimatedLineIcon(
+                        spec = lineSpec,
+                        event = iconEvent,
+                        modifier = Modifier.size(if (toolbar) com.tyust.course.ui.system.TopBarLayoutMetrics.IconSize else iconSize),
+                        tint = LocalContentColor.current.copy(alpha = if (enabled) 1f else 0.38f)
+                    ) else Icon(
                         imageVector = icon,
                         contentDescription = null,
                         modifier = Modifier.size(iconSize),
@@ -475,6 +484,12 @@ private fun LiquidActionItem(
     onBoundsChange: (Rect) -> Unit,
     content: @Composable () -> Unit
 ) {
+    val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
+    if (toolbar) {
+        com.tyust.course.ui.system.TopBarActionItem(contentDescription, onClick, enabled, presence,
+            backdrop, optics, onBoundsChange, content)
+        return
+    }
     val animateContent = enabled && !rememberGlassAccessibilityMode().reduceMotion
     val appearance = presence.coerceIn(0f, 1f)
     // 收拢途中就不再接受点击：presence 很小时可点区域已经不足一指宽，
@@ -488,8 +503,8 @@ private fun LiquidActionItem(
     val glideVelocity = remember { mutableFloatStateOf(0f) }
     var glideSampleX by remember { mutableFloatStateOf(Float.NaN) }
     var glideSampleT by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(animateContent) {
-        if (!animateContent) {
+    LaunchedEffect(animateContent, toolbar) {
+        if (!animateContent || toolbar) {
             glideVelocity.floatValue = 0f
             return@LaunchedEffect
         }
@@ -561,7 +576,7 @@ private fun LiquidActionItem(
             .onPlaced { coordinates ->
                 val rootX = coordinates.positionInRoot().x
                 val now = System.nanoTime() / 1_000_000L
-                if (animateContent && !glideSampleX.isNaN()) {
+                if (animateContent && !toolbar && !glideSampleX.isNaN()) {
                     val dt = (now - glideSampleT).coerceIn(1L, 64L)
                     val v = (rootX - glideSampleX) / dt
                     glideVelocity.floatValue = glideVelocity.floatValue * 0.55f + v * 0.45f
@@ -610,9 +625,9 @@ private fun LiquidActionItem(
                 // 也能自动跟随玻璃，调用方不需要各自再挂一遍 graphicsLayer。
                 applyChipContentDeformation(
                     optics = optics,
-                    travelPx = GlassRecipe.ChipDragTravelDp.dp.toPx(),
-                    stretch = GlassRecipe.ChipDragStretch,
-                    pressDepth = GlassRecipe.ChipIconPressDepth,
+                    travelPx = if (toolbar) 2.dp.toPx() else GlassRecipe.ChipDragTravelDp.dp.toPx(),
+                    stretch = if (toolbar) 0.02f else GlassRecipe.ChipDragStretch,
+                    pressDepth = if (toolbar) 0.02f else GlassRecipe.ChipIconPressDepth,
                     damping = GlassRecipe.ChipContentDeformDamping
                 )
             },

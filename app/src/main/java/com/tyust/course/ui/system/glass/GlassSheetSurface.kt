@@ -42,7 +42,8 @@ fun Modifier.glassSheet(
         role = GlassMaterialRole.Modal,
         accessibility = accessibility
     )
-    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = material.surfaceAlpha)
+    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = if (com.tyust.course.ui.system.rememberGlassDarkTheme())
+        maxOf(material.surfaceAlpha, com.tyust.course.ui.system.LocalWallpaperAppearanceColors.current.surface.alpha) else material.surfaceAlpha)
     val borderAlpha = material.borderAlpha
 
     return this.drawBackdrop(

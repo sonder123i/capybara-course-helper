@@ -50,25 +50,11 @@ fun ProvideWallpaperAppearance(
     colors: WallpaperAppearanceColors,
     content: @Composable () -> Unit
 ) {
-    val scheme = MaterialTheme.colorScheme
-    MaterialTheme(
-        colorScheme = scheme.copy(
-            surface = colors.solidSurface,
-            onSurface = colors.onSurface,
-            surfaceVariant = colors.surface,
-            onSurfaceVariant = colors.onSurfaceVariant,
-            outline = colors.border,
-            outlineVariant = colors.border.copy(alpha = 0.55f)
-        ),
-        typography = MaterialTheme.typography,
-        shapes = MaterialTheme.shapes
-    ) {
-        androidx.compose.runtime.CompositionLocalProvider(
-            LocalWallpaperAppearanceColors provides colors,
-            androidx.compose.material3.LocalContentColor provides colors.onSurface,
-            content = content
-        )
-    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalWallpaperAppearanceColors provides colors,
+        androidx.compose.material3.LocalContentColor provides colors.onSurface,
+        content = content
+    )
 }
 
 @Stable
@@ -104,13 +90,14 @@ fun Modifier.wallpaperRegion(state: WallpaperRegionState): Modifier =
 
 @Composable
 fun rememberWallpaperRegionAppearance(
-    state: WallpaperRegionState? = null
+    state: WallpaperRegionState? = null,
+    darkTheme: Boolean = com.tyust.course.ui.theme.LocalAppAppearance.current.isDark
 ): WallpaperAppearanceColors {
     val view = LocalView.current
     val metrics = view.resources.displayMetrics
     val viewportWidth = view.width.takeIf { it > 0 } ?: metrics.widthPixels
     val viewportHeight = view.height.takeIf { it > 0 } ?: metrics.heightPixels
-    val toneMap = AppearanceSettingsManager.toneMap
+    val toneMap = com.tyust.course.ui.theme.rememberAppWallpaperToneMap(darkTheme)
     val style = AppearanceSettingsManager.style
     val region = state?.region ?: WallpaperRegion(0, 0, viewportWidth, viewportHeight)
     val resolved = remember(
@@ -130,6 +117,17 @@ fun rememberWallpaperRegionAppearance(
         )
     }
 
+    if (!AppearanceSettingsManager.glassEffectEnabled) return if (darkTheme) WallpaperAppearanceColors(
+        Color(0xFF171B22), Color(0xFF171B22), Color(0xFFF6F7FB), Color(0xFFB3BDCC), Color(0xFF424854), false
+    ) else WallpaperAppearanceColors.Light.copy(surface = Color(0xFFE9E9EE))
+    if (darkTheme) return WallpaperAppearanceColors(
+        surface = Color(0xFF171B22).copy(alpha = if (resolved.usesDarkForeground) 0.88f else 0.78f),
+        solidSurface = Color(0xFF171B22),
+        onSurface = Color(0xFFF6F7FB),
+        onSurfaceVariant = Color(0xFFB3BDCC),
+        border = Color(0xFFB3BDCC).copy(alpha = 0.20f),
+        usesDarkForeground = false
+    )
     val surfaceTarget = Color(resolved.surfaceArgb).copy(alpha = resolved.surfaceAlpha)
     val foregroundTarget = Color(resolved.foregroundArgb)
     val variantTarget = foregroundTarget.copy(alpha = 0.68f)

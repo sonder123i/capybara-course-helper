@@ -79,8 +79,12 @@ fun SettingsScreen(
     onSchoolAdaptation: () -> Unit = {},
     onWallpaperSelect: () -> Unit = {},
     wallpaperName: String = "",
+    themeName: String = "跟随系统",
+    onThemeSelect: () -> Unit = {},
     glassEffectEnabled: Boolean = true,
     onGlassEffectChange: (Boolean) -> Unit = {},
+    usageEnabled: Boolean = true,
+    onUsageEnabledChange: (Boolean) -> Unit = {},
     isSuper: Boolean = false,
     quotaInfo: String = "",
     canRefreshCookie: Boolean = false,
@@ -140,7 +144,7 @@ fun SettingsScreen(
                     icon = Icons.Outlined.School,
                     iconTint = Color(0xFF18796B),
                     title = "教务支持与限制",
-                    subtitle = "新正方 · 旧正方 · 新强智 · 旧强智",
+                    subtitle = academicSystemName.ifBlank { com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS },
                     onClick = onAcademicSupport
                 )
                 SettingsRow(
@@ -172,6 +176,13 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(header = "外观") {
+                SettingsRow(
+                    icon = Icons.Outlined.Palette,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                    title = "主题",
+                    subtitle = themeName,
+                    onClick = onThemeSelect
+                )
                 SettingsRow(
                     icon = Icons.Outlined.Palette,
                     iconTint = Color(0xFFBF5AF2),
@@ -238,6 +249,11 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(header = "数据与安全") {
+                InsetGroupedRow(
+                    title = "匿名使用统计",
+                    subtitle = "仅发送随机安装标识和版本，每天一次；关闭后停止上报",
+                    trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
+                )
                 SettingsRow(
                     icon = Icons.Outlined.Delete,
                     iconTint = Color(0xFFFF9F0A),
@@ -260,7 +276,7 @@ fun SettingsScreen(
             }
 
             Text(
-                text = "正方教务助手 · $currentVersion",
+                text = "教务助手 · $currentVersion",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.CenterHorizontally)

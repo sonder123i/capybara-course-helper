@@ -59,6 +59,7 @@ object AcademicStudyBridge {
         courses.forEach { item -> put(JSONObject().apply {
             put("kcmc", item.name); put("xm", item.teacher); put("cdmc", item.location)
             put("xqj", item.day); put("jcs", "${item.startPeriod}-${item.endPeriod}"); put("zcd", item.weeks)
+            put("schedule_source_id", item.sourceId)
         }) }
     }).toString()
 }

@@ -8,6 +8,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WallpaperToneMapTest {
+    @Test fun systemBarIconsUseTheCompositeSurfaceInsteadOfTheSelectedThemeMode() {
+        val region = WallpaperRegion(0, 0, 100, 24)
+        val white = WallpaperToneMap.uniform(0xFFFFFFFF.toInt())
+        assertTrue(white.usesDarkBarIcons(100, 200, region, 0f, 0f))
+        assertFalse(white.usesDarkBarIcons(100, 200, region, 0f, 0f, 0xFF171B22.toInt(), 0.88f))
+        val dark = WallpaperToneMap.uniform(0xFF0F1218.toInt())
+        assertFalse(dark.usesDarkBarIcons(100, 200, region, 0f, 0f))
+        assertTrue(dark.usesDarkBarIcons(100, 200, region, 0f, 0f, 0xFFFFFFFF.toInt(), 0.90f))
+    }
     @Test
     fun pinkWallpaperUsesDarkForegroundWithoutDarkSurface() {
         val appearance = WallpaperToneMap.uniform(0xFFBD91B5.toInt()).resolve(

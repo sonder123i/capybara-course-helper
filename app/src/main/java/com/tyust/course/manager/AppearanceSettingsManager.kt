@@ -194,6 +194,18 @@ object AppearanceSettingsManager {
     private var prefs: SharedPreferences? = null
     private var appContext: Context? = null
 
+    var themeMode by mutableStateOf(AppThemeMode.System)
+        private set
+
+    internal fun receiveThemeMode(value: AppThemeMode) { themeMode = value }
+
+    fun updateThemeMode(value: AppThemeMode) {
+        if (themeMode == value) return
+        themeMode = value
+        prefs?.let { AppThemePreferences(it).write(value) }
+        AppThemeCoordinator.preferenceChanged(value)
+    }
+
     /**
      * 图片解码用的作用域。
      *
@@ -268,6 +280,7 @@ object AppearanceSettingsManager {
         if (prefs == null) {
             prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         }
+        themeMode = prefs?.let { AppThemePreferences(it).read() } ?: AppThemeMode.System
         val stored = prefs?.getString(KEY_WALLPAPER, null)
         wallpaper = stored
             ?.let { name -> runCatching { WallpaperPreset.valueOf(name) }.getOrNull() }

@@ -27,6 +27,7 @@ private val LocalGlassWindowOwner = staticCompositionLocalOf<android.view.View?>
 @Composable
 fun GlassWindowHost(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
+    val appWallpaper = com.tyust.course.ui.theme.rememberAppWallpaperStyle()
     if (LocalGlassWindowOwner.current === view) {
         Box(modifier.fillMaxSize()) { content() }
         return
@@ -53,7 +54,7 @@ fun GlassWindowHost(modifier: Modifier = Modifier, content: @Composable BoxScope
     ) {
         GlassOverlayHost(modifier) {
             Canvas(Modifier.fillMaxSize().then(if (wallpaper != null) Modifier.layerBackdrop(wallpaper) else Modifier)) {
-                drawWallpaperPattern(AppearanceSettingsManager.style, microTexture = wallpaper != null)
+                drawWallpaperPattern(appWallpaper, microTexture = wallpaper != null)
             }
             Box(Modifier.fillMaxSize().glassLensAnchor(controlAnchor).glassLensAnchor(modalAnchor)
                 .then(if (page != null) Modifier.layerBackdrop(page) else Modifier)) { content() }

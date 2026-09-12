@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="240dp" android:height="240dp" android:viewportWidth="1024" android:viewportHeight="1024">
+    <group android:name="safe_area" android:pivotX="512" android:pivotY="512" android:scaleX="0.70" android:scaleY="0.70">
+    <path android:name="bolt" android:fillType="evenOdd" android:pathData="M704,172 L454,449 L413,496 L372,540 L363,552 L364,560 L370,565 L493,565 L495,567 L480,602 L470,621 L462,641 L391,793 L388,802 L378,821 L364,855 L479,729 L493,712 L660,528 L675,510 L691,494 L695,488 L695,480 L691,475 L686,473 L565,473 L564,469 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="110" android:startY="760" android:endX="910" android:endY="220" android:startColor="#149CF3" android:endColor="#33D29C" />
+        </aapt:attr>
+    </path>
+    </group>
+</vector>

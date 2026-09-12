@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
@@ -173,7 +174,11 @@ fun LiquidButton(
     val activeTint = if (tint.isSpecified) tint else MaterialTheme.colorScheme.primary
     val activeContentColor = when {
         contentColor.isSpecified -> contentColor
-        style == LiquidButtonStyle.Tinted || style == LiquidButtonStyle.SolidTinted -> Color.White
+        style == LiquidButtonStyle.Tinted || style == LiquidButtonStyle.SolidTinted -> {
+            if (activeTint == MaterialTheme.colorScheme.primary) MaterialTheme.colorScheme.onPrimary
+            else if (activeTint == MaterialTheme.colorScheme.error) MaterialTheme.colorScheme.onError
+            else if (activeTint.luminance() > 0.4f) Color(0xFF171B22) else Color.White
+        }
         style == LiquidButtonStyle.SolidSurface -> wallpaperColors.onSurface
         else -> LocalContentColor.current
     }
@@ -763,6 +768,8 @@ fun AnimatedIconButton(
     chip: Boolean = true,
     backdrop: Backdrop? = LocalControlBackdrop.current
 ) {
+    var iconEvent by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val toolbar = LocalTopBarMotion.current
     val accessibility = rememberGlassAccessibilityMode()
     // 芯片的光学（折射、色散、边缘光、拖拽拉伸）全部由 optics 驱动；
     // 图标自身的压扁另算：drawBackdrop 的 layerBlock 只变换被采样的玻璃层，
@@ -794,12 +801,13 @@ fun AnimatedIconButton(
                 indication = null,
                 enabled = enabled,
                 role = Role.Button,
-                onClick = onClick
+                onClick = { iconEvent++; onClick() }
             ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
+        ActionLineIcon(
+            icon = icon,
+            event = iconEvent,
             contentDescription = contentDescription,
             modifier = Modifier
                 .size(iconSize)
@@ -810,9 +818,9 @@ fun AnimatedIconButton(
                         // 内容必须走同一段行程与同向的各向异性，否则拖动时图标会脱出。
                         applyChipContentDeformation(
                             optics = optics,
-                            travelPx = GlassRecipe.ChipDragTravelDp.dp.toPx(),
-                            stretch = GlassRecipe.ChipDragStretch,
-                            pressDepth = 0.08f,
+                            travelPx = if (toolbar) 2.dp.toPx() else GlassRecipe.ChipDragTravelDp.dp.toPx(),
+                            stretch = if (toolbar) 0.02f else GlassRecipe.ChipDragStretch,
+                            pressDepth = if (toolbar) 0.02f else 0.08f,
                             damping = GlassRecipe.ChipContentDeformDamping
                         )
                     } else {

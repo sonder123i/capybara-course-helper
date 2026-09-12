@@ -37,6 +37,9 @@ import okhttp3.Response
 import java.io.IOException
 
 class LoginActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.tyust.course.manager.AppThemeCoordinator.wrapContext(newBase))
+    }
 
     companion object {
         private const val TAG = "LoginActivity"
@@ -86,6 +89,7 @@ class LoginActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.tyust.course.ui.theme.StartupLogoAnimation.install(this)
         super.onCreate(savedInstanceState)
         
         // Initialize UserManager with context for SharedPreferences
@@ -218,6 +222,7 @@ class LoginActivity : ComponentActivity() {
                         !isLoading &&
                         !isAutoValidating
                 )
+                com.tyust.course.ui.screen.UsageNotice()
             }
         }
     }

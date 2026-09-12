@@ -71,6 +71,7 @@ fun Modifier.liquidChip(
     elevation: Dp = 0.dp,
     interactive: Boolean = true
 ): Modifier {
+    val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
     val isLight = !rememberGlassDarkTheme()
     val accessibility = rememberGlassAccessibilityMode()
     val hasRealLens = isRuntimeLensEnabled()
@@ -141,9 +142,9 @@ fun Modifier.liquidChip(
                     with(chipDensity) {
                         chipGlassTransform(
                             optics = optics,
-                            travelPx = GlassRecipe.ChipDragTravelDp.dp.toPx(),
-                            swellPx = GlassRecipe.ChipPressSwellDp.dp.toPx(),
-                            stretch = GlassRecipe.ChipDragStretch,
+                            travelPx = if (toolbar) 2.dp.toPx() else GlassRecipe.ChipDragTravelDp.dp.toPx(),
+                            swellPx = if (toolbar) 0.3.dp.toPx() else GlassRecipe.ChipPressSwellDp.dp.toPx(),
+                            stretch = if (toolbar) 0.01f else GlassRecipe.ChipDragStretch,
                             heightPx = h
                         )
                     }
@@ -165,7 +166,7 @@ fun Modifier.liquidChip(
                 val params = resolvePhysicalLens(
                     scope = this,
                     material = material,
-                    minCornerRadiusPx = size.minDimension / 2f,
+                    minCornerRadiusPx = lensCornerRadiusPx(shape, size.width, size.height, chipDensity),
                     minDimensionPx = size.minDimension,
                     interactionProgress = optics.opticalProgress,
                     motionIntensity = optics.motionIntensity(
@@ -204,9 +205,9 @@ fun Modifier.liquidChip(
                 {
                     applyChipGlassDeformation(
                         optics = optics,
-                        travelPx = GlassRecipe.ChipDragTravelDp.dp.toPx(),
-                        swellPx = GlassRecipe.ChipPressSwellDp.dp.toPx(),
-                        stretch = GlassRecipe.ChipDragStretch
+                        travelPx = if (toolbar) 2.dp.toPx() else GlassRecipe.ChipDragTravelDp.dp.toPx(),
+                        swellPx = if (toolbar) 0.3.dp.toPx() else GlassRecipe.ChipPressSwellDp.dp.toPx(),
+                        stretch = if (toolbar) 0.01f else GlassRecipe.ChipDragStretch
                     )
                 }
             } else {
@@ -217,7 +218,7 @@ fun Modifier.liquidChip(
                 val press = optics.opticalProgress
                 val alpha = baseSurfaceAlpha * disabledScale *
                     (1f - press * (1f - GlassRecipe.ChipPressedSurfaceScale))
-                drawRect(Color.White.copy(alpha = alpha))
+                drawRect(if (isLight) Color.White.copy(alpha = alpha) else Color(0xFF171B22).copy(alpha = 0.84f * disabledScale))
             }
         )
         .glassRim(
@@ -404,6 +405,7 @@ fun Modifier.adaptiveGlassChip(
     elevation: Dp = 0.dp,
     interactive: Boolean = true
 ): Modifier {
+    val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
     val usable = backdrop?.takeIf { isBackdropSupported() }
     if (usable != null) {
         return liquidChip(
@@ -426,7 +428,7 @@ fun Modifier.adaptiveGlassChip(
                 Modifier.graphicsLayer {
                     applyPressSquash(
                         progress = optics.pressProgress,
-                        depth = GlassRecipe.ChipFallbackPressDepth
+                        depth = if (toolbar) 0.02f else GlassRecipe.ChipFallbackPressDepth
                     )
                 }
             } else {

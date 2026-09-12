@@ -107,6 +107,7 @@ fun SettingsRoute(
     var pendingAccountDelete by remember { mutableStateOf<UserManager.AccountRecord?>(null) }
     var showSchoolAdaptation by remember { mutableStateOf(false) }
     var showWallpaperDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val currentWallpaperName = com.tyust.course.manager.AppearanceSettingsManager.currentWallpaperName
     
     // Quota States
@@ -334,6 +335,7 @@ fun SettingsRoute(
         )
     }
     
+    val usagePreferences by com.tyust.course.usage.UsageStatsManager.preferences.collectAsState()
     SettingsScreen(
         studentName = studentName,
         studentId = deviceId,
@@ -365,8 +367,12 @@ fun SettingsRoute(
         },
         onWallpaperSelect = { showWallpaperDialog = true },
         wallpaperName = currentWallpaperName,
+        themeName = AppearanceSettingsManager.themeMode.label,
+        onThemeSelect = { showThemeDialog = true },
         glassEffectEnabled = AppearanceSettingsManager.glassEffectEnabled,
         onGlassEffectChange = { AppearanceSettingsManager.updateGlassEffect(it) },
+        usageEnabled = usagePreferences.enabled,
+        onUsageEnabledChange = com.tyust.course.usage.UsageStatsManager::setEnabled,
         isSuper = isSuper,
         quotaInfo = quotaInfo,
         canRefreshCookie = canRefreshCookie,
@@ -377,6 +383,9 @@ fun SettingsRoute(
     if (showAcademicSupport) com.tyust.course.ui.screen.AcademicSupportDialog(
         UserManager.getInstance().currentSchool?.academicSystem, onDismiss = { showAcademicSupport = false })
     
+    if (showThemeDialog) {
+        com.tyust.course.ui.screen.AppThemeSettingsDialog { showThemeDialog = false }
+    }
     if (showWallpaperDialog) {
         com.tyust.course.ui.screen.WallpaperSettingsDialog(
             onDismiss = { showWallpaperDialog = false }

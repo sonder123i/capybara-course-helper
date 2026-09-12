@@ -424,8 +424,9 @@ fun rememberGlassLensAnchor(
     //
     // 在 snapshotFlow **里**读 style，不在组合期读：组合期读会让每个带折射的
     // 子树都订阅壁纸。
-    LaunchedEffect(anchor) {
-        snapshotFlow { AppearanceSettingsManager.style }.collectLatest {
+    val resolvedDark = com.tyust.course.ui.theme.LocalAppAppearance.current.isDark
+    LaunchedEffect(anchor, resolvedDark) {
+        snapshotFlow { AppearanceSettingsManager.style to AppearanceSettingsManager.themeMode }.collectLatest {
             anchor.invalidate()
             delay(240)
             anchor.invalidate()

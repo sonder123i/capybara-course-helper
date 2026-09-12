@@ -88,11 +88,18 @@ private const val PeriodCountMax = 16
 fun ScheduleSettingsScreen(
     manager: ScheduleSettingsManager,
     onClose: () -> Unit,
-    onShowDatePicker: (() -> Unit)? = null
+    onShowDatePicker: (() -> Unit)? = null,
+    semesterStartOverride: Long? = null,
+    onSemesterStartChange: ((Long) -> Unit)? = null,
+    onPeriodTimesChange: ((List<PeriodTime>) -> Unit)? = null,
+    periodTimesOverride: List<PeriodTime>? = null,
+    customCourses: List<ScheduleSettingsManager.CustomCourse> = emptyList(),
+    onAddCustomCourse: (() -> Unit)? = null,
+    onEditCustomCourse: (String) -> Unit = {}
 ) {
     var periodCount by remember { mutableStateOf(manager.periodCount) }
-    var storedPeriodTimes by remember { mutableStateOf(manager.getPeriodTimes()) }
-    var semesterStartDate by remember { mutableStateOf(manager.semesterStartDate) }
+    var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
+    var semesterStartDate by remember { mutableStateOf(semesterStartOverride ?: manager.semesterStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showPeriodCountPicker by remember { mutableStateOf(false) }
     var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
@@ -101,9 +108,10 @@ fun ScheduleSettingsScreen(
     val dateText = if (semesterStartDate > 0) dateFormat.format(Date(semesterStartDate)) else "未设置"
 
     // 外部（旧 Fragment 的 MaterialDatePicker）改了日期要能同步回来
-    LaunchedEffect(manager.semesterStartDate) {
-        semesterStartDate = manager.semesterStartDate
+    LaunchedEffect(manager.semesterStartDate, semesterStartOverride) {
+        semesterStartDate = semesterStartOverride ?: manager.semesterStartDate
     }
+    LaunchedEffect(periodTimesOverride) { periodTimesOverride?.let { storedPeriodTimes = it } }
 
     // getPeriodTimes() 返回存档或 12 条默认值，与 periodCount 无关——所以选了
     // 16 节之后列表仍然只有 12 行，而课表已经画 16 行。这里按 periodCount 裁剪/补齐。
@@ -185,6 +193,17 @@ fun ScheduleSettingsScreen(
                         ),
                     verticalArrangement = Arrangement.spacedBy(SectionSpacing)
                 ) {
+                    if (onAddCustomCourse != null) {
+                        InsetGroupedSection(header = "自定义课程") {
+                            InsetGroupedRow(title = "添加课程", subtitle = "课程只保存在当前账号", onClick = onAddCustomCourse)
+                            customCourses.forEachIndexed { index, course ->
+                                InsetGroupedRow(title = course.name,
+                                    subtitle = "周${course.day} · ${course.startPeriod}-${course.endPeriod} 节 · ${course.weeks}",
+                                    showDivider = index != customCourses.lastIndex,
+                                    onClick = { onEditCustomCourse(course.id) })
+                            }
+                        }
+                    }
                     StaggerIn(index = 0, settled = entranceSettled) {
                         InsetGroupedSection(header = "基础设置") {
                             InsetGroupedRow(
@@ -274,7 +293,7 @@ fun ScheduleSettingsScreen(
                         System.currentTimeMillis()
                     },
                     onConfirm = { millis ->
-                        manager.semesterStartDate = millis
+                        if (onSemesterStartChange != null) onSemesterStartChange(millis) else manager.semesterStartDate = millis
                         semesterStartDate = millis
                         showDatePicker = false
                     },
@@ -313,7 +332,7 @@ fun ScheduleSettingsScreen(
                                 it
                             }
                         }
-                        manager.savePeriodTimes(updated)
+                        if (onPeriodTimesChange != null) onPeriodTimesChange(updated) else manager.savePeriodTimes(updated)
                         storedPeriodTimes = updated
                         editingPeriod = null
                     },

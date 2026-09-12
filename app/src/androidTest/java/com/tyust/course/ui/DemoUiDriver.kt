@@ -76,21 +76,35 @@ internal class DemoUiDriver : AutoCloseable {
         }
     }
 
-    private fun nodes(text: String): List<AccessibilityNodeInfo> {
+    private fun nodes(text: String, firstOnly: Boolean = false): List<AccessibilityNodeInfo> {
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
-        fun find(node: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
-            if (node == null) return emptyList()
-            return buildList {
-                val labels = listOfNotNull(node.text?.toString(), node.contentDescription?.toString(), node.stateDescription?.toString(), node.viewIdResourceName)
-                if (node.isVisibleToUser && labels.any { value -> value == text || value.split('\n', '，').any { it.trim() == text } }) add(node)
-                repeat(node.childCount) { addAll(find(node.getChild(it))) }
-            }
+        fun matches(node: AccessibilityNodeInfo): Boolean {
+            if (!node.isVisibleToUser) return false
+            return sequenceOf(node.text, node.contentDescription, node.stateDescription, node.viewIdResourceName)
+                .filterNotNull().any { value ->
+                    value.toString().let { it == text || it.split('\n', '，').any { label -> label.trim() == text } }
+                }
         }
         val display = foreground?.display?.displayId ?: return emptyList()
-        return instrumentation.uiAutomation.windowsOnAllDisplays.get(display).orEmpty().flatMap { find(it.root) }
+        val roots = instrumentation.uiAutomation.windowsOnAllDisplays.get(display).orEmpty().mapNotNull { it.root }
+        // Ask the accessibility provider first. Walking every course and log entry can
+        // outlast a short demo run before the stop button is even inspected.
+        val direct = roots.flatMap { it.findAccessibilityNodeInfosByText(text) }.filter(::matches)
+        if (direct.isNotEmpty()) return if (firstOnly) direct.take(1) else direct
+        val result = mutableListOf<AccessibilityNodeInfo>()
+        fun find(node: AccessibilityNodeInfo?) {
+            if (node == null || firstOnly && result.isNotEmpty()) return
+            if (matches(node)) result += node
+            for (index in 0 until node.childCount) {
+                if (firstOnly && result.isNotEmpty()) break
+                find(node.getChild(index))
+            }
+        }
+        roots.forEach(::find)
+        return result
     }
 
-    fun hasText(text: String): Boolean = nodes(text).isNotEmpty()
+    fun hasText(text: String): Boolean = nodes(text, firstOnly = true).isNotEmpty()
     fun waitSelected(text: String) = await("Selected state was not retained: $text") {
         nodes(text).any { node ->
             generateSequence(node) { it.parent }.take(4).any { it.isSelected || it.isChecked }
@@ -106,18 +120,37 @@ internal class DemoUiDriver : AutoCloseable {
         return instrumentation.uiAutomation.windowsOnAllDisplays.get(foreground?.display?.displayId ?: 0).orEmpty().joinToString("\n") { describe(it.root) }
     }
     fun waitText(text: String, present: Boolean = true) = await("Unexpected visibility for '$text': expected $present") { hasText(text) == present }
-    fun click(text: String, bottomMost: Boolean = false) {
-        waitText(text)
+    fun boundsOf(text: String, bottomMost: Boolean = false): Rect {
         fun bounds(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen)
-        val matches = nodes(text)
-        val node = (if (bottomMost) matches.maxByOrNull { bounds(it).bottom }
-            else matches.minByOrNull { bounds(it).top }) ?: error("Missing $text")
-        val rect = bounds(node)
+        var result: Rect? = null
+        await("Missing $text") {
+            val matches = nodes(text, firstOnly = !bottomMost).map(::bounds).filterNot { it.isEmpty }
+            result = if (bottomMost) matches.maxByOrNull { it.bottom } else matches.minByOrNull { it.top }
+            result != null
+        }
+        return requireNotNull(result)
+    }
+    fun click(text: String, bottomMost: Boolean = false) {
+        val rect = boundsOf(text, bottomMost)
         val display = requireNotNull(foreground).display!!.displayId
         device.executeShellCommand("input -d $display tap ${rect.centerX()} ${rect.centerY()}")
         SystemClock.sleep(400)
     }
-    fun navigate(text: String) { click(text, bottomMost = true); SystemClock.sleep(800); waitSelected(text) }
+    fun longClick(text: String) {
+        val rect = boundsOf(text)
+        val display = requireNotNull(foreground).display!!.displayId
+        device.executeShellCommand("input -d $display swipe ${rect.centerX()} ${rect.centerY()} ${rect.centerX()} ${rect.centerY()} 1000")
+        SystemClock.sleep(450)
+    }
+    fun navigate(text: String) {
+        if (!hasText(text)) {
+            listOf("课程", "课表", "抢课", "成绩", "设置").firstOrNull(::hasText)?.let {
+                click(it, bottomMost = true)
+                SystemClock.sleep(500)
+            }
+        }
+        click(text, bottomMost = true); SystemClock.sleep(800); waitSelected(text)
+    }
     fun back() { onMain { (foreground as ComponentActivity).onBackPressedDispatcher.onBackPressed() }; SystemClock.sleep(450) }
 
     fun screenshot(name: String) {
