@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.sp
 import com.tyust.course.ui.theme.MotionProfile
 import com.tyust.course.ui.system.glass.liquidChip
 import com.tyust.course.ui.system.glass.rememberInteractiveOptics
+import com.tyust.course.ui.system.glass.GlassLensAnchor
+import com.tyust.course.ui.system.glass.glassLensAnchor
 import kotlin.math.PI
 import kotlin.math.asin
 import kotlin.math.cos
@@ -104,6 +106,7 @@ fun rememberTaskControlsState(): TaskControlsState {
 fun LiquidTaskControls(
     actions: List<TaskQuickAction>, bottomInset: Dp, state: TaskControlsState,
     modifier: Modifier = Modifier,
+    lensAnchor: GlassLensAnchor? = null,
     primary: @Composable (expanded: Boolean, progress: Float, toggle: () -> Unit) -> Unit
 ) {
     val reduced = rememberGlassAccessibilityMode().reduceMotion
@@ -134,6 +137,17 @@ fun LiquidTaskControls(
             (maxHeight - bottomInset - 96.dp).coerceAtLeast(80.dp))
         val surfaceRadius = radius + 34.dp
         val shown = p > 0f || state.expanded
+        if (lensAnchor != null) {
+            // Capture only the pixels reachable by the control. A 64dp button must
+            // not read back and upload the entire page on every background update.
+            val margin = 24.dp
+            val beforeCenter = (if (shown) surfaceRadius else TaskButtonDiameter / 2) + margin
+            val extent = (if (shown) surfaceRadius + 36.dp else TaskButtonDiameter) + margin * 2
+            Box(Modifier.offset {
+                IntOffset((dockCenter.x - with(density) { beforeCenter.toPx() }).roundToInt(),
+                    (dockCenter.y - with(density) { beforeCenter.toPx() }).roundToInt())
+            }.requiredSize(extent).glassLensAnchor(lensAnchor).clearAndSetSemantics {})
+        }
         if (shown) {
             Box(Modifier.fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.12f * p))
@@ -272,7 +286,8 @@ private fun TaskFanSurface(
     val backdrop = LocalAppBackdrop.current?.takeIf { isBackdropSupported() }
     val colors = MaterialTheme.colorScheme
     val material = if (backdrop != null) Modifier.liquidChip(backdrop, shape, optics,
-        elevation = 8.dp, interactive = false)
+        elevation = 8.dp, interactive = false,
+        appearance = com.tyust.course.ui.system.glass.GlassChipAppearance.BlurredPanel)
     else Modifier.background(colors.surfaceContainerHigh, shape)
         .border(1.dp, colors.outlineVariant.copy(alpha = 0.5f), shape)
     Box(modifier.size(extent)

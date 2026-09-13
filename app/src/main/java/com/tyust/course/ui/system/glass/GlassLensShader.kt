@@ -31,7 +31,7 @@ package com.tyust.course.ui.system.glass
  *
  * ## 取样源是一张更大的底图
  * 元素（如导航指示器）会滑动，但底图（壁纸 + 隐藏 tint 文字层）是静态的。
- * 所以底图整条上传一次，逐帧只改 [U_SRC_ORIGIN]/[U_SRC_SCALE] 决定采样哪一块，
+ * 所以底图整条上传一次，逐帧只改来源原点和坐标轴决定采样哪一块，
  * 避免每帧重传纹理。
  */
 internal object GlassLensShader {
@@ -40,9 +40,12 @@ internal object GlassLensShader {
 
     const val U_TEXTURE = "u_tex"
     const val U_RESOLUTION = "u_res"
+    const val U_PIXEL_SCALE = "u_pixelScale"
     const val U_SRC_ORIGIN = "u_srcOrigin"
-    const val U_SRC_SCALE = "u_srcScale"
-    const val U_CORNER_RADIUS = "u_radius"
+    const val U_SRC_X_AXIS = "u_srcXAxis"
+    const val U_SRC_Y_AXIS = "u_srcYAxis"
+    const val U_CORNER_RADII = "u_radii"
+    const val U_GRADIENT_RADII = "u_gradientRadii"
     /** 库的 `refractionHeight`：边缘斜坡宽度（像素） */
     const val U_THICKNESS = "u_thickness"
     /** 库的 `refractionAmount`：位移幅度（像素）。可以**大于**斜坡宽度 */
@@ -70,9 +73,12 @@ internal object GlassLensShader {
 
         uniform sampler2D u_tex;
         uniform vec2 u_res;          // 元素像素尺寸
+        uniform float u_pixelScale;
         uniform vec2 u_srcOrigin;    // 元素左上角在底图中的归一化位置
-        uniform vec2 u_srcScale;     // 元素尺寸 / 底图尺寸
-        uniform float u_radius;
+        uniform vec2 u_srcXAxis;
+        uniform vec2 u_srcYAxis;
+        uniform vec4 u_radii;
+        uniform vec4 u_gradientRadii;
         uniform float u_thickness;    // 库的 refractionHeight
         uniform float u_lensAmount;   // 库的 refractionAmount
         uniform float u_dispersion;   // 库的 chromaticAberration
@@ -81,24 +87,60 @@ internal object GlassLensShader {
 
         // 元素本地 uv -> 底图 uv
         vec2 toSrc(vec2 uv) {
-            return u_srcOrigin + uv * u_srcScale;
+            return u_srcOrigin + uv.x * u_srcXAxis + uv.y * u_srcYAxis;
         }
 
-        float sdRoundedRect(vec2 p, vec2 halfSize, float r) {
+        vec2 sourceOffset(vec2 pixels) {
+            vec2 uv = pixels / u_res;
+            return uv.x * u_srcXAxis + uv.y * u_srcYAxis;
+        }
+
+        // Most controls are symmetric. Keep their original short SDF/gradient path;
+        // only asymmetric panels need the four-corner boundary calculation below.
+        float sdUniformRoundedRect(vec2 p, vec2 halfSize, float r) {
             vec2 c = abs(p) - (halfSize - vec2(r));
             return length(max(c, 0.0)) - r + min(max(c.x, c.y), 0.0);
         }
 
-        // SDF 解析梯度，恒为单位向量、**朝外**。与库的 gradSdRoundedRect 同式。
-        vec2 gradSdRoundedRect(vec2 p, vec2 halfSize, float r) {
+        vec2 gradUniformRoundedRect(vec2 p, vec2 halfSize, float r) {
             vec2 c = abs(p) - (halfSize - vec2(r));
             if (c.x >= 0.0 || c.y >= 0.0) {
-                return sign(p) * normalize(max(c, 0.0));
-            } else {
-                // 矩形内区：梯度指向最近的那条边
-                float gx = step(c.y, c.x);
-                return sign(p) * vec2(gx, 1.0 - gx);
+                vec2 direction = max(c, 0.0);
+                return sign(p) * direction / max(length(direction), 1e-6);
             }
+            float gx = step(c.y, c.x);
+            return sign(p) * vec2(gx, 1.0 - gx);
+        }
+
+        // Signed distance and outward gradient. Use each corner's actual square;
+        // the fan's large corner is allowed to cross the shape's midpoint.
+        vec3 roundedRectGeometry(vec2 p, vec2 extent, vec4 radii) {
+            float r = 0.0;
+            vec2 center = vec2(0.0);
+            if (p.x < radii.x && p.y < radii.x) {
+                r = radii.x;
+                center = vec2(r, r);
+            } else if (p.x > extent.x - radii.y && p.y < radii.y) {
+                r = radii.y;
+                center = vec2(extent.x - r, r);
+            } else if (p.x > extent.x - radii.z && p.y > extent.y - radii.z) {
+                r = radii.z;
+                center = extent - vec2(r);
+            } else if (p.x < radii.w && p.y > extent.y - radii.w) {
+                r = radii.w;
+                center = vec2(r, extent.y - r);
+            }
+            vec4 edges = vec4(-p.x, -p.y, p.x - extent.x, p.y - extent.y);
+            float distance = max(max(edges.x, edges.y), max(edges.z, edges.w));
+            vec2 gradient = edges.x == distance ? vec2(-1.0, 0.0) :
+                edges.y == distance ? vec2(0.0, -1.0) :
+                edges.z == distance ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+            if (r > 0.0) {
+                vec2 delta = p - center;
+                float radial = length(delta);
+                if (radial - r > distance) return vec3(radial - r, delta / max(radial, 1e-6));
+            }
+            return vec3(distance, gradient);
         }
 
         // 库的 circleMap：x=0 -> 0（轮廓），x=1 -> 1（斜坡内沿）
@@ -129,12 +171,16 @@ internal object GlassLensShader {
             vec2 halfSize = u_res * 0.5;
             vec2 p = px - halfSize;
 
-            float sd = sdRoundedRect(p, halfSize, u_radius);
-            if (sd > 0.0) {
+            bool uniformCorners = all(equal(u_radii, vec4(u_radii.x)));
+            float sd = uniformCorners
+                ? sdUniformRoundedRect(p, halfSize, u_radii.x)
+                : roundedRectGeometry(px, u_res, u_radii).x;
+            if (sd > 0.5 * u_pixelScale) {
                 // 形状外：完全透明，由 Compose 侧的 clip/描边负责轮廓
                 gl_FragColor = vec4(0.0);
                 return;
             }
+            float coverage = clamp(0.5 - sd / u_pixelScale, 0.0, 1.0);
 
             float tw = max(u_thickness, 1.0);
 
@@ -146,7 +192,7 @@ internal object GlassLensShader {
             // onDrawBackdrop 在 lensAnchor != null 时不会自己画背景，指望这一层出图。
             if (u_lensAmount <= 0.0) {
                 vec3 plain = texture2D(u_tex, toSrc(v_uv)).rgb;
-                gl_FragColor = vec4(applyVibrancy(plain, u_vibrancy), 1.0);
+                gl_FragColor = vec4(applyVibrancy(plain, u_vibrancy) * coverage, coverage);
                 return;
             }
 
@@ -155,7 +201,7 @@ internal object GlassLensShader {
                 // 变量名不能叫 flat：GLSL ES 1.00 的保留字（插值限定符），
                 // 用了会编译失败 "Illegal use of reserved word"，整条折射静默降级。
                 vec3 inner = texture2D(u_tex, toSrc(v_uv)).rgb;
-                gl_FragColor = vec4(applyVibrancy(inner, u_vibrancy), 1.0);
+                gl_FragColor = vec4(applyVibrancy(inner, u_vibrancy) * coverage, coverage);
                 return;
             }
 
@@ -163,14 +209,21 @@ internal object GlassLensShader {
             // 一致；配上朝外的梯度，净效果是朝内采样。
             float d = -circleMap(1.0 - (-sd) / tw) * u_lensAmount;
 
-            float gradRadius = min(u_radius * 1.5, min(halfSize.x, halfSize.y));
+            vec2 boundaryGradient = uniformCorners
+                ? gradUniformRoundedRect(p, halfSize, u_gradientRadii.x)
+                : roundedRectGeometry(px, u_res, u_gradientRadii).yz;
             vec2 grad = normalize(
-                gradSdRoundedRect(p, halfSize, gradRadius)
+                boundaryGradient
                     + u_depthEffect * normalize(p + vec2(1e-6, 1e-6))
             );
 
             vec2 lensOff = d * grad;
-            vec2 baseUv = toSrc(v_uv) + lensOff / u_res * u_srcScale;
+            vec2 baseUv = toSrc(v_uv) + sourceOffset(lensOff);
+            if (u_dispersion <= 0.0001) {
+                vec3 refracted = texture2D(u_tex, baseUv).rgb;
+                gl_FragColor = vec4(applyVibrancy(refracted, u_vibrancy) * coverage, coverage);
+                return;
+            }
 
             // ---- 七波长色散 ----
             // 与 kyant AGSL 的 RoundedRectRefractionWithDispersion 同构：
@@ -183,7 +236,7 @@ internal object GlassLensShader {
             // 同构：所以色散只在**有位移的地方**出现（内区位移为 0 ⇒ 无色散），
             // 不需要额外的边缘门控。u_dispersion 是无量纲倍数，不是像素。
             float dispScale = (p.x * p.y) / (halfSize.x * halfSize.y) * u_dispersion;
-            vec2 disp = lensOff * dispScale / u_res * u_srcScale;
+            vec2 disp = sourceOffset(lensOff * dispScale);
 
             vec3 color = vec3(0.0);
 
@@ -222,7 +275,7 @@ internal object GlassLensShader {
             //
             // 三个通道的权重各自和为 1（r: 3×1/3.5 + 1/7；g: 3×1/3.5 + 1/7；
             // b: 3×1/3.0），所以均匀场进 = 均匀场出，色散不会整体染色。
-            gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+            gl_FragColor = vec4(clamp(color, 0.0, 1.0) * coverage, coverage);
         }
     """.trimIndent()
 }

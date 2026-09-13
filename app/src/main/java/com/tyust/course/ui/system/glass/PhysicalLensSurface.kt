@@ -237,25 +237,8 @@ fun motionIntensityFromVelocity(
 ): Float = (abs(velocityX) / fullEffectVelocity.coerceAtLeast(1f)).coerceIn(0f, 1f)
 
 /**
- * 从任意 [Shape] 取出离屏着色器要的圆角半径（像素）。
- *
- * 着色器只有一个 `sdRoundedRect`，所以形状必须落到「一个圆角半径」上。三类：
- *
- * - [CornerBasedShape]：读 `topStart`。`CircleShape` / `RoundedCornerShape(50%)`
- *   会解析成 `min(w,h)/2`，也就是胶囊/圆，正好是想要的；
- * - kyant 的 `RoundedRectangularShape`（连续曲率 squircle，`RoundedRectangle` /
- *   `Capsule` 都是）：调 `corners()` 拿已解析的像素半径，读左上角。
- *   **这一类不能落到下面那条兜底**：弹窗的 `RoundedRectangle(32dp)` 会被当成
- *   `min(w,h)/2` ≈ 98dp，SDF 于是是个胶囊而不是 32dp 圆角的矩形 —— 折射的斜坡
- *   沿胶囊轮廓走，屏幕上是卡片里一道大弧。API32 上实拍到过，与 33+ 对照才看出来。
- *   库自己的 `lens()` 也是从这个接口取 `cornerRadii` 的，所以两条路同源。
- * - 其它形状：退回 `min(w,h)/2`。这是**保守**方向 —— 半径宁可偏大：
- *   偏小会让折射的轮廓落在 Compose 侧形状的**内部**，两者之间那一圈里着色器输出
- *   透明、而库的 surface/highlight 照真形状画，屏幕上就是一层套在玻璃外的"壳"。
- *   那个缺陷之前修过一次，别再从这里放回来。
- *
- * 实际的上限仍由 `Modifier.glassLens` 按实测短边夹一次（见那边的注释），
- * 所以这里返回的值即便偏大也不会让 SDF 退化。
+ * 用最小圆角限制光学斜坡；实际裁剪与着色器轮廓使用 [lensCornerRadiiPx] 的四个圆角。
+ * 不对非对称圆角单独施加半短边上限，避免扇形菜单退化成大圆。
  */
 fun lensCornerRadiusPx(
     shape: androidx.compose.ui.graphics.Shape,
@@ -263,15 +246,47 @@ fun lensCornerRadiusPx(
     heightPx: Float,
     density: Density
 ): Float {
+    return lensCornerRadiiPx(shape, widthPx, heightPx, density, LayoutDirection.Ltr).minimum
+}
+
+/** Resolve the same measured outline used by Compose, including asymmetric and RTL corners. */
+fun lensCornerRadiiPx(
+    shape: androidx.compose.ui.graphics.Shape,
+    widthPx: Float,
+    heightPx: Float,
+    density: Density,
+    layoutDirection: LayoutDirection
+): GlassLensCorners {
+    // Backdrop observes effects during onAttach, before a measured size exists.
+    // Compose's percentage-corner normalization cannot accept zero/unspecified sizes.
+    if (!widthPx.isFinite() || !heightPx.isFinite() || widthPx <= 0f || heightPx <= 0f) {
+        return GlassLensCorners.uniform(0f)
+    }
     val halfMin = minOf(widthPx, heightPx) / 2f
     val size = androidx.compose.ui.geometry.Size(widthPx, heightPx)
     if (shape is androidx.compose.foundation.shape.CornerBasedShape) {
-        val r = shape.topStart.toPx(size, density)
-        if (r.isFinite() && r > 0f) return minOf(r, halfMin)
+        if (shape is androidx.compose.foundation.shape.RoundedCornerShape ||
+            shape is androidx.compose.foundation.shape.AbsoluteRoundedCornerShape) {
+            val outline = shape.createOutline(size, layoutDirection, density)
+            if (outline is androidx.compose.ui.graphics.Outline.Rounded) {
+                val rect = outline.roundRect
+                return GlassLensCorners(rect.topLeftCornerRadius.x, rect.topRightCornerRadius.x,
+                    rect.bottomRightCornerRadius.x, rect.bottomLeftCornerRadius.x).fit(widthPx, heightPx)
+            }
+            if (outline is androidx.compose.ui.graphics.Outline.Rectangle) return GlassLensCorners.uniform(0f)
+        }
+        // Cut-corner controls keep the existing rounded optical approximation.
+        val startTop = shape.topStart.toPx(size, density)
+        val endTop = shape.topEnd.toPx(size, density)
+        val endBottom = shape.bottomEnd.toPx(size, density)
+        val startBottom = shape.bottomStart.toPx(size, density)
+        return (if (layoutDirection == LayoutDirection.Ltr) GlassLensCorners(startTop, endTop, endBottom, startBottom)
+            else GlassLensCorners(endTop, startTop, startBottom, endBottom)).fit(widthPx, heightPx)
     }
     if (shape is com.kyant.shapes.RoundedRectangularShape) {
-        val r = shape.corners(size, LayoutDirection.Ltr, density).topLeft
-        if (r.isFinite() && r > 0f) return minOf(r, halfMin)
+        val corners = shape.corners(size, layoutDirection, density)
+        return GlassLensCorners(corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft)
+            .fit(widthPx, heightPx)
     }
-    return halfMin
+    return GlassLensCorners.uniform(halfMin)
 }

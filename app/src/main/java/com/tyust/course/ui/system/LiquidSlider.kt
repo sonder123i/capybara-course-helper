@@ -177,9 +177,9 @@ fun LiquidSlider(
                             val down = awaitFirstDown(requireUnconsumed = false)
                             isDragging = true
                             try {
-                                dampedDragAnimation.press()
+                                dampedDragAnimation.press(down.uptimeMillis)
                                 val initial = valueAt(down.position.x)
-                                dampedDragAnimation.updateValue(initial)
+                                dampedDragAnimation.updateValue(initial, down.uptimeMillis)
                                 onValueChange(initial)
                                 // 值一变环境背景就可能整张变（蒙版/模糊滑块改的
                                 // 就是壁纸本身），底图要跟着重拍。限频在
@@ -187,7 +187,7 @@ fun LiquidSlider(
                                 lensFreshness?.onScroll()
                                 drag(down.id) { change ->
                                     val target = valueAt(change.position.x)
-                                    dampedDragAnimation.updateValue(target)
+                                    dampedDragAnimation.updateValue(target, change.uptimeMillis)
                                     onValueChange(target)
                                     lensFreshness?.onScroll()
                                     change.consume()

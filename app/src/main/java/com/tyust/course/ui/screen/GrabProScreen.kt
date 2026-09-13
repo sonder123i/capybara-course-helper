@@ -9,7 +9,6 @@ import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.tyust.course.ui.system.glass.LocalGlassLensAnchor
 import com.tyust.course.ui.system.glass.LocalPageGlassFreshness
 import com.tyust.course.ui.system.glass.rememberGlassLensRegion
-import com.tyust.course.ui.system.glass.glassLensAnchor
 import com.tyust.course.ui.system.glass.drawBackdropSource
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.snapshotFlow
@@ -264,10 +263,17 @@ fun GrabProScreen(
     } else null
     val entrance = LocalModuleEntrance.current
     LaunchedEffect(controlsLens, entrance) {
-        if (controlsLens != null) snapshotFlow { entrance?.invoke() ?: 1f }.collect { controlsLens.invalidate() }
+        if (controlsLens != null) snapshotFlow { entrance?.invoke() ?: 1f }.collect { progress ->
+            controlsLens.invalidate(if (progress > 0f && progress < 1f) 100L else 0L)
+        }
+    }
+    LaunchedEffect(controlsLens, controlsState) {
+        if (controlsLens != null) snapshotFlow { controlsState.progress }.collect { progress ->
+            controlsLens.invalidate(if (progress > 0f && progress < 1f) 100L else 0L)
+        }
     }
     // The source contains wallpaper + the page, while the button and its fan stay outside it.
-    Box(Modifier.fillMaxSize().glassLensAnchor(controlsLens)) {
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         modifier = Modifier.then(if (pageBackdrop != null) Modifier.layerBackdrop(pageBackdrop) else Modifier).graphicsLayer {
             val blur = controlsState.progress * 14.dp.toPx()
@@ -400,7 +406,7 @@ fun GrabProScreen(
     }
     CompositionLocalProvider(LocalAppBackdrop provides controlBackdrop, LocalControlBackdrop provides controlBackdrop,
         LocalGlassLensAnchor provides controlsLens) {
-    LiquidTaskControls(quickActions, overlayInset, controlsState) { expanded, progress, toggle ->
+    LiquidTaskControls(quickActions, overlayInset, controlsState, lensAnchor = controlsLens) { expanded, progress, toggle ->
         TaskActionDock(console, canStart, isFuzzyMatchMode, { controlsState.close(); action() }, Modifier.moduleEntrance(3),
             expanded, progress, toggle)
     }

@@ -26,7 +26,10 @@ internal data class GlassLensParams(
     val dispersion: Float,
     /** 把梯度混向径向，语义同库 AGSL 的 `depthEffect`。0 = 关。 */
     val depthEffect: Float,
-    val vibrancy: Float
+    val vibrancy: Float,
+    val corners: GlassLensCorners = GlassLensCorners.uniform(cornerRadiusPx),
+    val sourceAxes: GlassLensSourceAxes = GlassLensSourceAxes(),
+    val maxRenderPixels: Int = Int.MAX_VALUE
 )
 
 /**
@@ -215,12 +218,7 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
     private var readBuffer: ByteBuffer? = null
 
-    // 双缓冲：绘制侧在读 latest 的同时 GL 线程可能在写下一帧。
-    // 复用同一个 Bitmap 会撕裂，所以两张交替。
-    private val outBitmaps = arrayOfNulls<Bitmap>(2)
-    private var outIndex = 0
-
-    /** 最近一帧渲染结果。绘制侧只读这个字段。 */
+    /** Published frames are never mutated or recycled: RenderThread can retain them. */
     @Volatile
     var latest: Bitmap? = null
         private set
@@ -301,8 +299,6 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
                 fboTexture = 0
                 fbo = 0
                 latest = null
-                outBitmaps.forEach { it?.recycle() }
-                outBitmaps.fill(null)
             } catch (_: Throwable) {
                 // 释放期异常无意义，忽略
             }
@@ -321,13 +317,16 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         val w = p.widthPx
         val h = p.heightPx
         if (w <= 0 || h <= 0) return false
+        val renderScale = minOf(1.0, kotlin.math.sqrt(p.maxRenderPixels.coerceAtLeast(1).toDouble() / (w.toDouble() * h)))
+        val renderWidth = (w * renderScale).toInt().coerceAtLeast(1)
+        val renderHeight = (h * renderScale).toInt().coerceAtLeast(1)
 
         val program = GlassLensEngine.program
         val vb = GlassLensEngine.vertexBuffer ?: return false
-        if (!ensureFbo(w, h)) return false
+        if (!ensureFbo(renderWidth, renderHeight)) return false
 
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
-        GLES20.glViewport(0, 0, w, h)
+        GLES20.glViewport(0, 0, renderWidth, renderHeight)
         GLES20.glClearColor(0f, 0f, 0f, 0f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         GLES20.glUseProgram(program)
@@ -341,17 +340,22 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         uniform1i(GlassLensShader.U_TEXTURE, 0)
 
         uniform2f(GlassLensShader.U_RESOLUTION, w.toFloat(), h.toFloat())
+        uniform1f(GlassLensShader.U_PIXEL_SCALE, maxOf(w.toFloat() / renderWidth, h.toFloat() / renderHeight))
         uniform2f(
             GlassLensShader.U_SRC_ORIGIN,
             p.srcLeftPx / srcWidth,
             p.srcTopPx / srcHeight
         )
         uniform2f(
-            GlassLensShader.U_SRC_SCALE,
-            w.toFloat() / srcWidth,
-            h.toFloat() / srcHeight
+            GlassLensShader.U_SRC_X_AXIS,
+            w * p.sourceAxes.xx / srcWidth,
+            w * p.sourceAxes.xy / srcHeight
         )
-        uniform1f(GlassLensShader.U_CORNER_RADIUS, p.cornerRadiusPx)
+        uniform2f(GlassLensShader.U_SRC_Y_AXIS,
+            h * p.sourceAxes.yx / srcWidth, h * p.sourceAxes.yy / srcHeight)
+        val corners = p.corners.fit(w.toFloat(), h.toFloat())
+        uniform4f(GlassLensShader.U_CORNER_RADII, corners)
+        uniform4f(GlassLensShader.U_GRADIENT_RADII, corners.gradient(w.toFloat(), h.toFloat()))
         uniform1f(GlassLensShader.U_THICKNESS, p.thicknessPx)
         uniform1f(GlassLensShader.U_LENS_AMOUNT, p.lensAmountPx)
         uniform1f(GlassLensShader.U_DISPERSION, p.dispersion)
@@ -360,25 +364,21 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-        val need = w * h * 4
+        val need = renderWidth * renderHeight * 4
         var buf = readBuffer
         if (buf == null || buf.capacity() != need) {
             buf = ByteBuffer.allocateDirect(need).order(ByteOrder.nativeOrder())
             readBuffer = buf
         }
         buf.position(0)
-        GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
+        GLES20.glReadPixels(0, 0, renderWidth, renderHeight, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
         val error = GLES20.glGetError()
         if (error != GLES20.GL_NO_ERROR) return fail("readPixels: glError=$error")
 
-        // 写进「另一张」，避免覆盖绘制侧正在读的那张
-        outIndex = 1 - outIndex
-        var out = outBitmaps[outIndex]
-        if (out == null || out.width != w || out.height != h || out.isRecycled) {
-            out?.recycle()
-            out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            outBitmaps[outIndex] = out
-        }
+        // Alternating two mutable bitmaps is unsafe: a display list may still reference
+        // either one after two GL frames. Keep the read buffer reusable, publish a new
+        // bitmap, and let the display list/GC own its lifetime.
+        val out = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888)
         buf.position(0)
         out.copyPixelsFromBuffer(buf)
 
@@ -439,6 +439,11 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
     private fun uniform1i(name: String, v: Int) {
         GLES20.glUniform1i(GlassLensEngine.uniformLocation(name), v)
+    }
+
+    private fun uniform4f(name: String, corners: GlassLensCorners) {
+        GLES20.glUniform4f(GlassLensEngine.uniformLocation(name), corners.topLeft, corners.topRight,
+            corners.bottomRight, corners.bottomLeft)
     }
 
     private fun uniform1f(name: String, v: Float) {

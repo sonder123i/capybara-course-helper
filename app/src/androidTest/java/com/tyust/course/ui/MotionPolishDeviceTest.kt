@@ -60,6 +60,26 @@ class MotionPolishDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @Before fun isolatedVariantOnly() = assumeTrue(BuildConfig.UI_PREVIEW)
 
+    @Test fun coursesGlyphKeepsItsCutoutsAndHasNoTrailingTriangle() {
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(128.dp).testTag("books-silhouette"), contentAlignment = Alignment.Center) {
+                    PhosphorNavigationIcon(AppSymbolSpec.Courses, 1f, { 0f }, Color(0xFF1868A8), Modifier.size(96.dp))
+                }
+            }
+        }
+        val bitmap = captureNode("books-silhouette", "books-silhouette")
+        val inset = bitmap.width / 8f
+        val unit = bitmap.width * 0.75f / 256f
+        for (y in (inset + 226f * unit).toInt() until bitmap.height) for (x in 0 until bitmap.width) {
+            assertEquals("The Books silhouette must end at its spines", android.graphics.Color.WHITE, bitmap.getPixel(x, y))
+        }
+        for (y in listOf(56f, 200f)) {
+            assertEquals("The upright book's end bands must remain open", android.graphics.Color.WHITE,
+                bitmap.getPixel((inset + 80f * unit).toInt(), (inset + y * unit).toInt()))
+        }
+    }
+
     @Test fun everyNavigationIconReplaysWithoutRepeatingNavigation() {
         val destinations = listOf(BottomNavItem.Courses, BottomNavItem.Schedule, BottomNavItem.Grab, BottomNavItem.Grades, BottomNavItem.Settings)
         val selected = mutableIntStateOf(0)
@@ -67,8 +87,14 @@ class MotionPolishDeviceTest {
         compose.setContent {
             CourseSelectorTheme {
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                    val background = rememberLayerBackdrop()
+                    Canvas(Modifier.fillMaxSize().layerBackdrop(background)) {
+                        drawRect(Color(0xFFEEF2F8))
+                        for (x in 0..20) drawLine(Color(0xFF90B5D9), Offset(x * 24.dp.toPx(), 0f),
+                            Offset(x * 24.dp.toPx() + size.height * 0.2f, size.height), 6.dp.toPx())
+                    }
                     CapsuleNavigationBar(destinations, selected.intValue, { calls++; selected.intValue = it },
-                        backdrop = null, modifier = Modifier.testTag("navigation-fixture"))
+                        backdrop = background, modifier = Modifier.testTag("navigation-fixture"))
                 }
             }
         }
@@ -222,7 +248,7 @@ class MotionPolishDeviceTest {
                 }
             }
         }
-        compose.mainClock.advanceTimeBy(128)
+        compose.mainClock.advanceTimeBy(80)
         compose.waitForIdle()
         compose.runOnIdle {
             val dialog = host.dialogs.single()
@@ -263,6 +289,35 @@ class MotionPolishDeviceTest {
         compose.runOnIdle { assertEquals("The clicked card overrides the adjacent week's origin", expected[0], captured) }
         compose.onAllNodesWithText("同一课程")[1].performClick()
         compose.runOnIdle { assertEquals(expected[1], captured) }
+    }
+
+    @Test fun courseDetailFinishesExpandingAndRevealingContentWithin240Millis() {
+        lateinit var host: DialogHostState
+        val sheet = ScheduleBottomSheetState().apply { sourceBounds = Rect(80f, 200f, 230f, 390f) }
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            CourseSelectorTheme {
+                host = rememberDialogHostState()
+                Box(Modifier.fillMaxSize()) {
+                    DisposableEffect(host) {
+                        val handle = host.show({}, DialogPresentation.Bottom, sheet) {
+                            Box(Modifier.fillMaxWidth().height(360.dp).background(Color.White))
+                        }
+                        onDispose { host.dismiss(handle, false) }
+                    }
+                    DialogHost(host)
+                }
+            }
+        }
+        compose.mainClock.advanceTimeBy(32) // Initial composition and first animation frame.
+        compose.mainClock.advanceTimeBy(240)
+        compose.runOnIdle {
+            val dialog = host.dialogs.single()
+            assertTrue("Entry and all content groups should be complete", dialog.visibility.isIdle)
+            assertEquals(1f, dialog.lastSheetFrame.scaleX, 0.001f)
+            assertEquals(1f, dialog.lastPresence, 0.001f)
+        }
+        compose.mainClock.autoAdvance = true
     }
 
     @Test fun detailWrapsContentAndKeepsEditingReachableAcrossViewports() {
@@ -436,6 +491,7 @@ class MotionPolishDeviceTest {
 
     private fun captureNode(tag: String, name: String): Bitmap {
         compose.waitForIdle()
+        if (android.os.Build.VERSION.SDK_INT in 31..32) Thread.sleep(100)
         val bitmap = compose.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
         val directory = File(compose.activity.getExternalFilesDir(null), "motion-polish").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

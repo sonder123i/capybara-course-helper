@@ -101,6 +101,7 @@ fun Modifier.liquidChip(
         // 库那层的 surface / rim 仍叠在上面。33+ 与 ≤30 上是 no-op。
         .glassLens(
             anchor = lensAnchor,
+            shape = shape,
             optics = { w, h ->
                 glassLensOpticsFrom(
                     material = chipMaterial,
@@ -119,7 +120,7 @@ fun Modifier.liquidChip(
                     chromaticAberrationAtRest = false,
                     // Keep legacy chips unchanged; an explicit profile shares AGSL's 40% cap.
                     maxRefractionAmountPx = minOf(w, h) * if (appearance.refractionAmountDp != null) 0.40f else 1f
-                )
+                ).copy(maxRenderPixels = appearance.maxOffscreenPixels)
             },
             // 与下面 layerBlock 读**同一个** chipGlassTransform：不一致时按下会
             // 看到库画的 rim 环浮在自家折射的玻璃外面（底栏上已经踩过并修过）。
@@ -168,9 +169,9 @@ fun Modifier.liquidChip(
                 if (params.blurPx > 0f) blur(params.blurPx)
                 if (params.useLens) {
                     lens(
-                        params.refractionHeightPx,
-                        params.refractionAmountPx,
-                        params.chromaticAberration
+                        refractionHeight = params.refractionHeightPx,
+                        refractionAmount = params.refractionAmountPx,
+                        chromaticAberration = params.chromaticAberration
                     )
                 } else if (params.fringePx > 0f && lensAnchor == null) {
                     // 只有真的没有折射时才用假色散近似（API ≤ 30）。

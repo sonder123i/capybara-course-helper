@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -437,7 +438,9 @@ private fun GlassNavigationBar(
     // 有折射外观时取配方的 10dp（33+ 一直是这个值），≤30 保留 cba2a09 的 8dp。
     val trackBlurDp = if (hasLensLook) barMaterial.blurDp else GlassRecipe.NavLegacyTrackBlurDp
     val trackBlurPx = with(outerDensity) { trackBlurDp.dp.toPx() }
-    val lensAnchor = rememberGlassLensAnchor(tag = "navbar") { coords ->
+    val lensAnchor = rememberGlassLensAnchor(tag = "navbar", overlaySource = { coords ->
+        with(tabsTintBackdrop) { drawBackdrop(outerDensity, coords, null) }
+    }) { coords ->
         // 1) 模糊的壁纸/页面，**铺满整个锚点**，无形状。
         //
         // 这里不能 replay `tabsBackdrop`：那一层是 `shape = { Capsule() }`，
@@ -451,7 +454,6 @@ private fun GlassNavigationBar(
         drawRect(containerColor)
         // 3) 锐利的 tint 文字，压在最上面 —— 顺序与屏幕一致（库的隐藏层也是
         // 先 drawBackdrop 再画文字，文字不吃那层模糊）。
-        with(tabsTintBackdrop) { drawBackdrop(outerDensity, coords, null) }
     }
     // 选中项或主题变化会改变隐藏 tint 层的内容，底图需要重拍。
     //
@@ -498,16 +500,18 @@ private fun GlassNavigationBar(
     LaunchedEffect(lensAnchor, lensFreshness) {
         if (lensAnchor == null || lensFreshness == null) return@LaunchedEffect
         snapshotFlow { lensFreshness.version }.collectLatest {
-            lensAnchor.invalidate()
+            lensAnchor.invalidateBackground()
             delay(140)
-            lensAnchor.invalidate()
+            lensAnchor.invalidateBackground()
         }
     }
-    LaunchedEffect(lensAnchor, iconPlayback) {
-        if (lensAnchor == null) return@LaunchedEffect
-        snapshotFlow { items.indices.map { iconPlayback.phase(it) } }.collect {
-            lensAnchor.invalidate()
-        }
+    // Draw-only bookkeeping: snapshot notifications can precede the hidden layer's
+    // final recording. Publish freshness after that layer actually draws instead.
+    val recordedOverlayFrame = remember(lensAnchor, tabsCount) {
+        FloatArray(tabsCount + 3) { Float.NaN }
+    }
+    val overlayFrameHandler = remember(lensAnchor) {
+        android.os.Handler(android.os.Looper.getMainLooper())
     }
 
     BoxWithConstraints(
@@ -542,7 +546,6 @@ private fun GlassNavigationBar(
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 pressedScale = pressedScale,
-                directManipulationSpec = MotionSpring.liquidFollow(),
                 settleAnimationSpec = MotionSpring.navSettle(),
                 releaseScaleAnimationSpec = MotionSpring.navRelease(),
                 onDragStarted = {},
@@ -675,7 +678,7 @@ private fun GlassNavigationBar(
                             var completed = false
                             var pointerId = down.id
 
-                            dampedDragAnimation.press()
+                            dampedDragAnimation.press(down.uptimeMillis)
 
                             try {
                                 while (true) {
@@ -706,7 +709,8 @@ private fun GlassNavigationBar(
                                             change.consume()
                                             dampedDragAnimation.updateValue(
                                                 (startValue + totalDragX / tabWidth)
-                                                    .fastCoerceIn(0f, (tabsCount - 1).toFloat())
+                                                    .fastCoerceIn(0f, (tabsCount - 1).toFloat()),
+                                                change.uptimeMillis
                                             )
                                             animationScope.launch {
                                                 offsetAnimation.snapTo(totalDragX)
@@ -739,7 +743,7 @@ private fun GlassNavigationBar(
                                     dampedDragAnimation.animateToValue(committedIndex.toFloat())
                                 } else {
                                     latestOnTabSelect(targetIndex)
-                                    if (currentIndex == targetIndex) {
+                                    if (currentIndex == targetIndex && !dragging) {
                                         dampedDragAnimation.release()
                                     } else {
                                         currentIndex = targetIndex
@@ -839,7 +843,25 @@ private fun GlassNavigationBar(
                 // 只在离屏折射路径上挂：录层是**每帧**的离屏绘制开销，而 33+
                 // 没有任何东西消费 tabsTintBackdrop，挂着就是白烧一层。
                 .then(
-                    if (useOffscreenLens) Modifier.layerBackdrop(tabsTintBackdrop) else Modifier
+                    if (lensAnchor != null) Modifier.drawWithContent {
+                        var changed = false
+                        fun record(index: Int, value: Float) {
+                            if (recordedOverlayFrame[index] != value) {
+                                recordedOverlayFrame[index] = value
+                                changed = true
+                            }
+                        }
+                        record(0, selectedPosition())
+                        record(1, dampedDragAnimation.pressProgress)
+                        record(2, panelOffset)
+                        items.indices.forEach { record(it + 3, iconPlayback.phase(it)) }
+                        drawContent()
+                        if (changed) {
+                            // Child RenderNodes are committed at the end of this draw.
+                            // Capturing inside it can still read the previous fill.
+                            overlayFrameHandler.post { lensAnchor.invalidateOverlay() }
+                        }
+                    }.layerBackdrop(tabsTintBackdrop) else Modifier
                 )
                 .height(indicatorHeight)
                 .fillMaxWidth()

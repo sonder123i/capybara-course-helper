@@ -123,6 +123,43 @@ class LiquidInteractionDeviceTest {
         }
     }
 
+    @Test fun directDragReversesWithoutWaitingForASpringOrLosingItsReleaseFrame() {
+        lateinit var animation: DampedDragAnimation
+        compose.setContent {
+            val scope = rememberCoroutineScope()
+            DisposableEffect(scope) {
+                animation = DampedDragAnimation(scope, 0f, 0f..4f, 0.001f, 1f, 1.2f,
+                    onDragStarted = {}, onDragStopped = {}, onDrag = { _, _ -> })
+                onDispose { }
+            }
+            Box(Modifier.fillMaxSize())
+        }
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle {
+            animation.press(1000)
+            for ((index, position) in listOf(0.2f, 0.8f, 1.9f, 1.2f, 0.9f, 0.3f).withIndex()) {
+                animation.updateValue(position, 1016L + 16L * index)
+                assertEquals("A pointer update must be visible before the next animation frame", position, animation.value, 0f)
+            }
+            assertTrue("Velocity must follow the reverse gesture", animation.positionVelocity < 0f)
+            animation.animateToValue(0f)
+            assertEquals("Release must start at the last finger position", 0.3f, animation.value, 0.001f)
+        }
+        compose.mainClock.advanceTimeBy(1600)
+        compose.runOnIdle {
+            assertEquals(0f, animation.value, 0.001f)
+            assertEquals(1f, animation.scaleX, 0.001f)
+            animation.setReducedMotion(true)
+            animation.press(2000)
+            animation.updateValue(2.7f, 2016)
+            assertEquals(2.7f, animation.value, 0f)
+            animation.animateToValue(3f)
+            assertEquals(3f, animation.value, 0f)
+            assertEquals(0f, animation.pressProgress, 0f)
+        }
+        compose.mainClock.autoAdvance = true
+    }
+
     @Test fun cancelledNavigationDragDoesNotCommitIntermediatePage() {
         val commits = mutableListOf<Int>()
         val selected = navigation { commits.add(it) }

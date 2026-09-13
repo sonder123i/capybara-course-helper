@@ -185,13 +185,13 @@ fun LiquidColorField(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    dragAnimation.press()
+                    dragAnimation.press(down.uptimeMillis)
                     val (s0, v0) = valuesAt(down.position)
-                    dragAnimation.updateValue(s0)
+                    dragAnimation.updateValue(s0, down.uptimeMillis)
                     onChange(s0, v0)
                     drag(down.id) { change ->
                         val (s, v) = valuesAt(change.position)
-                        dragAnimation.updateValue(s)
+                        dragAnimation.updateValue(s, change.uptimeMillis)
                         onChange(s, v)
                         change.consume()
                     }

@@ -36,6 +36,60 @@ import java.util.Collections
 /** Real display clock, local demo data, no Compose test clock or production account. */
 @RunWith(AndroidJUnit4::class)
 class MainPerformanceDeviceTest {
+    @Test fun measurePrimaryPressAndFanWithTheRealDisplayClock() {
+        assumeTrue(BuildConfig.UI_PREVIEW)
+        val worker = HandlerThread("control-frame-metrics").apply { start() }
+        val samples = Collections.synchronizedList(mutableListOf<Pair<Long, Long>>())
+        val listener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+            samples += metrics.getMetric(FrameMetrics.TOTAL_DURATION) to
+                (metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION) + metrics.getMetric(FrameMetrics.DRAW_DURATION))
+        }
+        try {
+            DemoUiDriver().use { ui ->
+                ui.navigate("抢课")
+                val activity = requireNotNull(ui.main)
+                val display = activity.display!!.displayId
+                val output = File(activity.getExternalFilesDir(null), "performance-validation").apply { mkdirs() }
+                val prefix = InstrumentationRegistry.getArguments().getString("capturePrefix") ?: "sample"
+                ui.onMain { activity.window.addOnFrameMetricsAvailableListener(listener, Handler(worker.looper)) }
+                try {
+                    repeat(3) { round ->
+                        val button = ui.boundsOf("开始执行")
+                        SystemClock.sleep(1000)
+                        samples.clear()
+                        val started = SystemClock.elapsedRealtime()
+                        // Cancel outside the target before long-press takeover; no execution starts.
+                        repeat(3) {
+                            val outside = (button.left - button.width()).coerceAtLeast(0)
+                            ui.shell("input -d $display swipe ${button.centerX()} ${button.centerY()} $outside ${button.centerY()} 240")
+                            SystemClock.sleep(500)
+                        }
+                        // Holding and releasing in place must leave a usable fan, then Back closes it.
+                        repeat(3) {
+                            ui.longClick("开始执行")
+                            ui.waitText("关闭操作菜单")
+                            ui.back()
+                            ui.waitText("关闭操作菜单", false)
+                        }
+                        SystemClock.sleep(500)
+                        val measured = synchronized(samples) { samples.toList() }
+                        assertTrue("The real control animation must produce frames", measured.isNotEmpty())
+                        File(output, "$prefix-start-controls-$round.json").writeText(JSONObject()
+                            .put("scenario", "start-controls").put("round", round)
+                            .put("elapsedMs", SystemClock.elapsedRealtime() - started)
+                            .put("api", android.os.Build.VERSION.SDK_INT).put("refreshRate", activity.display!!.refreshRate)
+                            .put("totalDurationNs", JSONArray(measured.map { it.first }))
+                            .put("layoutDrawDurationNs", JSONArray(measured.map { it.second })).toString(2))
+                    }
+                } finally {
+                    ui.onMain { activity.window.removeOnFrameMetricsAvailableListener(listener) }
+                }
+            }
+        } finally {
+            worker.quitSafely()
+        }
+    }
+
     @Test fun measureIdleAndRepeatedNavigation() {
         assumeTrue("Performance measurements require the isolated demo variant", BuildConfig.UI_PREVIEW)
         val instrumentation = InstrumentationRegistry.getInstrumentation()

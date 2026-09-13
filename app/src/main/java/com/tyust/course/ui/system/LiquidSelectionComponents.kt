@@ -487,10 +487,9 @@ fun LiquidSegmentedControl(
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
                 pressedScale = pressedScale,
-                directManipulationSpec = MotionSpring.liquidFollow(),
                 settleAnimationSpec = MotionSpring.segmentedSettle(),
                 releaseScaleAnimationSpec = MotionSpring.segmentedRelease(),
-                pressScaleAnimationSpec = spring(dampingRatio = 0.58f, stiffness = 680f),
+                pressScaleAnimationSpec = spring(dampingRatio = 0.64f, stiffness = 680f),
                 onDragStarted = {},
                 onDragStopped = {},
                 onDrag = { _, _ -> }
@@ -608,7 +607,7 @@ fun LiquidSegmentedControl(
                         var completed = false
                         var pointerId = down.id
 
-                        dragAnimation.press()
+                        dragAnimation.press(down.uptimeMillis)
 
                         try {
                             while (true) {
@@ -637,7 +636,8 @@ fun LiquidSegmentedControl(
                                         change.consume()
                                         dragAnimation.updateValue(
                                             (startValue + totalDragX / segmentWidthPx)
-                                                .coerceIn(0f, (optionCount - 1).toFloat())
+                                                .coerceIn(0f, (optionCount - 1).toFloat()),
+                                            change.uptimeMillis
                                         )
                                     }
                                 }

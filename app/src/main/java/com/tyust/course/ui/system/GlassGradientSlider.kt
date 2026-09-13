@@ -156,13 +156,13 @@ fun GlassGradientSlider(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     isDragging = true
-                    dragAnimation.press()
+                    dragAnimation.press(down.uptimeMillis)
                     val initial = fractionAt(down.position.x)
-                    dragAnimation.updateValue(initial)
+                    dragAnimation.updateValue(initial, down.uptimeMillis)
                     onValueChange(initial)
                     drag(down.id) { change ->
                         val fraction = fractionAt(change.position.x)
-                        dragAnimation.updateValue(fraction)
+                        dragAnimation.updateValue(fraction, change.uptimeMillis)
                         onValueChange(fraction)
                         change.consume()
                     }

@@ -272,8 +272,8 @@ object GlassRecipe {
     val SegSelectedRimAlpha = 0.36f
     val SelectionIndicatorPressedScale = 78f / 56f
     // The segmented lens visibly compresses and rebounds, independently of toolbar geometry.
-    val SegIndicatorPressedScale = 1.10f
-    val SegIndicatorMaxVelocityStretch = 0.16f
+    val SegIndicatorPressedScale = 1.08f
+    val SegIndicatorMaxVelocityStretch = 0.13f
 
     // Apple 风清晰实心选中胶囊：不依赖折射，底栏与 segmented 共用。
     // 无真 lens（API 32）时用较高不透明度形成清晰白/浅胶囊；真 lens 时调用侧降低以露出折射。

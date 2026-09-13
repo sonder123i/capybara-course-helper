@@ -79,6 +79,9 @@ internal class DemoUiDriver : AutoCloseable {
     private fun nodes(text: String, firstOnly: Boolean = false): List<AccessibilityNodeInfo> {
         if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
         fun matches(node: AccessibilityNodeInfo): Boolean {
+            // API 31/32 have no clearCache(). Refresh the provider snapshot before
+            // inspecting selection, visibility or an ancestor from the previous page.
+            if (!node.refresh()) return false
             if (!node.isVisibleToUser) return false
             return sequenceOf(node.text, node.contentDescription, node.stateDescription, node.viewIdResourceName)
                 .filterNotNull().any { value ->
@@ -107,7 +110,7 @@ internal class DemoUiDriver : AutoCloseable {
     fun hasText(text: String): Boolean = nodes(text, firstOnly = true).isNotEmpty()
     fun waitSelected(text: String) = await("Selected state was not retained: $text") {
         nodes(text).any { node ->
-            generateSequence(node) { it.parent }.take(4).any { it.isSelected || it.isChecked }
+            generateSequence(node) { it.parent }.take(4).any { it.refresh() && (it.isSelected || it.isChecked) }
         }
     }
     private fun dumpNodes(): String {

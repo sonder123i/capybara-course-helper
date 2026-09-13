@@ -16,7 +16,9 @@ data class GlassChipAppearance(
     val lightSurfaceAlpha: Float = GlassRecipe.ChipSurfaceAlphaLight,
     val darkSurfaceAlpha: Float = 0.84f,
     val lightPressedSurfaceScale: Float = GlassRecipe.ChipPressedSurfaceScale,
-    val darkPressedSurfaceScale: Float = 1f
+    val darkPressedSurfaceScale: Float = 1f,
+    /** A blurred large panel can use fewer optical pixels; contours and content stay native. */
+    val maxOffscreenPixels: Int = Int.MAX_VALUE
 ) {
     fun material(accessibility: GlassAccessibilityMode, interactionProgress: Float = 0f): GlassMaterialSpec {
         val base = GlassMaterials.resolve(GlassMaterialRole.Interactive, accessibility, interactionProgress)
@@ -37,6 +39,7 @@ data class GlassChipAppearance(
 
     companion object {
         val Default = GlassChipAppearance()
+        val BlurredPanel = GlassChipAppearance(maxOffscreenPixels = 160_000)
         val PrimaryAction = GlassChipAppearance(
             refractionHeightDp = 20f,
             refractionAmountDp = 28f,

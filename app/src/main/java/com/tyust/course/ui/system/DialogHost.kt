@@ -160,7 +160,7 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
                         reducedMotion -> snap()
                         page -> com.tyust.course.ui.theme.MotionProfile.hierarchySpring()
                         targetState != EnterExitState.Visible -> tween(com.tyust.course.ui.theme.MotionProfile.SheetExitMillis)
-                        bottom && dialog.bottomSheet?.sourceBounds != null -> tween(460, delayMillis = 40,
+                        bottom && dialog.bottomSheet != null -> tween(220,
                             easing = com.tyust.course.ui.theme.MotionEasing.FastOutSlowIn)
                         bottom -> com.tyust.course.ui.theme.MotionProfile.sheetSpring()
                         else -> spring(0.80f, 420f)
@@ -170,8 +170,7 @@ fun DialogHost(state: DialogHostState, modifier: Modifier = Modifier) {
                     when {
                         reducedMotion || dialog.bottomSheet == null -> snap()
                         targetState != EnterExitState.Visible -> tween(com.tyust.course.ui.theme.MotionProfile.SheetExitMillis)
-                        else -> tween(com.tyust.course.ui.theme.ModuleMotion.TimelineMillis,
-                            delayMillis = if (dialog.bottomSheet.sourceBounds != null) 40 else 0, easing = LinearEasing)
+                        else -> tween(240, easing = LinearEasing)
                     }
                 }, label = "dialog-modules") { if (it == EnterExitState.Visible) 1f else 0f }
                 LaunchedEffect(dialog) {

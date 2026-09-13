@@ -17,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -79,8 +80,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyust.course.ui.system.GlassLoadingState
@@ -137,9 +141,11 @@ import com.tyust.course.ui.theme.NeuSurface
 
 import java.util.Calendar
 import kotlin.math.roundToInt
+import kotlin.math.ceil
 import kotlinx.coroutines.launch
 
 private val ScheduleTimeColumnWidth = 36.dp
+private val ScheduleTimeColumnShadowWidth = 8.dp
 private val SchedulePeriodHeight = 84.dp
 
 /** 窄屏收窄的时间列与网格左右留白，把省下的宽度全给七个日列。 */
@@ -177,34 +183,59 @@ private class ScheduleHeaderMetrics(
     val weekRowExpanded: Dp,
     val actionRowExpanded: Dp,
     val actionRowCollapsed: Dp,
-    val stackedActions: Boolean
+    val stackedActions: Boolean,
+    val semesterWidth: Dp,
+    val prefixFontSize: TextUnit
 ) {
     /** 折叠行程。定义成差值，于是不可能与两态高度脱钩。 */
     val travel: Dp get() = expanded - collapsed
 }
 
 @Composable
-private fun rememberScheduleHeaderMetrics(): ScheduleHeaderMetrics {
+private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMetrics {
     val screen = rememberScreenMetrics()
-    val fontScale = LocalDensity.current.fontScale
-    return remember(screen, fontScale) {
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val titleStyle = MaterialTheme.typography.bodyLarge
+    val segmentStyle = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold)
+    return remember(screen, availableWidth, density, measurer, titleStyle, segmentStyle) {
+        fun textSize(text: String, style: TextStyle) = measurer.measure(text, style, maxLines = 1)
+        fun textWidth(text: String, style: TextStyle) = with(density) { textSize(text, style).size.width.toDp() }
+        fun textHeight(text: String, style: TextStyle) = with(density) { textSize(text, style).size.height.toDp() }
         val topPad = screen.tall(HeaderTopPadExpanded, 6.dp)
         val titleGap = screen.tall(HeaderTitleGap, 4.dp)
-        val weekRow = screen.tall(HeaderWeekRowExpanded, 30.dp)
+        val weekRow = maxOf(screen.tall(HeaderWeekRowExpanded, 30.dp), 30.dp * density.fontScale)
         val bottomPad = screen.tall(HeaderBottomPadExpanded, 4.dp)
-        val stacked = screen.widthDp < 400.dp || fontScale > 1.15f
-        val actionExpanded = if (stacked) 36.dp * fontScale + titleGap + HeaderSegmentHeight + 6.dp + 48.dp else HeaderActionRowExpanded
-        val actionCollapsed = if (stacked) 26.dp * fontScale + 6.dp + 48.dp else HeaderActionRowCollapsed
+        // Four 48dp targets keep their original row. Fit the text to the actual parent,
+        // rather than stacking every device below an arbitrary screen-width breakpoint.
+        val titleAvailable = (availableWidth - PagePadding * 2 - 204.dp - 8.dp).coerceAtLeast(0.dp)
+        val prefixSize = if (availableWidth < 380.dp) 12.sp else 14.sp
+        val expandedStyle = titleStyle.copy(fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp)
+        val collapsedStyle = expandedStyle.copy(fontSize = 17.sp)
+        val prefixStyle = titleStyle.copy(fontSize = prefixSize, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp)
+        val segmentMinimum = textWidth("本学期", segmentStyle) * 2 + 30.dp
+        val titleMinimum = maxOf(textWidth("第 25 周", expandedStyle),
+            textWidth("第 25 周", collapsedStyle) + textWidth("下学期 · ", prefixStyle), segmentMinimum)
+        val stacked = titleAvailable < titleMinimum
+        val semesterWidth = if (stacked) maxOf(144.dp, segmentMinimum) else
+            maxOf(segmentMinimum, minOf(144.dp * density.fontScale.coerceAtLeast(1f), titleAvailable))
+        val titleExpanded = textHeight("第 25 周", expandedStyle) + titleGap + HeaderSegmentHeight
+        val titleCollapsed = maxOf(textHeight("第 25 周", collapsedStyle), textHeight("下学期 · ", prefixStyle))
+        val actionExpanded = if (stacked) titleExpanded + 6.dp + 48.dp else maxOf(HeaderActionRowExpanded, titleExpanded)
+        val actionCollapsed = if (stacked) titleCollapsed + 6.dp + 48.dp else maxOf(HeaderActionRowCollapsed, titleCollapsed)
+        val collapsedWeekRow = maxOf(HeaderWeekRowCollapsed, 26.dp * density.fontScale)
         ScheduleHeaderMetrics(
             // 展开态：上留白 + 标题行 + 标题间距 + 周次行 + 下留白
             expanded = topPad + actionExpanded + titleGap + weekRow + bottomPad,
-            collapsed = HeaderTopPadCollapsed + actionCollapsed + HeaderWeekRowCollapsed + HeaderBottomPadCollapsed,
+            collapsed = HeaderTopPadCollapsed + actionCollapsed + collapsedWeekRow + HeaderBottomPadCollapsed,
             topPadExpanded = topPad,
             titleGap = titleGap,
             weekRowExpanded = weekRow,
             actionRowExpanded = actionExpanded,
             actionRowCollapsed = actionCollapsed,
-            stackedActions = stacked
+            stackedActions = stacked,
+            semesterWidth = semesterWidth,
+            prefixFontSize = prefixSize
         )
     }
 }
@@ -279,6 +310,7 @@ fun ScheduleScreen(
     onRetry: () -> Unit = {},
     firstWeekDate: String? = null
 ) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
     val coroutineScope = rememberCoroutineScope()
     val maxWeeks = com.tyust.course.schedule.ScheduleMaxWeeks
     val reducedMotion = com.tyust.course.ui.system.rememberGlassAccessibilityMode().reduceMotion
@@ -350,7 +382,7 @@ fun ScheduleScreen(
     // 而且左右切周时纵向位置不该跳回顶部。
     val gridScrollState = rememberScrollState()
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val headerMetrics = rememberScheduleHeaderMetrics()
+    val headerMetrics = rememberScheduleHeaderMetrics(maxWidth)
     // 折叠行程 = 顶栏高度差，于是收缩与滚动 1:1 对消，全程跟手。
     val travelPx = with(LocalDensity.current) { headerMetrics.travel.toPx() }
     val headerCollapse by remember(travelPx) {
@@ -467,6 +499,7 @@ fun ScheduleScreen(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -486,6 +519,7 @@ fun WeekHeaderCompact(
     firstWeekDate: String? = null,
     actualWeek: Int? = null
 ) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
     val calendar = Calendar.getInstance()
     val headerFocus = remember { FocusRequester() }
     val focusRegistry = LocalScheduleFocus.current
@@ -510,7 +544,7 @@ fun WeekHeaderCompact(
         null
     }
     // 与 ScheduleScreen 里那份是同一个纯函数结果，不会算出两套几何
-    val headerMetrics = rememberScheduleHeaderMetrics()
+    val headerMetrics = rememberScheduleHeaderMetrics(maxWidth)
 
     Box(
         modifier = Modifier
@@ -593,7 +627,7 @@ fun WeekHeaderCompact(
                             // 一段连续形变，而不是字符串在某一帧突变。
                             SemesterTitlePrefix(
                                 text = if (isNextSemester) "下学期 · " else "本学期 · ",
-                                fontSize = 14.sp,
+                                fontSize = headerMetrics.prefixFontSize,
                                 progress = ((collapse - 0.45f) / 0.55f).coerceIn(0f, 1f)
                             )
                             Text(
@@ -619,6 +653,7 @@ fun WeekHeaderCompact(
                             SemesterCapsuleToggle(
                                 isNextSemester = isNextSemester,
                                 onClick = onToggleSemester,
+                                width = headerMetrics.semesterWidth,
                                 modifier = Modifier.graphicsLayer {
                                     alpha = (segmentFraction * 2.2f - 0.2f).coerceIn(0f, 1f)
                                     scaleX = segmentFraction
@@ -677,19 +712,19 @@ fun WeekHeaderCompact(
                         .height(
                             lerpDp(
                                 headerMetrics.weekRowExpanded,
-                                HeaderWeekRowCollapsed,
+                                maxOf(HeaderWeekRowCollapsed, 26.dp * LocalDensity.current.fontScale),
                                 collapse
                             )
                         )
                         .padding(horizontal = scheduleGridPadding()),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Spacer(modifier = Modifier.width(scheduleTimeColumnWidth()))
+                    Spacer(modifier = Modifier.width(scheduleTimeColumnWidth() + ScheduleTimeColumnShadowWidth))
                     weekLabels.forEachIndexed { index, day ->
                         val isToday = index + 1 == currentDayOfWeek && currentWeek == actualWeek
                         val date = com.tyust.course.schedule.ScheduleDates.date(firstWeekDate, currentWeek, index + 1)
                         CompactWeekdayLabel(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).testTag("schedule-weekday-${index + 1}"),
                             day = day,
                             isToday = isToday,
                             collapse = collapse,
@@ -700,6 +735,7 @@ fun WeekHeaderCompact(
                 }
             }
         }
+    }
     }
 }
 
@@ -810,6 +846,7 @@ private fun CompactWeekdayLabel(
 private fun SemesterCapsuleToggle(
     isNextSemester: Boolean,
     onClick: () -> Unit,
+    width: Dp,
     modifier: Modifier = Modifier
 ) {
     SystemCompactSegmentedControl(
@@ -824,7 +861,7 @@ private fun SemesterCapsuleToggle(
         // requiredHeight 无视父约束：容器在收拢过程中比 36dp 矮，
         // 普通 height 会被钳成压扁，轨道里的文字随之挤出。
         modifier = modifier
-            .width(144.dp * LocalDensity.current.fontScale.coerceAtLeast(1f))
+            .width(width)
             .requiredHeight(HeaderSegmentHeight)
     )
 }
@@ -850,12 +887,17 @@ fun ScheduleGrid(
      */
     topInset: Dp = 0.dp
 ) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
     val weeklyCourses = remember(courses, currentWeek) {
         courses.filter { isInWeek(it.weeks, currentWeek) }
     }
-    val periodHeight = schedulePeriodHeight()
     val timeColumnWidth = scheduleTimeColumnWidth()
     val gridPadding = scheduleGridPadding()
+    val dayColumnWidthPx = with(LocalDensity.current) {
+        ((constraints.maxWidth - gridPadding.roundToPx() * 2 - timeColumnWidth.roundToPx() -
+            ScheduleTimeColumnShadowWidth.roundToPx()) / 7f).roundToInt()
+    }
+    val periodHeight = rememberCoursePeriodHeight(courses, dayColumnWidthPx, schedulePeriodHeight())
     val totalHeight = periodHeight * periodCount
     val darkGrid = com.tyust.course.ui.system.rememberGlassDarkTheme()
     val gridTint = MaterialTheme.colorScheme.surface.copy(alpha =
@@ -944,7 +986,7 @@ fun ScheduleGrid(
                 // 时间列右侧阴影，柔和过渡
                 Box(
                     modifier = Modifier
-                        .width(8.dp)
+                        .width(ScheduleTimeColumnShadowWidth)
                         .fillMaxHeight()
                         .background(
                             Brush.horizontalGradient(
@@ -1004,6 +1046,51 @@ fun ScheduleGrid(
                     )
                 }
             }
+        }
+    }
+    }
+}
+
+private fun courseNameStyle(base: TextStyle, duration: Int): TextStyle = base.copy(
+    fontWeight = FontWeight.Bold,
+    fontSize = when (duration) { 1 -> 10.5.sp; 2 -> 11.sp; else -> 11.5.sp },
+    lineHeight = when (duration) { 1 -> 12.sp; 2 -> 12.5.sp; else -> 13.sp },
+    letterSpacing = (-0.2).sp
+)
+
+private fun courseLocationStyle(base: TextStyle, duration: Int): TextStyle = base.copy(
+    fontWeight = FontWeight.Normal,
+    fontSize = if (duration <= 2) 9.sp else 9.5.sp,
+    lineHeight = if (duration <= 2) 10.5.sp else 11.sp
+)
+
+private fun ScheduleCourseUi.hasCardStatus() = hasConflict || isCurrent || isCustom ||
+    !com.tyust.course.schedule.ScheduleWeeks.parse(weeks).valid
+
+/** The same measured row height drives the time rail, grid lines and course spans. */
+@Composable
+private fun rememberCoursePeriodHeight(courses: List<ScheduleCourseUi>, columnWidthPx: Int, minimum: Dp): Dp {
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer(cacheSize = 128)
+    val style = MaterialTheme.typography.labelSmall
+    return remember(courses, columnWidthPx, minimum, density, measurer, style) {
+        with(density) {
+            val contentWidth = (columnWidthPx - 2 * 1.dp.roundToPx() - 5.dp.roundToPx() - 2.dp.roundToPx()).coerceAtLeast(1)
+            var rowHeight = minimum.toPx()
+            for (course in courses) {
+                val duration = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
+                val name = measurer.measure(course.name, courseNameStyle(style, duration),
+                    maxLines = 4, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = contentWidth))
+                val hasStatus = course.hasCardStatus()
+                val locationHeight = if (course.location.isNotBlank()) measurer.measure(
+                    course.location, courseLocationStyle(style, duration), constraints = Constraints(maxWidth = contentWidth)
+                ).size.height else 0
+                val informationHeight = locationHeight + if (hasStatus) 11.dp.roundToPx() else 0
+                // Includes card insets, content padding, inter-line gap and rounding slack.
+                val required = name.size.height + informationHeight + 9.dp.toPx()
+                rowHeight = maxOf(rowHeight, ceil(required / duration))
+            }
+            ceil(rowHeight).toDp()
         }
     }
 }
@@ -1073,12 +1160,7 @@ fun TimetableLayout(
     ) { measurables, constraints ->
         val width = constraints.maxWidth
         val columnWidth = width / 7f
-        val compactThreshold = 50.dp.toPx()
-        val ultraCompactThreshold = 42.dp.toPx()
-        val cardInset = when {
-            columnWidth < ultraCompactThreshold -> 1.dp.roundToPx()
-            else -> 1.dp.roundToPx()
-        }
+        val cardInset = 1.dp.roundToPx()
         val pxPerPeriod = periodHeight.toPx()
 
         val placeables = measurables.mapIndexed { index, measurable ->
@@ -1130,16 +1212,6 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
     val borderColor = course.color.copy(alpha = 0.50f)
     val accentColor = course.color.copy(alpha = 0.85f)
 
-    val nameFontSize = when {
-        duration == 1 -> 10.5.sp
-        duration == 2 -> 11.sp
-        else -> 11.5.sp
-    }
-    val locationFontSize = when {
-        duration <= 2 -> 9.sp
-        else -> 9.5.sp
-    }
-
     val displayLocation = course.location
 
     val interactionSource = remember { MutableInteractionSource() }
@@ -1152,6 +1224,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
 
     Surface(
         modifier = Modifier
+            .testTag("schedule-course-${course.id}")
             .focusRequester(focusRequester)
             .onGloballyPositioned {
                 cardBounds = it.boundsInWindow()
@@ -1218,19 +1291,23 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
             ) {
                 Text(
                     text = course.name,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = courseNameStyle(MaterialTheme.typography.labelSmall, duration),
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = nameFontSize,
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = (nameFontSize.value + 1.5).sp,
-                    letterSpacing = (-0.2).sp
                 )
 
-                if (displayLocation.isNotBlank() || course.hasConflict || course.isCurrent || course.isCustom || unknownWeeks) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (course.hasConflict || course.isCurrent || course.isCustom || unknownWeeks) Icon(
+                if (displayLocation.isNotBlank()) {
+                    Text(
+                        text = displayLocation,
+                        modifier = Modifier.fillMaxWidth().testTag("schedule-location-${course.id}"),
+                        style = courseLocationStyle(MaterialTheme.typography.labelSmall, duration),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true
+                    )
+                }
+                // A status symbol must not reserve a column beside every line of a long address.
+                if (course.hasConflict || course.isCurrent || course.isCustom || unknownWeeks) Icon(
                         imageVector = when { course.hasConflict || unknownWeeks -> Icons.Default.Warning
                             course.isCurrent -> Icons.Default.PlayArrow
                             else -> Icons.Default.Edit },
@@ -1238,18 +1315,6 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                         modifier = Modifier.size(10.dp),
                         tint = if (course.hasConflict || unknownWeeks) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = displayLocation,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Normal,
-                        fontSize = locationFontSize,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = (locationFontSize.value + 1.5).sp
-                    )
-                    }
-                }
             }
         }
     }

@@ -1,7 +1,9 @@
 # API 31/32 折射（自实现 AGSL 替代）
 
 > 面向：想知道「33 以下的液态玻璃是怎么做出来的」的人。
-> 结论先说：**着色器是 kyant AGSL 的逐行移植，不是我写的算法；把它跑起来的那套离屏管线是这个项目自己写的。**
+> 折射位移与色散配方沿用 kyant AGSL，非对称轮廓按 Compose 的实测四角计算；离屏渲染、采样与缓存管线由本项目实现。
+>
+> 2026-09-13 的整机修正与验证见 [API 32 验证记录](testing/2026-09-13-api32-fixes.md)。下文旧设备的耗时只作为历史参考。
 
 ## 1. 问题
 
@@ -15,7 +17,7 @@ if (!isRuntimeShaderSupported()) return   // Lens.kt:22
 静默 return —— 折射直接不存在。这两个版本有 `RenderEffect`（所以模糊、
 描边、阴影都正常），唯独缺逐像素着色。
 
-目标：在 31/32 上复现 33+ 的观感，且**不改变 33+ 的任何行为**。
+目标：在 31/32 上复现 33+ 的观感，共享材质与布局；33+ 继续走平台 AGSL。
 
 ## 2. 为什么是 OpenGL ES 2.0
 
@@ -37,16 +39,16 @@ if (!isRuntimeShaderSupported()) return   // Lens.kt:22
 
 `GlassLensShader.kt` 的片元着色器是
 `kyant/AndroidLiquidGlass` 里 `RoundedRectRefractionWithDispersionShaderString`
-（`backdrop/.../internal/Shaders.kt:87`）的**逐行同式翻译**，AGSL → GLSL ES 1.00。
+（`backdrop/.../internal/Shaders.kt`）的位移与色散公式移植，AGSL → GLSL ES 1.00。
 一一对应关系：
 
 | 库 AGSL | 本项目 GLSL | 说明 |
 | --- | --- | --- |
-| `sdRoundedRect` | `sdRoundedRect` | 圆角矩形 SDF，同式 |
-| `gradSdRoundedRect` | `gradSdRoundedRect` | SDF 解析梯度，同式 |
+| `sdRoundedRect` | `sdUniformRoundedRect` / `roundedRectGeometry` | 对称控件保持简洁计算；非对称大圆角可以跨越形状中线 |
+| `gradSdRoundedRect` | `gradUniformRoundedRect` / `roundedRectGeometry` 的梯度 | 圆角弧与直线边界采用同一几何 |
 | `circleMap(x)` | `circleMap(x)` | `1 - sqrt(1 - x²)`，同式 |
 | `d = circleMap(1 - -sd/h) * amount` | 同 | 位移量沿斜坡的分布曲线 |
-| `gradRadius = min(radius*1.5, min(halfSize))` | 同 | 让胶囊两端方向不突变 |
+| `gradRadius = min(radius*1.5, min(halfSize))` | 四角乘 1.5 后按相邻边长整体缩放 | 对称胶囊结果相同，非对称菜单保留四角比例 |
 | `dispersionIntensity = (cx*cy)/(hx*hy)` | `dispScale` | 色散的位置调制：四角最大、两中轴为 0 |
 | 七次 `content.eval()` + 权重 | 七次 `texture2D()` + 同权重 | 红/橙/黄/绿/青/蓝/紫，权重表照抄 |
 | `setFloatUniform("refractionAmount", -amount)` | `d` 取负 | 取负 + 朝外梯度 = 朝**内**采样 |
@@ -55,12 +57,11 @@ if (!isRuntimeShaderSupported()) return   // Lens.kt:22
 
 - `half4`/`float2` → `vec4`/`vec2`；`content.eval(coord)` → `texture2D(u_tex, uv)`。
 - AGSL 的 `content` 是平台喂的输入图像，坐标是像素；GL 里得自己传纹理 +
-  `u_srcOrigin`/`u_srcScale` 做归一化换算。
-- 库支持四个角**不同**半径（`cornerRadii` 是 `float4` + `radiusAt()`）；
-  这里只传一个 `u_radius`。App 里所有折射元素都是等角的（胶囊/等圆角矩形），
-  四角不等的情况用不到。
-- 库的 alpha 通道也参与色散累加（`color.a += red.a / 7.0`）；这里输出恒 `alpha=1`，
-  形状外直接 `vec4(0.0)` 由 Compose 侧 clip 负责。
+  `u_srcOrigin`、`u_srcXAxis`、`u_srcYAxis` 做仿射换算，包含祖先缩放、旋转和控件形变。
+- `u_radii` 和 `u_gradientRadii` 分别保存轮廓与梯度的四个圆角。单层圆弧菜单的
+  大圆角不能单独限制为半短边，否则会出现溢出菜单的大圆形折射。
+- 采样底图包含完整背景，形状边缘使用半像素覆盖率和预乘 alpha，形状外透明；
+  Compose 侧再按同一四角轮廓裁剪，避免前一帧的外形溢出当前形状。
 - 变量不能叫 `flat` —— GLSL ES 1.00 保留字，用了整条折射静默降级。
 
 ### 3.2 自己写的（库里没有对应物）
@@ -78,9 +79,22 @@ if (!isRuntimeShaderSupported()) return   // Lens.kt:22
 行数是快照，改代码时容易忘了同步（已经飘过一次）。以 `wc -l` 为准，别照着这里的数字下结论。
 
 仪器测试在 `app/src/androidTest/.../glass/`：`GlassLensRendererTest` 验上线代码真的出
-折射（含区域共享语义、同尺寸重传、静止态饱和度不变式，7 个用例）；另三个是探路
+折射（含区域共享语义、同尺寸重传、静止态饱和度不变式，8 个用例）；
+`GlassLensGeometryDeviceTest` 和 `GlassLensSourceCachingDeviceTest` 另验四角轮廓、
+变换坐标、输出位图寿命、像素预算及缓存。另三个是探路
 阶段的证据，分别记录 `Bitmap.createBitmap(Picture)` 可用、ES 2.0 离屏可跑复杂
 着色器、以及零回读通路**更慢所以放弃**。
+
+当前缓存约束：
+
+- 开始按钮关闭时采样 112×112dp；菜单展开后才扩大为覆盖扇形与 24dp 边距的区域。
+- 圆弧菜单的模糊光学底层最多回读 160,000 个像素，逻辑坐标不变；按钮、文字、
+  图标与外轮廓仍使用原分辨率。
+- 底栏的静态模糊背景与动画图标分别缓存。滚动只采集背景，图标动画只采集前景，
+  两张已有快照直接在 CPU 合成，避免再走一次 GPU 回读。图标图层完成绘制后再通知
+  折射层更新，既避免每帧重新模糊页面，也避免停止后留住上一帧填充。
+- GLES 回读缓冲可以复用；已经交给 Compose 的输出位图不得改写或回收，
+  因为 RenderThread 的显示列表可能仍持有它。
 
 这部分是本项目原创，因为库根本不需要它：AGSL 由平台喂输入、由平台合成输出，
 不存在「上下文」「底图」「重拍」这些概念。
@@ -109,7 +123,8 @@ Modifier.glassLens.draw()   画**上一帧**的结果，同时提交本帧
 
 三个关键决定：
 
-**画上一帧的结果。** 在 `draw()` 里同步等 GPU 会把 UI 线程钉住；折射差一帧看不出来。
+**画上一帧的结果。** 在 `draw()` 里同步等 GPU 会阻塞 UI 线程，因此结果准备好后
+再触发重绘。正常情况下只落后一帧；高负载时的真实延迟仍需在整机上测量。
 
 **底图按区域共享，FBO 按元素独占。** 早期两者在同一个类里，一个锚点只服务一个元素，
 所以没暴露。改成 App 级共享锚点后立刻炸：所有元素往同一个 FBO 提交、又都读同一张
@@ -139,10 +154,13 @@ Modifier.glassLens.draw()   画**上一帧**的结果，同时提交本帧
   `latest`（冻结在最后一帧）或兜底位图，只是不再提交新帧。曾经 failed 检查
   放在画 latest **之前**的 return，失败后一个像素都不画，直到元素重组。
 
-**内存画像**（1080p 级）：GPU 常驻 ≈ 底栏条 + 全屏锐利底图 +（懒拍，首次
+**历史内存画像**（1080p 级）：GPU 常驻 ≈ 底栏条 + 全屏锐利底图 +（懒拍，首次
 开弹窗才有）全屏模糊底图 + 成绩页区域 ≈ 25MB 级；CPU 侧 capture 产物上传后
 即弃（GC 瞬态），兜底位图在正常路径上只存在于「首拍完成 → 首帧渲出」窗口内
 （约一张全屏 ARGB，一至三帧）。模态底图是懒的，不是预烤的。
+
+2026-09-13 起底栏分别保留静态模糊背景与图标快照，避免反复回读不变的图层；
+输出位图由显示列表和 GC 管理，具体峰值需重新测量，不能沿用旧版稳态内存结论。
 
 一个例外：**元素级失败且从未渲出过帧**时 `onFrameDrawn()` 永不触发，兜底位图
 会一直持有到锚点离开组合。这是有意的代价 —— 它是那个元素唯一还看得见东西的
@@ -237,7 +255,8 @@ GL/引擎级与底图捕获失败用 snapshot state 存（`failed` 触发重组�
 ## 9. 已知未完成
 
 - API 31 没有真机验证过（只有 32 和 35）。
-- 底栏指示器亮度比按算法预测值低约 6%（预测 222.7，实测 213）。**已排除着色器
+- 下面是旧版底栏亮度排查记录；其中硬截断等实现细节不再代表当前的边缘抗锯齿路径。
+  底栏指示器亮度比按算法预测值低约 6%（预测 222.7，实测 213）。**已排除当时着色器
   这一侧**，别再去调光学参数：
 
   | 假设 | 结论 | 依据 |
@@ -265,7 +284,8 @@ GL/引擎级与底图捕获失败用 snapshot state 存（`failed` 触发重组�
   31/32 上折射已由 `glassLens` + `ThumbLens.kt` 的 `thumbLensOptics` 接管。
   那几个 dp 数字照库 catalog 的 LiquidSlider 抄，是刻意保留的，见
   `ThumbLens.kt` 的类注释。
-- 真机上的实际帧开销还没量（探针已随本版删除，量的时候要重新加回临时插桩）。
+- 物理手机的实际帧开销还没量。MuMu API 32 的 FrameMetrics 诊断已补充，
+  结果与主机负载限制见 [2026-09-13 验证记录](testing/2026-09-13-api32-fixes.md)。
 
 ## 10. 参考
 
