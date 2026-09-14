@@ -4,6 +4,33 @@
 > 自 1.0.68 起，每个版本的更新日志以 `release-notes/vX.Y.Z.md` 为唯一数据源，由 CI 扇出到本文件、GitHub Release 与应用内更新提示。
 > 1.0.67 未发布：该 tag 的流水线在版本号校验步骤失败，未产出任何 Release，内容顺延至 1.0.68。
 
+## [1.0.77] - 2026-09-15
+
+### 登录与账号
+
+- 新增河北传媒学院（hebic）默认学校配置，教务地址 `jwxt.hebic.cn`，系统类型 auto。
+- 新增正方定制 CAS 统一身份认证（SSO）：`ZhengfangCasProtocol` 解析登录页，`ZhengfangCasSsoClient` 执行 CAS 流程，`ZhengfangRsaCrypto` 处理 RSA 密码加密；由 ZF 适配器自动探测，不按学校特判，同类正方 CAS 学校直接受益。
+- 修复登录成功后提示"已登录但未识别到学号"的问题：学号识别增加 `sessionUserKey` 回退提取。
+- `MatchingMemoryCookieJar` 放宽域名匹配，`ZjutSsoProtocol` 协议细节微调。
+
+### 课表
+
+- 抽取 `ScheduleCacheStore` 统一管理课表缓存，快照增加 `appliedCalendar` 字段。
+- `ScheduleDates` 新增 `mondayOfWeek`，教学周按周一为起点计算。
+- 学期开始日期变更自增 `revision`，设置页保存后立即生效；新增 `ScheduleCalendarFlowDeviceTest` 覆盖保存起始日期与系统返回键场景。
+
+### 玻璃与动效
+
+- 新增 `GlassLensCapture` 图层捕获与几何单测，`GlassLens`、`GlassLensRenderer`、`GlassLensShader` 采样与合成优化。
+- 抢课页增加清晰背景层，控制台展开时才显示模糊；底栏、分段栏、液态控件动效细节调整。
+- 新增玻璃捕获性能、页面入场、华为玻璃流程、模块阴影与连续性等设备测试。
+
+### 验证
+
+- 真实账号端到端冒烟：登录成功且学号识别正常。
+- 全量 JVM 单测通过，Debug 与 Release APK 构建成功。
+- 选课列表待学校开放选课阶段后由真实用户复核。
+
 ## [1.0.76] - 2026-09-13
 
 ### 玻璃显示与拖动
