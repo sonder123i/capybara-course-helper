@@ -7,6 +7,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SchedulePersistenceTest {
+    @Test fun semesterStartDatePublishesOnlyChangesAndSurvivesReload() {
+        val prefs = MemoryPreferences()
+        val manager = ScheduleSettingsManager(prefs)
+        val initialRevision = manager.revision
+        manager.semesterStartDate = 1_778_457_600_000L
+        assertTrue(manager.revision > initialRevision)
+        assertEquals(manager.semesterStartDate, ScheduleSettingsManager(prefs).semesterStartDate)
+        val changedRevision = manager.revision
+        manager.semesterStartDate = manager.semesterStartDate
+        assertEquals(changedRevision, manager.revision)
+    }
+
     @Test fun periodCountChangesPublishRevisionSoBackNavigationCannotLeaveAStaleGrid() {
         val manager = ScheduleSettingsManager(MemoryPreferences())
         val previous = manager.revision

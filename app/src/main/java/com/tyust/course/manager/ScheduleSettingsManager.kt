@@ -94,7 +94,9 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
     var semesterStartDate: Long
         get() = getScopedLong(KEY_SEMESTER_START, 0L)
         set(value) {
+            if (semesterStartDate == value) return
             prefs?.edit()?.putLong(scopedKey(KEY_SEMESTER_START), value)?.remove(KEY_SEMESTER_START)?.apply()
+            revision++
         }
     
     /**

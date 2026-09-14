@@ -1,13 +1,160 @@
 package com.tyust.course.academic
 
 import com.tyust.course.model.SchoolConfig
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.Jsoup
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
 
 internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession, transport: AcademicHttpTransport) :
-    BaseAcademicAdapter(school, session, transport, AcademicSystem.ZF) {
+    BaseAcademicAdapter(school, session, transport, AcademicSystem.ZF), AcademicCaptchaLogin {
+    @Volatile private var casAttempt: CasLoginAttempt? = null
+
+    private class CasLoginAttempt(
+        val sso: ZhengfangCasSsoClient,
+        val username: String,
+        var password: String,
+        var loginPage: ZhengfangCasProtocol.LoginPage,
+        var publicKey: ZhengfangCasProtocol.PublicKey,
+        val sessionEpoch: Long
+    )
+
     override suspend fun login(credentials: Credentials): LoginResult = serial {
+        clearLoginState()
         session.invalidate()
+        session.username = credentials.username
+        val ssoEntry = discoverSsoEntry()
+        if (ssoEntry != null) loginViaCas(ssoEntry, credentials) else loginViaForm(credentials)
+    }
+
+    // ---- 正方 CAS 统一身份认证（SSO）登录 ----
+
+    /** 探测 {教务根}/sso/zfiotlogin 是否重定向到正方定制 CAS。 */
+    private suspend fun discoverSsoEntry(): ZhengfangCasSsoClient? {
+        val base = (school.getFullBasePath().trimEnd('/') + "/").toHttpUrlOrNull() ?: return null
+        return ZhengfangCasSsoClient.discover(base, requireHttps = school.protocol.equals("https", true))
+    }
+
+    private suspend fun loginViaCas(ssoEntry: ZhengfangCasSsoClient, credentials: Credentials): LoginResult {
+        // CAS 域名记入白名单：登录成功后随学校配置持久化，同时修复 WebView 跳转被拦截的问题
+        val casUrl = ssoEntry.casLoginUrl
+        val defaultPort = if (casUrl.scheme == "https") 443 else 80
+        val casHost = buildString {
+            append(casUrl.host.lowercase())
+            if (casUrl.port != defaultPort) append(':').append(casUrl.port)
+        }
+        if (casHost.isNotBlank() && !school.allowedAcademicHosts.contains(casHost)) school.allowedAcademicHosts.add(casHost)
+        val loginPage = ssoEntry.fetchLoginPage()
+        val publicKey = ssoEntry.fetchPublicKey()
+        val attempt = CasLoginAttempt(ssoEntry, credentials.username, credentials.password, loginPage, publicKey, session.epoch)
+        return if (ssoEntry.fetchKaptchaRequired()) {
+            val image = ssoEntry.fetchCaptchaImage()
+            casAttempt = attempt
+            LoginResult(AcademicStatus.CAPTCHA_REQUIRED, captcha = CaptchaChallenge(image, "authcode", "cas"))
+        } else {
+            submitCasLogin(attempt, "")
+        }
+    }
+
+    private suspend fun submitCasLogin(attempt: CasLoginAttempt, authcode: String, retryCount: Int = 0): LoginResult {
+        val encrypted = try {
+            ZhengfangCasProtocol.encryptPassword(attempt.password, attempt.publicKey)
+        } catch (_: ZhengfangCasProtocol.ProtocolException) {
+            return finishCasLogin(LoginResult(AcademicStatus.PAGE_CHANGED, message = "统一认证密码加密失败"))
+        }
+        return when (val outcome = attempt.sso.submitLoginForm(attempt.username, encrypted, attempt.loginPage, authcode)) {
+            is ZhengfangCasSsoClient.SubmitOutcome.FlowExecutionError -> {
+                // CAS 多节点偶发 flow 状态解码失败: 换新的 execution 重试，无需用户介入
+                if (retryCount >= MAX_CAS_RETRIES) {
+                    finishCasLogin(LoginResult(AcademicStatus.PAGE_CHANGED, message = "统一认证暂时不可用，请稍后重试"))
+                } else {
+                    attempt.loginPage = attempt.sso.fetchLoginPage()
+                    submitCasLogin(attempt, authcode, retryCount + 1)
+                }
+            }
+            is ZhengfangCasSsoClient.SubmitOutcome.Rejected -> handleCasRejection(attempt, outcome.html)
+            is ZhengfangCasSsoClient.SubmitOutcome.Authenticated -> completeCasLogin(attempt)
+        }
+    }
+
+    private suspend fun handleCasRejection(attempt: CasLoginAttempt, html: String): LoginResult {
+        // 失败页通常带新 execution，刷新后供下次提交使用
+        try {
+            attempt.loginPage = attempt.sso.fetchLoginPage()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 刷新失败时保留旧 execution，继续按失败页内容分类
+        }
+        val error = ZhengfangCasProtocol.errorMessage(html)
+        return when {
+            ZhengfangCasProtocol.indicatesInvalidCredentials(error) || ZhengfangCasProtocol.indicatesInvalidCredentials(html) ->
+                finishCasLogin(LoginResult(AcademicStatus.INVALID_CREDENTIALS))
+            ZhengfangCasProtocol.indicatesCaptchaProblem(error) || ZhengfangCasProtocol.indicatesCaptchaProblem(html) -> {
+                // 按应用约定：验证码被拒时返回不带图片的 CAPTCHA_REQUIRED → 上层提示验证码错误，
+                // UI 随后通过 refreshCaptcha 主动获取新图
+                casAttempt = attempt
+                LoginResult(AcademicStatus.CAPTCHA_REQUIRED, message = error.ifBlank { "验证码不正确" })
+            }
+            else -> finishCasLogin(LoginResult(
+                AcademicStatus.VALIDATION_FAILED,
+                message = error.ifBlank { "统一认证登录失败，请检查账号密码或稍后重试" }
+            ))
+        }
+    }
+
+    private suspend fun completeCasLogin(attempt: CasLoginAttempt): LoginResult {
+        val ticketUrl = attempt.sso.fetchServiceTicket()
+        val landing = attempt.sso.exchangeTicket(ticketUrl)
+        if (AcademicHtml.isLoginPage(landing.body)) {
+            return finishCasLogin(LoginResult(AcademicStatus.SESSION_EXPIRED, message = "教务系统登录会话建立失败，请重试"))
+        }
+        importTeachingCookies(attempt.sso)
+        val identity = validateIdentity()
+        return if (identity != null) {
+            finishCasLogin(LoginResult(AcademicStatus.SUCCESS, identity.first, identity.second))
+        } else {
+            finishCasLogin(LoginResult(AcademicStatus.VALIDATION_FAILED, message = "统一认证登录成功，但未能读取学号，请重试或使用教务网页登录"))
+        }
+    }
+
+    private fun importTeachingCookies(sso: ZhengfangCasSsoClient) {
+        val base = (school.getFullBasePath().trimEnd('/') + "/").toHttpUrlOrNull() ?: return
+        session.cookies.saveFromResponse(base, sso.teachingCookies())
+    }
+
+    private fun finishCasLogin(result: LoginResult): LoginResult = result.also {
+        if (it.status != AcademicStatus.CAPTCHA_REQUIRED) clearLoginState()
+    }
+
+    private fun currentCasAttempt(): CasLoginAttempt? = casAttempt?.takeIf { it.sessionEpoch == session.epoch }
+        .also { if (it == null) clearLoginState() }
+
+    override suspend fun submitCaptcha(code: String): LoginResult = serial {
+        val attempt = currentCasAttempt() ?: return@serial LoginResult(AcademicStatus.SESSION_EXPIRED, message = "登录会话已失效，请重新登录")
+        if (code.isBlank()) return@serial LoginResult(AcademicStatus.CAPTCHA_REQUIRED, message = "请输入验证码")
+        submitCasLogin(attempt, code.trim())
+    }
+
+    override suspend fun refreshCaptcha(): CaptchaChallenge? = serial {
+        val attempt = currentCasAttempt() ?: return@serial null
+        try {
+            CaptchaChallenge(attempt.sso.fetchCaptchaImage(), "authcode", "cas")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun clearLoginState() {
+        casAttempt?.sso?.clear()
+        casAttempt = null
+    }
+
+    // ---- 直登表单登录（无 CAS 入口的学校） ----
+
+    private suspend fun loginViaForm(credentials: Credentials): LoginResult = serial {
         session.username = credentials.username
         val page = transport.get(transport.appUrl("xtgl/login_slogin.html?time=${System.currentTimeMillis()}"))
         val document = Jsoup.parse(page.text, page.url)
@@ -35,7 +182,8 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
 
     private suspend fun validateIdentity(): Pair<String, String>? {
         val response = transport.get(transport.appUrl("xtgl/index_cxYhxxIndex.html?gnmkdm=index"))
-        val identity = parseName(Jsoup.parse(response.text, response.url))
+        var identity = parseName(Jsoup.parse(response.text, response.url))
+        if (identity.second.isBlank()) identity = zfMenuIdentityFallback(identity)
         return identity.takeIf { it.first.isNotBlank() || it.second.isNotBlank() }
     }
 
@@ -124,5 +272,9 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
             "xkxnm" to target.course.raw["xkxnm"].orEmpty(), "xkxqm" to target.course.raw["xkxqm"].orEmpty(), "txbsfrl" to "0")
         val response = transport.postForm(transport.appUrl("xsxk/zzxkyzb_tuikBcZzxkYzb.html?gnmkdm=${school.courseGnmkdm}"), values, write = true)
         OperationResult(AcademicJson.zfStatus(response.text, response.code), AcademicJson.message(response.text))
+    }
+
+    private companion object {
+        const val MAX_CAS_RETRIES = 2
     }
 }

@@ -15,7 +15,7 @@ internal class MatchingMemoryCookieJar(
         for (cookie in cookies) {
             this.cookies.removeAll { stored -> stored.cookie.hasSameIdentityAs(cookie) }
             if (cookie.expiresAt > now) {
-                this.cookies += StoredCookie(cookie, url.host)
+                this.cookies += StoredCookie(cookie, url.host, url.port)
             }
         }
     }
@@ -43,8 +43,16 @@ internal class MatchingMemoryCookieJar(
         cookies.clear()
     }
 
+    /** 返回由指定来源（host:port）的响应种下的全部 Cookie（不受 path 匹配限制），供会话迁移使用。 */
+    @Synchronized
+    fun cookiesSetBy(host: String, port: Int): List<Cookie> {
+        val now = clockMillis()
+        cookies.removeAll { it.cookie.expiresAt <= now }
+        return cookies.filter { it.setByHost == host && it.setByPort == port }.map(StoredCookie::cookie)
+    }
+
     private fun Cookie.hasSameIdentityAs(other: Cookie): Boolean =
         name == other.name && domain == other.domain && path == other.path
 
-    private data class StoredCookie(val cookie: Cookie, val setByHost: String)
+    private data class StoredCookie(val cookie: Cookie, val setByHost: String, val setByPort: Int)
 }

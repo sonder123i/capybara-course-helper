@@ -130,13 +130,31 @@ internal abstract class BaseAcademicAdapter(
         }
         val response = transport.get(transport.appUrl(path))
         if (AcademicHtml.isLoginPage(response.text) || response.code !in 200..299) return@serial LoginResult(AcademicStatus.SESSION_EXPIRED)
-        val identity = parseName(org.jsoup.Jsoup.parse(response.text, response.url))
+        var identity = parseName(org.jsoup.Jsoup.parse(response.text, response.url))
+        if (system == AcademicSystem.ZF && identity.second.isBlank()) identity = zfMenuIdentityFallback(identity)
         val authenticated = identity.first.isNotBlank() || identity.second.isNotBlank() ||
             listOf("xsxk.aspx", "xklc_list", "退出登录", "学期理论课表", "选课结果").any(response.text::contains)
         if (!authenticated) return@serial LoginResult(AcademicStatus.SESSION_EXPIRED, message = "无法验证教务登录状态")
         val studentId = identity.second.ifBlank { session.username }
         if (studentId.isNotBlank()) session.username = studentId
         LoginResult(AcademicStatus.SUCCESS, identity.first, studentId)
+    }
+
+    /**
+     * ZF: 部分学校（如河北传媒学院）的 cxYhxx 页面是定制变体，仅含姓名不含学号。
+     * 回退到框架首页 initMenu 读取隐藏域 sessionUserKey（正方 v5 标准结构）。
+     */
+    protected suspend fun zfMenuIdentityFallback(identity: Pair<String, String>): Pair<String, String> {
+        val menu = try {
+            transport.get(transport.appUrl("xtgl/index_initMenu.html"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return identity
+        }
+        if (AcademicHtml.isLoginPage(menu.text)) return identity
+        val fallback = parseName(org.jsoup.Jsoup.parse(menu.text, menu.url))
+        return identity.first.ifBlank { fallback.first } to fallback.second
     }
     protected fun check(context: CourseContext) {
         if (context.sessionEpoch != session.epoch) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "Course context belongs to an expired session")
@@ -184,11 +202,30 @@ internal fun parseName(document: Document): Pair<String, String> {
         label.text().replace(" ", "").trimEnd(':', '：') to
             label.nextElementSibling()?.takeIf { it.hasClass("middletopdwxxcont") }?.text().orEmpty()
     }
-    val name = document.select("input[name=xm], .media-heading, [name=studentName], #xhxm, .user-name, #studentName").firstOrNull()?.let { it.attr("value").ifBlank { it.text() }.removeSuffix("同学").trim() }.orEmpty()
+    val name = document.select("input[name=xm], .media-heading, [name=studentName], #xhxm, .user-name, #studentName")
+        .firstOrNull()?.let { element ->
+            val raw = element.attr("value").ifBlank { element.text() }
+            // input 的 value 是纯姓名，不做角色后缀剥离；文本节点（media-heading 等）可能带"学生/教师"标签
+            cleanIdentityText(raw, stripRoleSuffix = element.tagName() != "input")
+        }.orEmpty()
         .ifBlank { profileFields["学生姓名"].orEmpty() }
-    val id = document.select("input[name=xh], input[name=studentId], #studentId").firstOrNull()?.let { it.attr("value").ifBlank { it.text() } }.orEmpty()
+    val id = document.select("input[name=xh], input[name=studentId], #studentId, #sessionUserKey")
+        .firstOrNull()?.let { it.attr("value").ifBlank { it.text() } }?.trim().orEmpty()
         .ifBlank { profileFields["学号"].orEmpty() }
     return name.trim() to id.trim()
+}
+
+/**
+ * 归一空白；文本源可选剥离"同学/学生/教师/老师"身份后缀。
+ * 兼容正方 v5 定制首页的 media-heading 变体："姓名&nbsp;&nbsp;学生"。
+ */
+private fun cleanIdentityText(raw: String, stripRoleSuffix: Boolean): String {
+    val normalized = raw.replace('\u00A0', ' ').replace(Regex("\\s+"), " ").trim()
+    return if (stripRoleSuffix) {
+        normalized.removeSuffix("同学").removeSuffix("学生").removeSuffix("教师").removeSuffix("老师").trim()
+    } else {
+        normalized
+    }
 }
 
 internal suspend fun <T> AcademicProtocolAdapter.inSession(block: suspend () -> T): T =

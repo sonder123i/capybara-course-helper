@@ -86,6 +86,11 @@ public class UserManager {
         // 初始化默认学校
         defaultSchools.add(new SchoolConfig("tyust", "太原科技大学", "newjwc.tyust.edu.cn", "https"));
         defaultSchools.add(new SchoolConfig("zjut", "浙江工业大学", "www.gdjw.zjut.edu.cn", "http"));
+        // 河北传媒学院：正方新版教务挂在根路径，登录走统一身份认证（CAS SSO，由 ZF 适配器自动探测）
+        SchoolConfig hebic = new SchoolConfig("hebic", "河北传媒学院", "jwxt.hebic.cn", "https");
+        hebic.academicSystem = "auto";
+        hebic.basePath = "";
+        defaultSchools.add(hebic);
         // 重要修复：这里不要直接赋值 currentSchool，等待 init() 时从 SharedPreferences 加载
     }
 

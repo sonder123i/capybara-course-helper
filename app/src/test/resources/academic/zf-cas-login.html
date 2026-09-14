@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <title>统一身份认证平台</title>
+</head>
+<body id="login_new">
+<div class="login-page">
+    <div class="login-container">
+        <div class="login-form" id="qcode">
+            <form id="fm1" action="login?v=0.123456789 " method="post">
+                <input id="username" name="username" class="form-control" type="text" value="" autocomplete="off"/>
+                <input class="form-control" id="ppassword" type="password" value="" autocomplete="off"/>
+                <input id="password" name="password" type="password" style="display: none;" value=""/>
+                <input id="authcode" name="authcode" class="form-control" type="text" value=""/>
+                <input type="hidden" name="execution" value="test-execution-token-0123456789abcdef"/>
+                <input type="hidden" name="_eventId" value="submit"/>
+                <p class="error text-left" id="errormsg"></p>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>

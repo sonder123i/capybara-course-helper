@@ -80,7 +80,8 @@ private data class ScheduleRouteSnapshot(
     val periodTimes: List<PeriodTimeUi>,
     val periodCount: Int,
     val isNextSemester: Boolean,
-    val termId: String = ""
+    val termId: String = "",
+    val appliedCalendar: String? = null
 )
 
 private object ScheduleRouteMemoryCache {
@@ -142,6 +143,7 @@ fun ScheduleRoute() {
     var detailSourceBounds by remember(routeAccountKey) { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var editingId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var resolvedTermId by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.termId.orEmpty()) }
+    var appliedCalendar by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.appliedCalendar) }
     var notificationCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var settingsTermOverride by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var deletedCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
@@ -150,6 +152,9 @@ fun ScheduleRoute() {
     
     // Managers
     val settingsManager = remember { ScheduleSettingsManager.getInstance().apply { init(context) } }
+    val scheduleCache = remember(context) {
+        ScheduleCacheStore(context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE))
+    }
     val reminderScheduler = remember(context) { ScheduleReminderScheduler.get(context) }
     val customRevision = settingsManager.revision
     val customCourses = remember(customRevision, routeAccountKey) { settingsManager.getCustomCourses(routeAccountKey) }
@@ -180,7 +185,8 @@ fun ScheduleRoute() {
         periodTimes = periodTimes,
         periodCount = periodCount,
         isNextSemester = isNextSemester,
-        termId = resolvedTermId
+        termId = resolvedTermId,
+        appliedCalendar = appliedCalendar
     )
     val latestSnapshotForCache by rememberUpdatedState(snapshotForCache)
     val canCacheSnapshot by rememberUpdatedState(hasInitializedRoute && !isLoading && loadError.isBlank())
@@ -198,21 +204,6 @@ fun ScheduleRoute() {
             Color(0xFF5C6BC0), Color(0xFF42A5F5), Color(0xFF66BB6A), Color(0xFFFFA726),
             Color(0xFFAB47BC), Color(0xFFEF5350), Color(0xFF26C6DA), Color(0xFF8D6E63)
         )
-    }
-
-    // Load Settings & Cache
-    fun loadScheduleFromCache(key: String): String? {
-        return try {
-            val prefs = context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE)
-            prefs.getString(key, null)
-        } catch (e: Exception) { null }
-    }
-    
-    fun saveScheduleToCache(key: String, json: String) {
-        try {
-            val prefs = context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE)
-            prefs.edit().putString(key, json).putLong("${key}_time", System.currentTimeMillis()).apply()
-        } catch (e: Exception) { }
     }
 
     fun parseSchedule(json: String): List<ScheduleCourseUi>? = ScheduleJson.parse(json)?.map { entry ->
@@ -238,39 +229,54 @@ fun ScheduleRoute() {
     val loadSchedule = remember(isNextSemester, session.token) {
         fun(forceRefresh: Boolean) {
             if (isDemoMode) {
-                courses = DemoData.scheduleCourses()
+                resolvedTermId = (if (isNextSemester) DemoData.currentTerm.next() else DemoData.currentTerm).id
+                courses = reloadCustomCourses(DemoData.scheduleCourses())
                 isLoading = false
                 return
             }
             val school = UserManager.getInstance().currentSchool
             if (school == null) return
             val ticket = requests.begin("schedule")
+            studyLoadJob?.cancel()
+            val generation = ++studyGeneration
+            val account = UserManager.getInstance().currentAccountStorageKey
+            val currentTerm = scheduleCache.currentTerm(account, school.id)
+            val requestedTerm = if (isNextSemester) currentTerm.next() else currentTerm
+            val cached = scheduleCache.selected(account, school.id, isNextSemester)
+            loadError = ""
+            if (!forceRefresh && cached != null) {
+                courses = reloadCustomCourses(requireNotNull(parseSchedule(cached.json)))
+                resolvedTermId = cached.term.id
+                isLoading = false
+                reminderScheduler.updateSnapshot(routeAccountKey, cached.term.id, courses.map { it.record() })
+                return
+            }
+            // Refresh in place. Only a different semester must discard the previous rows.
+            if (resolvedTermId != requestedTerm.id) courses = reloadCustomCourses(emptyList())
+            val hasRetainedSchedule = cached != null || courses.isNotEmpty()
+            isLoading = true
 
             if (AcademicGatewayFactory.supports(school)) {
-                studyLoadJob?.cancel()
-                val generation = ++studyGeneration
-                val account = UserManager.getInstance().currentAccountStorageKey
-                isLoading = true
-                loadError = ""
-                courses = emptyList()
                 studyLoadJob = scope.launch {
                     try {
-                        val (cacheKey, json, termId) = withContext(Dispatchers.IO) {
-                            val reader = AcademicStudyBridge.reader(school, account, ticket.session)
-                            val current = reader.catalog().currentTerm
-                            val term = if (isNextSemester) current.next() else current
-                            val entries = reader.schedule(term)
-                            Triple("schedule_${account}_${school.id}_${term.id}", AcademicStudyBridge.scheduleJson(entries), term.id)
+                        val loaded = withContext(Dispatchers.IO) {
+                            scheduleCache.load(account, school.id, isNextSemester, forceRefresh) {
+                                AcademicStudyBridge.reader(school, account, ticket.session)
+                            }
                         }
                         if (!requests.isCurrent(ticket) || studyGeneration != generation) return@launch
-                        saveScheduleToCache(cacheKey, json)
-                        courses = reloadCustomCourses(requireNotNull(parseSchedule(json)))
-                        resolvedTermId = termId
-                        reminderScheduler.updateSnapshot(routeAccountKey, termId, courses.map { it.record() })
+                        scheduleCache.save(account, school.id, loaded)
+                        courses = reloadCustomCourses(requireNotNull(parseSchedule(loaded.json)))
+                        resolvedTermId = loaded.term.id
+                        reminderScheduler.updateSnapshot(routeAccountKey, loaded.term.id, courses.map { it.record() })
+                        if (forceRefresh) GlassToaster.show("已同步课表")
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
-                        if (requests.isCurrent(ticket) && studyGeneration == generation)
-                            loadError = e.message ?: "课表同步失败，请重试"
+                        if (requests.isCurrent(ticket) && studyGeneration == generation) {
+                            val message = e.message ?: "课表同步失败，请重试"
+                            if (hasRetainedSchedule) GlassToaster.show("同步失败，已保留本地课表：$message")
+                            else loadError = message
+                        }
                     } finally {
                         if (requests.isCurrent(ticket) && studyGeneration == generation) isLoading = false
                     }
@@ -278,49 +284,20 @@ fun ScheduleRoute() {
                 return
             }
             
-            val calendar = Calendar.getInstance()
-            val year = calendar.get(Calendar.YEAR)
-            val month = calendar.get(Calendar.MONTH)
-            var xnm = if (month >= 7) year.toString() else (year - 1).toString()
-            var xqm = if (month >= 7 || month <= 0) "3" else "12"
-            
-            // 智能判断下一学期
-            if (isNextSemester) {
-                if (xqm == "3") {
-                    xqm = "12" // 当前是第一学期，下学期是第二学期
-                } else {
-                    xqm = "3" // 当前是第二学期，下学期是下一年第一学期
-                    xnm = (xnm.toInt() + 1).toString()
-                }
-            }
-            
-            val accountKey = UserManager.getInstance().currentAccountStorageKey
+            val xnm = requestedTerm.year.toString()
+            val xqm = if (requestedTerm.semester == 1) "3" else "12"
             fun isRequestAccountActive(): Boolean {
                 return requests.isCurrent(ticket)
             }
-            val cacheKey = "schedule_${accountKey}_${school.id}_${xnm}_${xqm}"
-            val requestTermId = "$xnm-${xnm.toInt() + 1}-${if (xqm == "3") 1 else 2}"
+            val requestTermId = requestedTerm.id
             resolvedTermId = requestTermId
-
-            if (!forceRefresh) {
-                // Try cache
-                loadScheduleFromCache(cacheKey)?.let { json ->
-                    val cached = parseSchedule(json)
-                    if (cached != null) {
-                        courses = reloadCustomCourses(cached)
-                    }
-                }
-            }
-
-            isLoading = true
-            loadError = ""
             CourseApiClient.getInstance().fetchSchedule(school, "xnm=$xnm&xqm=$xqm", object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     scope.launch(Dispatchers.Main) {
                         if (!isRequestAccountActive()) return@launch
                         isLoading = false
-                        loadError = "加载失败：${e.message}"
-                        if (courses.isEmpty()) GlassToaster.show("加载失败：${e.message}")
+                        if (hasRetainedSchedule) GlassToaster.show("同步失败，已保留本地课表")
+                        else loadError = "加载失败：${e.message}"
                     }
                 }
 
@@ -330,7 +307,7 @@ fun ScheduleRoute() {
                          scope.launch(Dispatchers.Main) { 
                              if (!isRequestAccountActive()) return@launch
                              isLoading = false
-                             loadError = "请先登录"
+                             if (!hasRetainedSchedule) loadError = "请先登录"
                              GlassToaster.show("请先登录") 
                          }
                         return
@@ -340,13 +317,14 @@ fun ScheduleRoute() {
                         if (!isRequestAccountActive()) return@launch
                         isLoading = false
                         if (parsed != null) {
-                            saveScheduleToCache(cacheKey, json)
+                            scheduleCache.save(account, school.id, CachedSchedule(currentTerm, requestedTerm, json, false))
                             courses = reloadCustomCourses(parsed)
                             reminderScheduler.updateSnapshot(routeAccountKey, requestTermId, courses.map { it.record() })
                             if (forceRefresh) GlassToaster.show("已刷新")
                         } else {
-                            loadError = "课表响应无效，请重试"
-                            GlassToaster.show(loadError)
+                            val message = "课表响应无效，请重试"
+                            if (!hasRetainedSchedule) loadError = message
+                            GlassToaster.show(message)
                         }
                     }
                 }
@@ -390,6 +368,16 @@ fun ScheduleRoute() {
     }
     LaunchedEffect(displayedTimeBase) {
         periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
+    }
+    LaunchedEffect(resolvedTermId, displayedTimeBase?.firstWeekDate) {
+        if (resolvedTermId.isBlank()) return@LaunchedEffect
+        val calendar = "$resolvedTermId|${displayedTimeBase?.firstWeekDate.orEmpty()}"
+        // Apply date changes when saved, including system-back dismissal. Retain a
+        // browsed week across page restoration and unrelated reminder/time changes.
+        if (appliedCalendar != calendar) {
+            appliedCalendar = calendar
+            currentWeek = ScheduleDates.weekAt(displayedTimeBase?.firstWeekDate, System.currentTimeMillis()) ?: 1
+        }
     }
     LaunchedEffect(undoDeadline) {
         if (undoDeadline > 0) {
@@ -491,10 +479,13 @@ fun ScheduleRoute() {
                 customCourses = customCourses,
                 onAddCustomCourse = { editingId = java.util.UUID.randomUUID().toString() },
                 onEditCustomCourse = { editingId = it },
+                onSyncSchedule = {
+                    close()
+                    loadSchedule(true)
+                },
                 onClose = {
                     periodCount = settingsManager.periodCount
                     periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
-                    ScheduleDates.weekAt(displayedTimeBase?.firstWeekDate, System.currentTimeMillis())?.let { currentWeek = it }
                     close()
                 }
             )

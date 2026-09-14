@@ -6,6 +6,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScheduleDomainTest {
+    @Test fun chosenDateNormalizesToLocalMondayAcrossMonthAndDstBoundaries() {
+        val zone = java.util.TimeZone.getTimeZone("Europe/Berlin")
+        listOf(Triple(2026, 2, 31) to "2026-03-30", Triple(2026, 10, 1) to "2026-10-26")
+            .forEach { (date, expected) ->
+                val chosen = java.util.Calendar.getInstance(zone).apply {
+                    clear()
+                    set(date.first, date.second, date.third, 19, 45)
+                }
+                val monday = ScheduleDates.mondayOfWeek(chosen.timeInMillis, zone)
+                assertEquals(ScheduleDates.firstMonday(expected, zone)?.timeInMillis, monday.timeInMillis)
+                assertEquals(java.util.Calendar.MONDAY, monday.get(java.util.Calendar.DAY_OF_WEEK))
+                assertEquals(0, monday.get(java.util.Calendar.HOUR_OF_DAY))
+                assertEquals(0, monday.get(java.util.Calendar.MINUTE))
+                assertEquals(0, monday.get(java.util.Calendar.SECOND))
+            }
+    }
+
     @Test fun themeSelectionOverridesSystemAndUnknownPreferencesFollowSystem() {
         for (system in listOf(false, true)) {
             assertEquals(system, resolveDarkTheme(AppThemeMode.System, system))

@@ -95,7 +95,8 @@ fun ScheduleSettingsScreen(
     periodTimesOverride: List<PeriodTime>? = null,
     customCourses: List<ScheduleSettingsManager.CustomCourse> = emptyList(),
     onAddCustomCourse: (() -> Unit)? = null,
-    onEditCustomCourse: (String) -> Unit = {}
+    onEditCustomCourse: (String) -> Unit = {},
+    onSyncSchedule: (() -> Unit)? = null
 ) {
     var periodCount by remember { mutableStateOf(manager.periodCount) }
     var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
@@ -210,7 +211,7 @@ fun ScheduleSettingsScreen(
                                 icon = Icons.Filled.DateRange,
                                 iconTint = Color(0xFF0A84FF),
                                 title = "第一周开始日期",
-                                subtitle = "决定当前是第几周",
+                                subtitle = "按所选日期所在周的周一计算周次",
                                 trailing = {
                                     Text(
                                         text = dateText,
@@ -248,6 +249,12 @@ fun ScheduleSettingsScreen(
                         }
                     }
 
+                    if (onSyncSchedule != null) {
+                        InsetGroupedSection(header = "课表数据") {
+                            InsetGroupedRow(title = "同步课表", subtitle = "从教务系统更新正在查看的学期",
+                                showDivider = false, onClick = onSyncSchedule)
+                        }
+                    }
                     StaggerIn(index = 1, settled = entranceSettled) {
                         InsetGroupedSection(
                             header = "节次时间",
@@ -286,15 +293,16 @@ fun ScheduleSettingsScreen(
             // 而主窗口在这个 Dialog 窗口的后面——弹窗于是被设置页整页挡住、看不见。
             if (showDatePicker) {
                 GlassDatePickerDialog(
-                    title = "选择第一周周一日期",
+                    title = "选择第一周日期",
                     initialMillis = if (semesterStartDate > 0) {
                         semesterStartDate
                     } else {
                         System.currentTimeMillis()
                     },
                     onConfirm = { millis ->
-                        if (onSemesterStartChange != null) onSemesterStartChange(millis) else manager.semesterStartDate = millis
-                        semesterStartDate = millis
+                        val monday = com.tyust.course.schedule.ScheduleDates.mondayOfWeek(millis).timeInMillis
+                        if (onSemesterStartChange != null) onSemesterStartChange(monday) else manager.semesterStartDate = monday
+                        semesterStartDate = monday
                         showDatePicker = false
                     },
                     onDismiss = { showDatePicker = false }

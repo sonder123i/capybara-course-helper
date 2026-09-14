@@ -4,6 +4,17 @@ import java.util.Calendar
 import java.util.TimeZone
 
 object ScheduleDates {
+    /** UI-selected dates use Monday-based teaching weeks, in the user's local zone. */
+    fun mondayOfWeek(millis: Long, zone: TimeZone = TimeZone.getDefault()): Calendar =
+        Calendar.getInstance(zone).apply {
+            timeInMillis = millis
+            add(Calendar.DAY_OF_MONTH, -((get(Calendar.DAY_OF_WEEK) + 5) % 7))
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
     fun firstMonday(value: String?, zone: TimeZone = TimeZone.getDefault()): Calendar? = runCatching {
         val parts = requireNotNull(value).split('-').map(String::toInt)
         require(parts.size == 3)
