@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
@@ -79,6 +80,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
@@ -137,6 +139,9 @@ import com.tyust.course.ui.system.glass.glassLensAnchor
 import com.tyust.course.ui.system.glass.glassLensOpticsFrom
 import com.tyust.course.ui.system.glass.glassRim
 import com.tyust.course.ui.system.glass.rememberGlassLensAnchor
+import com.tyust.course.ui.system.glass.rememberGlassLensRegion
+import com.tyust.course.ui.system.glass.GlassLensContentSnapshot
+import com.tyust.course.ui.system.glass.LocalPageGlassFreshness
 import com.tyust.course.ui.system.glass.motionIntensityFromVelocity
 import com.tyust.course.ui.system.glass.resolvePhysicalLens
 import com.tyust.course.ui.theme.MotionEasing
@@ -424,14 +429,15 @@ fun LiquidSegmentedControl(
     val clampedSelectedIndex = selectedIndex.coerceIn(0, optionCount - 1)
     val glassBackdrop = backdrop?.takeIf { isBackdropSupported() }
     val useGlass = glassBackdrop != null
-    // 真 lens（API33+）折射色散；API31/32 固定 blur 毛玻璃
+    // API 33+ uses a runtime lens; API 31/32 refracts the background asynchronously.
     val hasRealLens = isRuntimeLensEnabled()
     val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     val trackShape = RoundedCornerShape(percent = 50)
     val indicatorShape = RoundedCornerShape(percent = 50)
-    // 隐藏内容层与环境层合成为选中透镜的采样源：折射要看得见，
-    // 采样源里必须有高对比边缘（文字），只折射平滑壁纸等于没有折射。
-    val segmentsBackdrop = rememberLayerBackdrop()
+    // Keep labels in the optical source on both paths. API 31/32 refreshes this
+    // small overlay independently from the more expensive page background.
+    val segmentLabelsSnapshot = remember { GlassLensContentSnapshot() }
+    val segmentsBackdrop = rememberLayerBackdrop(onDraw = { segmentLabelsSnapshot.draw(this) })
     val animationScope = rememberCoroutineScope()
     val accessibility = rememberGlassAccessibilityMode()
     val trackMaterial = GlassMaterials.resolve(
@@ -553,38 +559,29 @@ fun LiquidSegmentedControl(
         // API 31/32：平台没有 AGSL，改用离屏 ES 2.0 做真折射（见 GlassLens.kt）。
         // 结构与 CapsuleNavigationBar 一致：锚点挂在**不随滑块移动**的外层，
         // 底图上传一次，滑块滑动时只改采样窗口。
-        //
-        // 底图必须复现**原来 indicatorBackdrop 是什么**，一层不多一层不少：
-        //   `rememberCombinedBackdrop(glassBackdrop, segmentsBackdrop)`
-        // = 环境背景（**不模糊**）+ 染成主色的锐利文字。
-        //
-        // 这里曾经照抄底栏的做法，加了 blur(8dp) 和一层轨道底色。结果滑块整体
-        // 发灰发褐，和粉色轨道明显割裂 —— 因为那两层是**底栏**滑块压着的东西，
-        // 不是这个控件的。底栏的可见轨道本来就带 8dp 模糊、滑块压在模糊层上；
-        // 这个控件的滑块压的是未模糊的环境背景（轨道的模糊只作用于轨道自己那层，
-        // 滑块采样的 indicatorBackdrop 里没有它）。
-        // 教训：折射底图要照着**这个元素原本采样的 backdrop** 重建，不能照抄别处。
+        // The background stays sharp; the separate label overlay keeps real text
+        // refraction without rereading the page whenever a glyph changes.
         val lensDensity = LocalDensity.current
         val lensAnchor = if (glassBackdrop != null) {
             // 标签带上选项文字：屏幕上同时有多个分段控件，且尺寸可能相同
             // （登录页的「密码登录/Cookie登录」与课程页的「可选/已选」都是 381x126），
             // 只按尺寸命名会互相覆盖。
-            rememberGlassLensAnchor(tag = "seg-" + options.joinToString("_")) { coords ->
+            rememberGlassLensRegion("seg-" + options.joinToString("_"), isLightTheme,
+                freshness = LocalPageGlassFreshness.current,
+                rasterizeOverlayOnCpu = true,
+                overlaySource = { coords ->
+                    segmentLabelsSnapshot.draw(this, coords)
+                }) { coords ->
                 with(glassBackdrop) { drawBackdrop(lensDensity, coords, null) }
-                with(segmentsBackdrop) { drawBackdrop(lensDensity, coords, null) }
             }
         } else {
             null
         }
         // 把锚点交给外层的 glassLensAnchor（它需要外层那块不动的坐标）
         SideEffect { segLensAnchor = lensAnchor }
-        // 选中项变化会改写隐藏文字层的内容，底图要重拍
-        LaunchedEffect(lensAnchor, clampedSelectedIndex, isLightTheme) {
-            lensAnchor?.invalidate()
-        }
+        // The region refreshes both after selection and after the underlying page settles.
 
-        // 可见标签层：作为轨道 Box 的内容绘制，随轨道 layerBlock 一起放大，
-        // 手势与语义也归属该内容层（与 CapsuleNavigationBar 结构一致）。
+        // One visible label row owns gestures and semantics on every API level.
         val segmentLabels: @Composable () -> Unit = {
         Row(
             modifier = Modifier
@@ -718,6 +715,15 @@ fun LiquidSegmentedControl(
         }
         }
 
+        val trackTransform: GraphicsLayerScope.() -> Unit = {
+            val maxGain = 16.dp.toPx()
+            val pressScale = lerp(1f, 1f + maxGain / size.width, dragAnimation.pressProgress)
+            val indicatorBoost = ((dragAnimation.scaleX + dragAnimation.scaleY) / 2f - 1f)
+                .coerceIn(0f, 0.4f)
+            val scale = pressScale * (1f + indicatorBoost * 0.18f)
+            scaleX = scale
+            scaleY = scale
+        }
         val fallbackIndicatorColor = MaterialTheme.colorScheme.surface
         Box(
             modifier = Modifier
@@ -757,17 +763,7 @@ fun LiquidSegmentedControl(
                                 if (hasRealLens) Highlight.Default.copy(alpha = 0.16f) else null
                             },
                             shadow = { if (hasRealLens) Shadow(alpha = 0.08f) else null },
-                            layerBlock = {
-                                val progress = dragAnimation.pressProgress
-                                val maxGain = 16.dp.toPx()
-                                val pressScale = lerp(1f, 1f + maxGain / size.width, progress)
-                                val indicatorBoost = (
-                                    (dragAnimation.scaleX + dragAnimation.scaleY) / 2f - 1f
-                                    ).coerceIn(0f, 0.4f)
-                                val scale = pressScale * (1f + indicatorBoost * 0.18f)
-                                scaleX = scale
-                                scaleY = scale
-                            },
+                            layerBlock = trackTransform,
                             onDrawSurface = { drawRect(trackBackgroundColor) }
                         )
                     } else {
@@ -790,8 +786,6 @@ fun LiquidSegmentedControl(
                     }
                 )
         ) {
-            // 可见标签与手势收进轨道内容层：轨道 layerBlock 放大时文字同步放大。
-            // 它位于滑块之下，因此选中项是"透过玻璃看到的"，折射才有意义。
             segmentLabels()
         }
 
@@ -807,19 +801,23 @@ fun LiquidSegmentedControl(
         if (glassBackdrop != null && indicatorBackdrop != null) {
             // 专供滑块折射采样的隐藏层：染成主色后，透镜里浮出的就是饱和蓝字，
             // 滑块表面因此可以做到几乎透明，不必靠白色填充去制造存在感。
+            val labelTint = ColorFilter.tint(if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
             Row(
                 modifier = Modifier
                     .clearAndSetSemantics { }
-                    .alpha(0f)
                     .layerBackdrop(segmentsBackdrop)
                     .align(Alignment.CenterStart)
                     .height(indicatorHeight)
                     .fillMaxWidth()
-                    .padding(horizontal = horizontalPadding)
-                    .graphicsLayer(
-                        colorFilter = ColorFilter.tint(if (enabled) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
-                    ),
+                    .onGloballyPositioned { segmentLabelsSnapshot.coordinates = it }
+                    .drawWithContent {
+                        // Async readback must own the glyph commands, not mutable child layers
+                        // that page transitions can discard before the capture is rasterized.
+                        segmentLabelsSnapshot.record(this, labelTint)
+                        lensAnchor?.invalidateOverlay()
+                    }
+                    .padding(horizontal = horizontalPadding),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 options.forEachIndexed { index, label ->

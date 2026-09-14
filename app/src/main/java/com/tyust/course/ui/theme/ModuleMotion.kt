@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 
@@ -35,6 +36,9 @@ object ModuleMotion {
 fun Modifier.moduleEntrance(group: Int, progress: (() -> Float)? = null): Modifier {
     val timeline = progress ?: LocalModuleEntrance.current ?: return this
     return graphicsLayer {
+        // Auto creates a bounds-sized offscreen layer while alpha < 1, clipping
+        // glass shadows until the last frame. Fade the draw commands directly.
+        compositingStrategy = CompositingStrategy.ModulateAlpha
         val p = ModuleMotion.progress(timeline(), group)
         alpha = p
         translationY = 16.dp.toPx() * (1f - p)

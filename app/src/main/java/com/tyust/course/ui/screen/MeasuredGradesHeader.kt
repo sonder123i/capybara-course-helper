@@ -57,7 +57,8 @@ internal fun MeasuredGradesHeader(
     val layer = rememberLayerBackdrop()
     val controlBackdrop = if (backdrop != null) rememberCombinedBackdrop(backdrop, layer) else null
     val anchor = if (controlBackdrop != null) rememberGlassLensRegion("grades-chips", selected, refreshing, showShare,
-        (p * 8).toInt(), drawSource = { drawBackdropSource(controlBackdrop, density, it) }) else null
+        (p * 8).toInt(), freshness = LocalPageGlassFreshness.current,
+        drawSource = { drawBackdropSource(controlBackdrop, density, it) }) else null
     val measurer = rememberTextMeasurer()
     val tabStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium)
     val minTabWidth = tabs.sumOf { label ->

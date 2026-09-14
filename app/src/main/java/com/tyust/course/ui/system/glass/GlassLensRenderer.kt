@@ -6,6 +6,7 @@ import android.opengl.GLUtils
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.IntSize
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArraySet
@@ -29,8 +30,17 @@ internal data class GlassLensParams(
     val vibrancy: Float,
     val corners: GlassLensCorners = GlassLensCorners.uniform(cornerRadiusPx),
     val sourceAxes: GlassLensSourceAxes = GlassLensSourceAxes(),
-    val maxRenderPixels: Int = Int.MAX_VALUE
+    val maxRenderPixels: Int = Int.MAX_VALUE,
+    val sourceGeneration: Int = 0
 )
+
+internal data class GlassLensRenderedFrame(
+    val bitmap: Bitmap,
+    val params: GlassLensParams,
+    val sourceSize: IntSize
+) {
+    val sourceGeneration: Int get() = params.sourceGeneration
+}
 
 /**
  * 一块底图的 GL 纹理，被**同一个区域内的所有元素**共享。
@@ -62,7 +72,8 @@ internal class GlassLensSource {
     internal var srcHeight = 0
         private set
 
-    private var uploadedVersion = -1
+    internal var uploadedVersion = -1
+        private set
 
     @Volatile
     internal var revision = 0L
@@ -100,7 +111,7 @@ internal class GlassLensSource {
      * 上传底图。[version] 变化才会真正重传。
      * 传入的 bitmap 必须是可读的（非 HARDWARE config）。
      */
-    fun uploadSource(bitmap: Bitmap, version: Int) {
+    fun uploadSource(bitmap: Bitmap, version: Int, onUploaded: (() -> Unit)? = null) {
         if (failed || released) return
         GlassLensEngine.post {
             if (failed || released) return@post
@@ -131,6 +142,7 @@ internal class GlassLensSource {
                 srcHeight = bitmap.height
                 uploadedVersion = version
                 revision++
+                onUploaded?.invoke()
                 listeners.forEach { it(revision) }
             } catch (t: Throwable) {
                 fail("uploadSource", t)
@@ -206,7 +218,7 @@ internal class GlassLensSource {
  *
  * 实测渲染+回读 195×156 约 0.27ms（中位）/ 0.78ms（p90），Adreno 640 / API 32。
  */
-internal class GlassLensTarget(private val source: GlassLensSource) {
+internal class GlassLensTarget(private val source: GlassLensSource, private val tag: String = "anon") {
 
     // 渲染目标：必须用 FBO，不能直接画进默认 framebuffer。
     // 默认 framebuffer 就是引擎那个 1×1 的 pbuffer，glViewport 再大也会被裁到
@@ -220,8 +232,10 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
     /** Published frames are never mutated or recycled: RenderThread can retain them. */
     @Volatile
-    var latest: Bitmap? = null
+    var latestFrame: GlassLensRenderedFrame? = null
         private set
+
+    val latest: Bitmap? get() = latestFrame?.bitmap
 
     /**
      * 新帧就绪时回调，用来请求重绘。
@@ -272,7 +286,10 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
     }
 
     private fun scheduleRender() {
+        val queuedAt = System.nanoTime()
         GlassLensEngine.post {
+            val started = System.nanoTime()
+            GlassLensCaptureObserver.onTiming?.invoke(tag, "render-queue", started - queuedAt)
             val request = frames.next() ?: return@post
             var rendered = false
             try {
@@ -282,6 +299,7 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
             } catch (t: Throwable) {
                 fail("render", t)
             } finally {
+                GlassLensCaptureObserver.onTiming?.invoke(tag, "render", System.nanoTime() - started)
                 if (frames.finish(request, rendered)) scheduleRender()
             }
         }
@@ -298,7 +316,7 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
                 if (fbo != 0) GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
                 fboTexture = 0
                 fbo = 0
-                latest = null
+                latestFrame = null
             } catch (_: Throwable) {
                 // 释放期异常无意义，忽略
             }
@@ -311,6 +329,9 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
 
     private fun renderBlocking(p: GlassLensParams): Boolean {
         if (!GlassLensEngine.ensureReady()) return false
+        // A resized/moved capture must not be combined with the previous layout's
+        // sampling coordinates, even when its upload finishes between two draws.
+        if (p.sourceGeneration != 0 && p.sourceGeneration != source.uploadedVersion) return false
         val srcWidth = source.srcWidth
         val srcHeight = source.srcHeight
         if (srcWidth <= 0 || srcHeight <= 0) return false
@@ -387,7 +408,7 @@ internal class GlassLensTarget(private val source: GlassLensSource) {
         // 两次反向恰好抵消，所以产物已经是 Canvas 期望的自上而下，
         // **绘制侧不要再翻转**，否则内容上下镜像。
         if (released) return false
-        latest = out
+        latestFrame = GlassLensRenderedFrame(out, p, IntSize(srcWidth, srcHeight))
         onFrameReady?.invoke()
         return true
     }

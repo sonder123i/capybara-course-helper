@@ -1,5 +1,15 @@
 package com.tyust.course.ui.screen
 
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntSize
+import com.kyant.backdrop.Backdrop
+
 import com.tyust.course.ui.theme.moduleEntrance
 import com.tyust.course.ui.theme.ModuleMotion
 import com.tyust.course.ui.theme.LocalModuleEntrance
@@ -10,6 +20,7 @@ import com.tyust.course.ui.system.glass.LocalGlassLensAnchor
 import com.tyust.course.ui.system.glass.LocalPageGlassFreshness
 import com.tyust.course.ui.system.glass.rememberGlassLensRegion
 import com.tyust.course.ui.system.glass.drawBackdropSource
+import com.tyust.course.ui.system.glass.isGlassLensApplicable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.snapshotFlow
 
@@ -255,10 +266,18 @@ fun GrabProScreen(
     }
     val wallpaper = LocalAppBackdrop.current
     val pageBackdrop = if (wallpaper != null && isBackdropSupported()) rememberLayerBackdrop() else null
+    val sharpPageBackdrop = if (pageBackdrop != null && isGlassLensApplicable() && !reduced)
+        rememberLayerBackdrop() else null
+    val blurVisible by remember(controlsState) {
+        derivedStateOf { controlsState.expanded || controlsState.progress > 0f }
+    }
     val controlBackdrop = if (wallpaper != null && pageBackdrop != null) rememberCombinedBackdrop(wallpaper, pageBackdrop) else wallpaper
     val lensDensity = LocalDensity.current
     val controlsLens = if (controlBackdrop != null) rememberGlassLensRegion("grab-controls", console, queueVersion,
-        controlsState.expanded, freshness = LocalPageGlassFreshness.current) { coordinates ->
+        controlsState.expanded, freshness = LocalPageGlassFreshness.current,
+        // The resting button stays native; the expanded, blurred fan does not need
+        // a million-pixel readback on every background update.
+        maxCapturePixels = 180_000) { coordinates ->
         drawBackdropSource(controlBackdrop, lensDensity, coordinates)
     } else null
     val entrance = LocalModuleEntrance.current
@@ -274,12 +293,15 @@ fun GrabProScreen(
     }
     // The source contains wallpaper + the page, while the button and its fan stay outside it.
     Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (pageBackdrop != null) Modifier.layerBackdrop(pageBackdrop) else Modifier)) {
     Scaffold(
-        modifier = Modifier.then(if (pageBackdrop != null) Modifier.layerBackdrop(pageBackdrop) else Modifier).graphicsLayer {
+        modifier = (if (sharpPageBackdrop != null && blurVisible) Modifier.graphicsLayer {
+            alpha = 1f - controlsState.progress
+        }.layerBackdrop(sharpPageBackdrop) else Modifier.graphicsLayer {
             val blur = controlsState.progress * 14.dp.toPx()
             renderEffect = if (!reduced && Build.VERSION.SDK_INT >= 31 && blur > 0.1f)
                 BlurEffect(blur, blur, TileMode.Clamp) else null
-        }.then(if (controlsState.expanded) Modifier.clearAndSetSemantics {} else Modifier),
+        }).then(if (controlsState.expanded) Modifier.clearAndSetSemantics {} else Modifier),
         containerColor = Color.Transparent,
         topBar = {
             Box(Modifier.moduleEntrance(0)) {
@@ -404,6 +426,13 @@ fun GrabProScreen(
             item(key = "runtime-log") { Box(Modifier.moduleEntrance(3)) { LogConsole(logText, onClearLog, logExpanded, { logExpanded = it }) } }
         }
     }
+    if (sharpPageBackdrop != null && blurVisible) {
+        // API 31/32: keep one fixed blur result and crossfade it. Replacing a
+        // full-screen blur kernel every animation frame stalls the phone's GPU.
+        GrabPageBlur(sharpPageBackdrop,
+            Modifier.matchParentSize().graphicsLayer { alpha = controlsState.progress }.clearAndSetSemantics {})
+    }
+    }
     CompositionLocalProvider(LocalAppBackdrop provides controlBackdrop, LocalControlBackdrop provides controlBackdrop,
         LocalGlassLensAnchor provides controlsLens) {
     LiquidTaskControls(quickActions, overlayInset, controlsState, lensAnchor = controlsLens) { expanded, progress, toggle ->
@@ -412,6 +441,31 @@ fun GrabProScreen(
     }
     }
     }
+}
+
+/** Keep the 14dp blur footprint while filtering a quarter-sized image on API 31/32. */
+@Composable
+private fun GrabPageBlur(backdrop: Backdrop, modifier: Modifier) {
+    val layer = rememberGraphicsLayer()
+    val density = LocalDensity.current
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    Box(modifier.onGloballyPositioned { coordinates = it }.drawWithCache {
+        val reducedSize = IntSize((size.width / 4f).toInt().coerceAtLeast(1),
+            (size.height / 4f).toInt().coerceAtLeast(1))
+        val scaleX = reducedSize.width / size.width
+        val scaleY = reducedSize.height / size.height
+        layer.renderEffect = BlurEffect(14.dp.toPx() * scaleX, 14.dp.toPx() * scaleY, TileMode.Clamp)
+        onDrawBehind {
+            coordinates?.takeIf { it.isAttached }?.let { coords ->
+                layer.record(size = reducedSize) {
+                    withTransform({ scale(scaleX, scaleY, Offset.Zero) }) {
+                        drawBackdropSource(backdrop, density, coords)
+                    }
+                }
+                withTransform({ scale(1f / scaleX, 1f / scaleY, Offset.Zero) }) { drawLayer(layer) }
+            }
+        }
+    })
 }
 
 @Immutable

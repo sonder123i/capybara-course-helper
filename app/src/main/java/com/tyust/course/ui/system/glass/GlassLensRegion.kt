@@ -69,22 +69,35 @@ fun rememberGlassLensRegion(
     tag: String,
     vararg keys: Any?,
     freshness: GlassLensFreshness? = null,
+    overlaySource: (DrawScope.(LayoutCoordinates) -> Unit)? = null,
+    maxCapturePixels: Int = Int.MAX_VALUE,
+    rasterizeOverlayOnCpu: Boolean = false,
     drawSource: DrawScope.(LayoutCoordinates) -> Unit
 ): GlassLensAnchor? {
-    val anchor = rememberGlassLensAnchor(tag = tag, drawSource = drawSource)
+    val anchor = rememberGlassLensAnchor(tag = tag, overlaySource = overlaySource,
+        maxCapturePixels = maxCapturePixels, rasterizeOverlayOnCpu = rasterizeOverlayOnCpu,
+        drawSource = drawSource)
     // keys 是 vararg（Array），直接当 LaunchedEffect 的 key 会按引用比较 ——
     // 每次组合都是新数组，于是每次组合都重拍。转成 List 走结构相等。
     val contentKey = keys.toList()
-    LaunchedEffect(anchor, contentKey) { anchor?.invalidate() }
+    LaunchedEffect(anchor, contentKey) {
+        anchor?.invalidate()
+        if (anchor != null && contentKey.isNotEmpty()) {
+            // A tab's first draw still contains the outgoing AnimatedContent layer.
+            // Capture the settled page too; another key change cancels this follow-up.
+            delay(360)
+            anchor.invalidate()
+        }
+    }
     LaunchedEffect(anchor, freshness) {
         if (anchor == null || freshness == null) return@LaunchedEffect
         // 版本号在 flow **里**读，不在组合期读：它是 mutableIntState，
         // 组合期读等于让整棵子树订阅滚动，滑动时每 throttleMs 重组一次。
         // collectLatest 让新的滚动取消上一次的 delay，只有真正停下的那次走到底。
         snapshotFlow { freshness.version }.collectLatest {
-            anchor.invalidate()
+            anchor.invalidateBackground()
             delay(140)
-            anchor.invalidate()
+            anchor.invalidateBackground()
         }
     }
     return anchor

@@ -19,6 +19,7 @@ import com.tyust.course.utils.CourseParser
 object DemoData {
     const val SCHOOL_ID = "demo"
     const val ACCOUNT_KEY = "demo::preview"
+    val currentTerm = com.tyust.course.academic.AcademicTerm("2025-2026-2")
 
     private val defaultGrabClassIds = linkedSetOf("CS204-01", "AI310-01", "DES116-01", "PSY108-01", "PE087-01")
     private var sessionGrabClassIds = defaultGrabClassIds.toMutableSet()

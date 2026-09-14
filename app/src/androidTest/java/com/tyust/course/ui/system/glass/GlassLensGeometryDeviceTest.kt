@@ -68,6 +68,26 @@ class GlassLensGeometryDeviceTest {
         } finally { target.release(); source.release() }
     }
 
+    @Test fun transparentSourcePixelsNeverBecomeOpaqueBlack() {
+        val source = GlassLensSource()
+        val target = GlassLensTarget(source)
+        try {
+            for ((generation, alpha) in listOf(0, 96).withIndex()) {
+                source.uploadSource(Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888).apply {
+                    eraseColor(Color.argb(alpha, 220, 180, 140))
+                }, generation + 1)
+                for ((amount, dispersion) in listOf(0f to 0f, 18f to 0f, 18f to 1f)) {
+                    val output = render(target, params().copy(lensAmountPx = amount, dispersion = dispersion,
+                        sourceGeneration = generation + 1))
+                    for ((x, y) in listOf(128 to 116, 128 to 229, 235 to 80)) {
+                        assertEquals("Transparent or fading content must retain its alpha at $x,$y",
+                            alpha.toFloat(), Color.alpha(output.getPixel(x, y)).toFloat(), 2f)
+                    }
+                }
+            }
+        } finally { target.release(); source.release() }
+    }
+
     @Test fun publishedFramesRemainUnchangedAcrossFurtherFramesResizeAndRelease() {
         val source = GlassLensSource()
         val target = GlassLensTarget(source)

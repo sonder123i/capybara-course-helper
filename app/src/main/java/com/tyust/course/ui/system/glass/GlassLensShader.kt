@@ -191,8 +191,8 @@ internal object GlassLensShader {
             // 注意不能让 glassLens() 在这种情况下整个退化成 no-op：调用方的
             // onDrawBackdrop 在 lensAnchor != null 时不会自己画背景，指望这一层出图。
             if (u_lensAmount <= 0.0) {
-                vec3 plain = texture2D(u_tex, toSrc(v_uv)).rgb;
-                gl_FragColor = vec4(applyVibrancy(plain, u_vibrancy) * coverage, coverage);
+                vec4 plain = texture2D(u_tex, toSrc(v_uv));
+                gl_FragColor = vec4(min(applyVibrancy(plain.rgb, u_vibrancy), vec3(plain.a)), plain.a) * coverage;
                 return;
             }
 
@@ -200,8 +200,8 @@ internal object GlassLensShader {
             if (-sd >= tw) {
                 // 变量名不能叫 flat：GLSL ES 1.00 的保留字（插值限定符），
                 // 用了会编译失败 "Illegal use of reserved word"，整条折射静默降级。
-                vec3 inner = texture2D(u_tex, toSrc(v_uv)).rgb;
-                gl_FragColor = vec4(applyVibrancy(inner, u_vibrancy) * coverage, coverage);
+                vec4 inner = texture2D(u_tex, toSrc(v_uv));
+                gl_FragColor = vec4(min(applyVibrancy(inner.rgb, u_vibrancy), vec3(inner.a)), inner.a) * coverage;
                 return;
             }
 
@@ -220,8 +220,8 @@ internal object GlassLensShader {
             vec2 lensOff = d * grad;
             vec2 baseUv = toSrc(v_uv) + sourceOffset(lensOff);
             if (u_dispersion <= 0.0001) {
-                vec3 refracted = texture2D(u_tex, baseUv).rgb;
-                gl_FragColor = vec4(applyVibrancy(refracted, u_vibrancy) * coverage, coverage);
+                vec4 refracted = texture2D(u_tex, baseUv);
+                gl_FragColor = vec4(min(applyVibrancy(refracted.rgb, u_vibrancy), vec3(refracted.a)), refracted.a) * coverage;
                 return;
             }
 
@@ -240,13 +240,13 @@ internal object GlassLensShader {
 
             vec3 color = vec3(0.0);
 
-            vec3 cRed    = texture2D(u_tex, baseUv + disp).rgb;
-            vec3 cOrange = texture2D(u_tex, baseUv + disp * (2.0 / 3.0)).rgb;
-            vec3 cYellow = texture2D(u_tex, baseUv + disp * (1.0 / 3.0)).rgb;
-            vec3 cGreen  = texture2D(u_tex, baseUv).rgb;
-            vec3 cCyan   = texture2D(u_tex, baseUv - disp * (1.0 / 3.0)).rgb;
-            vec3 cBlue   = texture2D(u_tex, baseUv - disp * (2.0 / 3.0)).rgb;
-            vec3 cPurple = texture2D(u_tex, baseUv - disp).rgb;
+            vec4 cRed    = texture2D(u_tex, baseUv + disp);
+            vec4 cOrange = texture2D(u_tex, baseUv + disp * (2.0 / 3.0));
+            vec4 cYellow = texture2D(u_tex, baseUv + disp * (1.0 / 3.0));
+            vec4 cGreen  = texture2D(u_tex, baseUv);
+            vec4 cCyan   = texture2D(u_tex, baseUv - disp * (1.0 / 3.0));
+            vec4 cBlue   = texture2D(u_tex, baseUv - disp * (2.0 / 3.0));
+            vec4 cPurple = texture2D(u_tex, baseUv - disp);
 
             color.r += cRed.r / 3.5;
             color.r += cOrange.r / 3.5;
@@ -275,7 +275,12 @@ internal object GlassLensShader {
             //
             // 三个通道的权重各自和为 1（r: 3×1/3.5 + 1/7；g: 3×1/3.5 + 1/7；
             // b: 3×1/3.0），所以均匀场进 = 均匀场出，色散不会整体染色。
-            gl_FragColor = vec4(clamp(color, 0.0, 1.0) * coverage, coverage);
+            // Captured page layers can be transparent during entrance/scrolling.
+            // Keep their premultiplied alpha instead of replacing it with an opaque
+            // shape mask, which turns an empty sample into a black rectangle.
+            float alpha = max(max(max(cRed.a, cOrange.a), max(cYellow.a, cGreen.a)),
+                max(max(cCyan.a, cBlue.a), cPurple.a));
+            gl_FragColor = vec4(clamp(color, 0.0, alpha), alpha) * coverage;
         }
     """.trimIndent()
 }

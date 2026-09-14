@@ -457,6 +457,12 @@ class MotionPolishDeviceTest {
                 compose.runOnIdle { shown.value = true }
                 val resting = capture("rest-$isDark-$kind")
                 val restMoved = movedStripeFraction(source, resting)
+                if (!isDark && pattern == 1) {
+                    Thread.sleep(700)
+                    val idle = capture("idle-$isDark-$kind")
+                    assertTrue("Refraction must remain visible without another pointer event",
+                        movedStripeFraction(source, idle) > 0.025f)
+                }
                 compose.mainClock.autoAdvance = false
                 compose.onNodeWithTag("grab-primary-action").performTouchInput { down(center + Offset(8f, -8f)) }
                 compose.mainClock.advanceTimeBy(180)

@@ -146,7 +146,10 @@ fun LiquidTaskControls(
             Box(Modifier.offset {
                 IntOffset((dockCenter.x - with(density) { beforeCenter.toPx() }).roundToInt(),
                     (dockCenter.y - with(density) { beforeCenter.toPx() }).roundToInt())
-            }.requiredSize(extent).glassLensAnchor(lensAnchor).clearAndSetSemantics {})
+            }.requiredSize(extent)
+                // Prepare the source while the primary button is still entering.
+                // Waiting for its first visible draw makes the expensive first crop arrive late.
+                .glassLensAnchor(lensAnchor, prewarm = dockSize != IntSize.Zero).clearAndSetSemantics {})
         }
         if (shown) {
             Box(Modifier.fillMaxSize()

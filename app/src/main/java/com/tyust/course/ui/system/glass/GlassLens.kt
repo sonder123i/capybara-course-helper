@@ -5,7 +5,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.Picture
+import android.graphics.RenderNode
 import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,17 +22,13 @@ import com.tyust.course.BuildConfig
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.CanvasHolder
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
@@ -40,10 +36,7 @@ import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import com.kyant.backdrop.Backdrop
 import com.tyust.course.manager.AppearanceSettingsManager
-import com.tyust.course.ui.system.LocalWallpaperAppearanceColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -58,16 +51,16 @@ import kotlinx.coroutines.flow.collectLatest
  * ## 结构
  * ```
  * [GlassLensAnchor]  锚定一块不随元素移动的区域（如整条导航条）
- *      │  Backdrop -> Picture -> 硬件位图 -> ARGB_8888（仅在内容变化时）
+ *      │  绘制结束后录制 RenderNode；专用线程完成位图回读
  *      ▼
  * [GlassLensRenderer]  自带 GL 线程；底图上传一次，逐帧只改 uniform
  *      │  渲染 + glReadPixels -> Bitmap（实测 0.27ms 中位 @ Adreno 640）
  *      ▼
- * Modifier.glassLens  在 draw() 里画上一帧的结果并提交下一帧
+ * Modifier.glassLens  校正上一帧的采样位置，并异步提交下一帧
  * ```
  *
- * 用「上一帧结果」是刻意的：在 `draw()` 里同步等 GPU 会把 UI 线程钉住，
- * 而折射差一帧看不出来。
+ * UI 线程不等待 GPU。无折射位移时直接重放实时图层；有折射时，旧帧的文字
+ * 保持在背景原位，避免随着滑块移动，直到新帧就绪。
  */
 
 private const val TAG = "GlassLens"
@@ -82,6 +75,7 @@ fun isGlassLensApplicable(): Boolean =
  *
  * 若挂在移动的元素上，每帧都要重新快照（实测约 3ms），必然掉帧。
  */
+@android.annotation.SuppressLint("NewApi")
 @Stable
 class GlassLensAnchor internal constructor(
     /**
@@ -105,7 +99,9 @@ class GlassLensAnchor internal constructor(
     internal val source: GlassLensSource,
     /** 站点名，出现在 [warnUnanchored] 的报错里，用来指认是哪块区域没挂上。 */
     internal val tag: String = "anon",
-    internal var drawOverlaySource: (DrawScope.(LayoutCoordinates) -> Unit)? = null
+    internal var drawOverlaySource: (DrawScope.(LayoutCoordinates) -> Unit)? = null,
+    internal var maxCapturePixels: Int = Int.MAX_VALUE,
+    internal var rasterizeOverlayOnCpu: Boolean = false
 ) {
 
     internal var coordinates: LayoutCoordinates? by mutableStateOf(null)
@@ -118,12 +114,25 @@ class GlassLensAnchor internal constructor(
     internal var version by mutableIntStateOf(0)
         private set
 
-    private var uploadedKey = -1L
     private var uploadedVersion = -1
     private var overlayVersion by mutableIntStateOf(0)
     private var uploadedOverlayVersion = -1
     private var uploadSequence = 0
-    private var capturedOrigin = Offset.Unspecified
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var captureQueued = false
+    private var captureInFlight = false
+    @Volatile private var disposed = false
+    private var recordedBackground: RenderNode? = null
+    private var recordedOverlay: RenderNode? = null
+    internal var captureFrame: GlassLensCaptureFrame? by mutableStateOf(null)
+        private set
+    internal var sourceFrame: GlassLensCaptureFrame? by mutableStateOf(null)
+        private set
+    internal var timedSourceGeneration = -1
+    internal var lastReadbackOnMain = false
+        private set
+    internal var lastReadbackNanos = 0L
+        private set
     private var cachedBackground: Bitmap? = null
     private var cachedOverlay: Bitmap? = null
     private var lastInvalidationMillis = 0L
@@ -132,24 +141,6 @@ class GlassLensAnchor internal constructor(
     internal var overlayCaptureCount = 0
         private set
     private var captureFailed = false
-
-    /**
-     * 「首拍完成 → 首帧渲出」之间的兜底底图（capture 产物本体，ARGB_8888）。
-     *
-     * 折射帧是异步渲的（提交 → GL 线程 → onFrameReady → 重绘），而调用方的
-     * `onDrawBackdrop` 在锚点非 null 时已经把背景绘制让给了折射 —— 中间这一两帧
-     * 元素会整块无背景。这张位图填那个洞：还没有渲出帧的任何时刻，元素直接画
-     * 底图上自己那块（[GlassLensNode] 的 drawFallback）。
-     *
-     * capture 产物本来上传完就弃，保留引用零额外采集成本；首帧画出
-     * （[onFrameDrawn]）即丢弃，稳态不占内存。
-     */
-    internal var fallbackBitmap: Bitmap? = null
-        private set
-
-    private var hasRenderedFrame = false
-
-    internal var fallbackColor: Color = Color.White
 
     internal fun onPositioned(coords: LayoutCoordinates) {
         coordinates = coords
@@ -177,7 +168,9 @@ class GlassLensAnchor internal constructor(
     }
 
     /** Animated glyphs only repaint the small overlay, without replaying blur and the page. */
-    fun invalidateOverlay() { overlayVersion++ }
+    fun invalidateOverlay() {
+        androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { overlayVersion++ }
+    }
 
     private var warnedUnanchored = false
 
@@ -223,101 +216,138 @@ class GlassLensAnchor internal constructor(
         val size = sizePx
         if (size.width <= 0 || size.height <= 0) return null
         val coords = coordinates?.takeIf { it.isAttached } ?: return null
-        val origin = coords.positionInWindow()
-        val key = (size.width.toLong() shl 32) or size.height.toLong()
-        val geometryChanged = uploadedKey != key || capturedOrigin != origin
-        val backgroundChanged = geometryChanged || uploadedVersion != version
-        if (!backgroundChanged && uploadedOverlayVersion == overlayVersion) {
-            return size
-        }
-
-        val bitmap =
-            try {
-                val overlay = drawOverlaySource
-                if (overlay == null) {
-                    backgroundCaptureCount++
-                    capture(coords, size, drawSource)
-                } else {
-                    if (backgroundChanged || cachedBackground == null) {
-                        backgroundCaptureCount++
-                        cachedBackground = capture(coords, size, drawSource)
-                    }
-                    if (geometryChanged || uploadedOverlayVersion != overlayVersion || cachedOverlay == null) {
-                        overlayCaptureCount++
-                        cachedOverlay = capture(coords, size, overlay)
-                    }
-                    val background = cachedBackground
-                    val foreground = cachedOverlay
-                    if (background == null || foreground == null) null else {
-                        // Both snapshots are already CPU-readable. Merging them here avoids
-                        // a second GPU round-trip on every background or icon update.
-                        background.copy(Bitmap.Config.ARGB_8888, true)?.also { combined ->
-                            android.graphics.Canvas(combined).drawBitmap(foreground, 0f, 0f, null)
-                        }
-                    }
-                }
-            } catch (t: Throwable) {
-                android.util.Log.w(TAG, "backdrop capture failed, lens disabled", t)
-                null
-            }
-        if (bitmap == null) {
-            if (!captureFailed) android.util.Log.w(TAG, "backdrop capture returned null")
-            captureFailed = true
-            // 捕获失败必须走 snapshot 失败传播（与 GL 失败同一条路）：
-            // rememberGlassLensAnchor 读到 source.failed 后收回锚点，站点重组
-            // 切回 blur 兜底。曾经这里只 latch 一个普通 Boolean —— 锚点保持
-            // 非 null、调用方继续让掉背景绘制，元素从此**永久空白**，
-            // 正是第 8 节"失败必须让组合期读到"要防的那种事故。
-            source.failCapture()
-            clearFallback()
-            return null
-        }
-        source.uploadSource(bitmap, ++uploadSequence)
-        uploadedKey = key
-        uploadedVersion = version
-        uploadedOverlayVersion = overlayVersion
-        capturedOrigin = origin
-        if (!hasRenderedFrame) fallbackBitmap = bitmap
+        if (needsCapture(coords)) queueCapture()
         return size
     }
 
-    /** 首帧折射结果已画出：兜底位图功成身退。 */
-    internal fun onFrameDrawn() {
-        if (hasRenderedFrame) return
-        hasRenderedFrame = true
-        // 只置 null 不 recycle：区域内其他元素此刻可能还在画同一张位图，
-        // recycle 会 use-after-recycle。位图交给 GC，稳态内存归零。
-        fallbackBitmap = null
-    }
+    private fun needsCapture(coords: LayoutCoordinates): Boolean =
+        captureFrame?.geometry != GlassLensCaptureGeometry.from(coords).fitPixelBudget(maxCapturePixels) ||
+            uploadedVersion != version || uploadedOverlayVersion != overlayVersion
 
-    /** 丢弃兜底位图引用（锚点离开组合 / 捕获失败时）。同样不 recycle，理由同上。 */
-    internal fun clearFallback() {
-        fallbackBitmap = null
-        cachedBackground = null
-        cachedOverlay = null
-    }
-
-    /**
-     * 把 backdrop 快照成可读位图。
-     *
-     * `Bitmap.createBitmap(Picture)` 会把 Picture 录进 RenderNode 的 RecordingCanvas
-     * （硬件加速），所以 backdrop 内部的 `drawLayer` → `drawRenderNode` 合法 ——
-     * 这条路和 Compose 自己的 `GraphicsLayer.toImageBitmap()` 在 API 28+ 上一致。
-     * 但产物是 HARDWARE config，`GLUtils.texImage2D` 读不了，所以要 copy 成
-     * ARGB_8888。这一次回读只在内容变化时发生，不是每帧。
-     */
-    private fun capture(coords: LayoutCoordinates, size: IntSize,
-        draw: DrawScope.(LayoutCoordinates) -> Unit): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
-        val picture = BackdropPicture(draw, coords, density, size)
-        val hw = Bitmap.createBitmap(picture)
-        return if (hw.config == Bitmap.Config.HARDWARE) {
-            val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
-            hw.recycle()
-            soft
-        } else {
-            hw
+    private fun queueCapture() {
+        if (disposed || captureFailed || captureQueued || captureInFlight) return
+        captureQueued = true
+        // Capture after this draw traversal. The header may be drawn before the
+        // list it samples; replaying its layer inside draw() reads the old layout.
+        mainHandler.post {
+            captureQueued = false
+            if (disposed || source.failed) return@post
+            val coords = coordinates?.takeIf { it.isAttached } ?: return@post
+            if (!needsCapture(coords)) return@post
+            val geometry = GlassLensCaptureGeometry.from(coords).fitPixelBudget(maxCapturePixels)
+            val size = geometry.size
+            if (size.width <= 0 || size.height <= 0) return@post
+            val geometryChanged = captureFrame?.geometry != geometry
+            val backgroundChanged = geometryChanged || uploadedVersion != version || recordedBackground == null
+            val overlay = drawOverlaySource
+            val overlayChanged = overlay != null &&
+                (geometryChanged || uploadedOverlayVersion != overlayVersion || recordedOverlay == null)
+            try {
+                val background = if (backgroundChanged) {
+                    backgroundCaptureCount++
+                    recordGlassLensSource("$tag-background", size, density, coords.size) { drawSource(coords) }
+                        .also { recordedBackground = it }
+                } else null
+                val frozenOverlay = if (overlayChanged && rasterizeOverlayOnCpu) {
+                    recordGlassLensPicture(size, density, coords.size) { overlay(coords) }
+                } else null
+                val foreground = if (overlayChanged) {
+                    overlayCaptureCount++
+                    val layer = if (frozenOverlay == null) {
+                        recordGlassLensSource("$tag-overlay", size, density, coords.size) { overlay(coords) }
+                    } else {
+                        recordGlassLensSource("$tag-overlay", size, density) {
+                            drawContext.canvas.nativeCanvas.drawPicture(frozenOverlay)
+                        }
+                    }
+                    layer.also { recordedOverlay = it }
+                } else null
+                val combined = recordGlassLensSource("$tag-fallback", size, density) {
+                    recordedBackground?.let { drawContext.canvas.nativeCanvas.drawRenderNode(it) }
+                    if (overlay != null) recordedOverlay?.let { drawContext.canvas.nativeCanvas.drawRenderNode(it) }
+                }
+                val generation = ++uploadSequence
+                val queuedAt = System.nanoTime()
+                val recording = GlassLensCaptureFrame(generation, geometry, combined, queuedAt)
+                captureFrame = recording
+                uploadedVersion = version
+                uploadedOverlayVersion = overlayVersion
+                captureInFlight = true
+                val readback = readback@{
+                    // A tab can disappear while another region is being captured.
+                    // Do not spend GPU time reading an outgoing page nobody can use.
+                    if (disposed) return@readback
+                    val started = System.nanoTime()
+                    GlassLensCaptureObserver.onTiming?.invoke(tag, "capture-queue", started - queuedAt)
+                    lastReadbackOnMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+                    val bitmap = try {
+                        android.os.Trace.beginSection("GlassReadback:$tag")
+                        if (background != null) cachedBackground = readGlassLensPixels(background, size, tag)
+                        if (foreground != null) cachedOverlay = if (frozenOverlay != null)
+                            readGlassLensPixels(frozenOverlay, size, tag)
+                        else readGlassLensPixels(foreground, size, tag)
+                        if (overlay == null) cachedBackground else {
+                            val bg = cachedBackground
+                            val fg = cachedOverlay
+                            if (bg == null || fg == null) null else {
+                                bg.copy(Bitmap.Config.ARGB_8888, true)?.also {
+                                    android.graphics.Canvas(it).drawBitmap(fg, 0f, 0f, null)
+                                }
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        android.util.Log.w(TAG, "backdrop readback failed", t)
+                        null
+                    } finally {
+                        lastReadbackNanos = System.nanoTime() - started
+                        GlassLensCaptureObserver.onTiming?.invoke(tag, "readback", lastReadbackNanos)
+                        android.os.Trace.endSection()
+                    }
+                    mainHandler.post {
+                        captureInFlight = false
+                        if (!disposed) {
+                            if (bitmap == null) {
+                                failCapture()
+                            } else {
+                                GlassLensCaptureObserver.onCaptured?.invoke(tag, recording, bitmap)
+                                source.uploadSource(bitmap, generation) {
+                                    GlassLensCaptureObserver.onTiming?.invoke(tag, "capture-to-upload", System.nanoTime() - queuedAt)
+                                    mainHandler.post {
+                                        if (!disposed) sourceFrame = recording
+                                    }
+                                }
+                            }
+                            // A final scroll/layout update must not be lost while a
+                            // readback is running. Keep one latest request per anchor.
+                            coordinates?.takeIf { it.isAttached && needsCapture(it) }?.let { queueCapture() }
+                        }
+                    }
+                    Unit
+                }
+                if (background == null && foreground != null) GlassLensCaptureDispatcher.postOverlay(readback)
+                else GlassLensCaptureDispatcher.post(readback)
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "backdrop recording failed", t)
+                failCapture()
+            }
         }
+    }
+
+    private fun failCapture() {
+        captureFailed = true
+        source.failCapture()
+        clearFallback()
+    }
+
+    /** Release after pending capture work; published bitmaps remain owned by their draw lists. */
+    internal fun clearFallback() {
+        disposed = true
+        mainHandler.removeCallbacksAndMessages(null)
+        captureFrame = null
+        sourceFrame = null
+        recordedBackground = null
+        recordedOverlay = null
+        GlassLensCaptureDispatcher.post { cachedBackground = null; cachedOverlay = null }
     }
 }
 
@@ -332,9 +362,8 @@ class GlassLensAnchor internal constructor(
  *
  * 这里画的是**铺满锚点的矩形**，指示器附近没有任何裁边。
  *
- * CLAMP 而非 DECAL：DECAL 把边界外当透明拉进来，四边会变暗；CLAMP 复制边缘
- * 像素，输出处处不透明 —— 着色器输出的 alpha 恒为 1，底图一旦有透明像素就会
- * 变成不该有的黑。
+ * CLAMP 复制边缘像素，避免 DECAL 将边界外的透明区域混入模糊。
+ * 底图自身的透明度仍由折射着色器保留。
  *
  * 只在快照时执行（内容变化才重拍），不是逐帧成本。
  */
@@ -384,67 +413,19 @@ private fun DrawScope.drawBlurredApi31(
 }
 
 /**
- * 覆写 `draw()` 的 Picture 子类，与 Compose 内部 `LayerSnapshotV28.GraphicsLayerPicture`
- * 同构：`beginRecording` 返回一个弃用的空 Canvas、`endRecording` 空实现，
- * 让框架的 `Canvas.drawPicture()` 直接回调到这里。
- */
-private class BackdropPicture(
-    private val drawSource: DrawScope.(LayoutCoordinates) -> Unit,
-    private val coordinates: LayoutCoordinates,
-    private val density: Density,
-    private val size: IntSize
-) : Picture() {
-
-    private val canvasHolder = CanvasHolder()
-    private val drawScope = CanvasDrawScope()
-
-    override fun beginRecording(width: Int, height: Int): android.graphics.Canvas =
-        android.graphics.Canvas()
-
-    override fun endRecording() = Unit
-
-    override fun getWidth(): Int = size.width
-
-    override fun getHeight(): Int = size.height
-
-    /** 内含 RenderNode 回放，必须硬件加速。 */
-    override fun requiresHardwareAcceleration(): Boolean = true
-
-    override fun draw(canvas: android.graphics.Canvas) {
-        val d = density
-        canvasHolder.drawInto(canvas) {
-            drawScope.draw(
-                density = d,
-                layoutDirection = LayoutDirection.Ltr,
-                canvas = this,
-                size = androidx.compose.ui.geometry.Size(
-                    size.width.toFloat(),
-                    size.height.toFloat()
-                )
-            ) {
-                // 把锚点自身的 coordinates 交给调用方：LayerBackdrop 需要它
-                // 才能把自己平移到锚点左上角
-                drawSource(coordinates)
-            }
-        }
-    }
-}
-
-/**
  * 建一个锚点，并在离开组合时释放 GL 资源。
- *
- * @param backdrop 与目标元素实际取样的背景一致（组合背景直接传进来）
  */
 @Composable
 fun rememberGlassLensAnchor(
     /** 站点名，只在锚点没挂上时的报错里出现。 */
     tag: String = "anon",
     overlaySource: (DrawScope.(LayoutCoordinates) -> Unit)? = null,
+    maxCapturePixels: Int = Int.MAX_VALUE,
+    rasterizeOverlayOnCpu: Boolean = false,
     drawSource: DrawScope.(LayoutCoordinates) -> Unit
 ): GlassLensAnchor? {
     if (!isGlassLensApplicable()) return null
     val density = LocalDensity.current
-    val fallbackColor = LocalWallpaperAppearanceColors.current.solidSurface
     val anchor = remember(density) {
         GlassLensAnchor(drawSource, density, GlassLensSource(), tag)
     }
@@ -452,7 +433,8 @@ fun rememberGlassLensAnchor(
     // 所以逐次刷新引用而不是把 lambda 放进 remember 的 key
     anchor.drawSource = drawSource
     anchor.drawOverlaySource = overlaySource
-    anchor.fallbackColor = fallbackColor
+    anchor.maxCapturePixels = maxCapturePixels
+    anchor.rasterizeOverlayOnCpu = rasterizeOverlayOnCpu
     if (BuildConfig.DEBUG) {
         // 组合期自检：锚点忘了挂 Modifier.glassLensAnchor 是编码错误，但它的
         // 后果（元素无背景）只在区域内首个元素 draw 时才暴露；区域内暂时没有
@@ -508,8 +490,11 @@ fun rememberGlassLensAnchor(
 }
 
 /** 标记锚点区域，记录它的窗口位置与尺寸。 */
-fun Modifier.glassLensAnchor(anchor: GlassLensAnchor?): Modifier =
-    if (anchor == null) this else onGloballyPositioned { anchor.onPositioned(it) }
+fun Modifier.glassLensAnchor(anchor: GlassLensAnchor?, prewarm: Boolean = false): Modifier =
+    if (anchor == null) this else onGloballyPositioned {
+        anchor.onPositioned(it)
+        if (prewarm) anchor.ensureSource()
+    }
 
 /**
  * 折射的光学参数。
@@ -699,6 +684,7 @@ private data class GlassLensElement(
     }
 }
 
+@android.annotation.SuppressLint("NewApi")
 private class GlassLensNode(
     anchor: GlassLensAnchor,
     var optics: GlassLensOpticsProvider,
@@ -715,7 +701,7 @@ private class GlassLensNode(
      * FBO + 一张输出位图时，每个元素画的都是「最后一个渲染完的元素」的结果，
      * 再拉伸到自己的尺寸 —— 屏幕上是一条逐行相同的灰带。见 [GlassLensSource]。
      */
-    private var target = GlassLensTarget(anchor.source)
+    private var target = GlassLensTarget(anchor.source, anchor.tag)
     private var targetReleased = false
 
     var anchor: GlassLensAnchor = anchor
@@ -725,14 +711,14 @@ private class GlassLensNode(
             // 换了区域就换底图，旧 target 绑的是旧纹理，必须重建
             target.onFrameReady = null
             target.release()
-            target = GlassLensTarget(value.source)
+            target = GlassLensTarget(value.source, value.tag)
             targetReleased = false
             if (isAttached) hookFrameReady()
         }
 
     override fun onAttach() {
         if (targetReleased) {
-            target = GlassLensTarget(anchor.source)
+            target = GlassLensTarget(anchor.source, anchor.tag)
             targetReleased = false
         }
         hookFrameReady()
@@ -755,8 +741,10 @@ private class GlassLensNode(
 
     private var coordinates: LayoutCoordinates? = null
     private val paint = Paint().apply { isFilterBitmap = true }
-    private val surfacePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fallbackMatrix = android.graphics.Matrix()
+    private val frameMatrix = android.graphics.Matrix()
+    private val previousFrameClip = Path()
+    private val previousFrameBounds = android.graphics.RectF()
     private val matrixValues = FloatArray(9)
     private val cornerValues = FloatArray(8)
 
@@ -804,8 +792,14 @@ private class GlassLensNode(
             anchor.noteDrawUnanchored()
             return
         }
-        anchor.ensureSource() ?: return
-        val anchorCoords = anchor.coordinates ?: return
+        val anchorCoords = anchor.coordinates?.takeIf { it.isAttached } ?: return
+        // At zero refraction the GPU can replay the live source directly. Sending
+        // animated glyphs through readback here freezes them when the slider stops.
+        val useLiveSource = optics.lensAmountPx <= 0f
+        if (!useLiveSource) anchor.ensureSource() ?: return
+        // Keep animating against the uploaded source while a newer capture is pending.
+        // Publishing its coordinates before its pixels arrive stalls the optical motion.
+        val samplingFrame = if (useLiveSource) null else anchor.sourceFrame ?: anchor.captureFrame
         val renderer = target
 
         // 先画上一帧的结果，再提交这一帧：在 draw() 里等 GPU 会钉住 UI 线程。
@@ -817,11 +811,16 @@ private class GlassLensNode(
         // Include the inner glass deformation exactly once, just like the AGSL backdrop.
         val sampleOrigin = Offset((w - w * t.scaleX) / 2f + t.translationX,
             (h - h * t.scaleY) / 2f + t.translationY)
-        fun sourcePosition(point: Offset): Offset = try {
-            anchorCoords.localPositionOf(localCoordinates, point)
-        } catch (_: IllegalArgumentException) {
-            // A hosted popup can have a different Compose owner in the same window.
-            anchorCoords.windowToLocal(localCoordinates.localToWindow(point))
+        fun sourcePosition(point: Offset): Offset {
+            // Captures use anchor-local pixels. An ancestor's entrance/collapse
+            // transform already moves both the anchor and the lens; applying the
+            // old window transform again compresses several labels into one lens.
+            if (samplingFrame == null || samplingFrame.geometry.size == anchorCoords.size) {
+                return anchorCoords.localPositionOf(localCoordinates, point)
+            }
+            // A resized sampling region (the action fan opening) still needs the
+            // previous crop's origin until the matching larger texture is uploaded.
+            return samplingFrame.geometry.windowToLocal(localCoordinates.localToWindow(point))
         }
         val origin = sourcePosition(sampleOrigin)
         val alongX = sourcePosition(sampleOrigin + Offset(w * t.scaleX, 0f)) - origin
@@ -831,6 +830,8 @@ private class GlassLensNode(
         val left = origin.x
         val top = origin.y
         val axes = GlassLensSourceAxes(alongX.x / w, alongX.y / w, alongY.x / h, alongY.y / h)
+        GlassLensCaptureObserver.onSampled?.invoke(anchor.tag, IntSize(w, h), origin, axes,
+            samplingFrame?.generation ?: 0)
 
         val halfMin = minOf(w, h) / 2f
 
@@ -841,7 +842,16 @@ private class GlassLensNode(
         val radius = corners.minimum
         updateClip(w, h, corners, t)
 
-        val frame = if (renderer.failed) null else renderer.latest
+        if (useLiveSource) {
+            drawFallback(left, top, w, h, axes, t, optics.vibrancy, useLiveSource = true)
+            return
+        }
+
+        // Keep a completed optical frame until its replacement is ready. Switching
+        // to a plain source on every background revision produces visible flashes.
+        // The renderer separately rejects mismatched source/coordinate generations.
+        val rendered = if (renderer.failed) null else renderer.latestFrame
+        val frame = rendered?.bitmap
         if (frame != null && !frame.isRecycled) {
             // 尺寸不一致时**拉伸**而不是丢弃：上一帧的尺寸在布局收敛或动画中经常
             // 与当前差几像素，严格相等的判断会把「差一帧」放大成「永远不画」。
@@ -859,13 +869,27 @@ private class GlassLensNode(
             val canvas = drawContext.canvas.nativeCanvas
             val saved = canvas.save()
             canvas.clipPath(fallbackClip)
-            canvas.drawBitmap(frame, srcRect, dstRect, paint)
+            if (rendered.sourceSize == samplingFrame?.geometry?.size &&
+                updateFrameTransform(rendered, left, top, w, h, axes, t)) {
+                // Keep labels fixed in source space while the next optical frame
+                // renders. Moving an old bitmap with the slider drags its text too.
+                // Only newly exposed pixels need the current, unrefracted source.
+                val uncovered = canvas.save()
+                canvas.clipOutPath(previousFrameClip)
+                drawFallback(left, top, w, h, axes, t, optics.vibrancy)
+                canvas.restoreToCount(uncovered)
+                canvas.drawBitmap(frame, frameMatrix, paint)
+            } else {
+                canvas.drawBitmap(frame, srcRect, dstRect, paint)
+            }
             canvas.restoreToCount(saved)
-            anchor.onFrameDrawn()
+            if (rendered.sourceGeneration == samplingFrame?.generation &&
+                rendered.sourceGeneration != anchor.timedSourceGeneration) {
+                anchor.timedSourceGeneration = rendered.sourceGeneration
+                GlassLensCaptureObserver.onTiming?.invoke(anchor.tag, "capture-to-draw",
+                    System.nanoTime() - samplingFrame.queuedAtNanos)
+            }
         } else {
-            // New targets retain a theme surface until their own first frame arrives.
-            surfacePaint.color = anchor.fallbackColor.toArgb()
-            drawContext.canvas.nativeCanvas.drawPath(fallbackClip, surfacePaint)
             drawFallback(left, top, w, h, axes, t, optics.vibrancy)
         }
 
@@ -874,7 +898,7 @@ private class GlassLensNode(
         // 曾经这行是放在画 latest **之前**的提前 return，而 target 的 ownFailed
         // 不是 snapshot state、组合期读不到：失败后既不切回 blur 路径，也一个
         // 像素都不画，直到元素重组（持久元素如底栏则直到重启）。
-        if (renderer.failed) return
+        if (renderer.failed || anchor.sourceFrame == null || samplingFrame == null) return
 
         // 斜坡上限同样按实测短边施加：斜坡宽到吃掉整个形状时，折射会退化成一个
         // 空心发光环而不是玻璃（实测占半短边 0.6 就是这样）。
@@ -900,9 +924,60 @@ private class GlassLensNode(
                 vibrancy = optics.vibrancy,
                 corners = corners,
                 sourceAxes = axes,
-                maxRenderPixels = optics.maxRenderPixels
+                maxRenderPixels = optics.maxRenderPixels,
+                sourceGeneration = samplingFrame.generation
             )
         )
+    }
+
+    /** Maps the completed frame's source coordinates into the lens's current shape. */
+    private fun updateFrameTransform(
+        frame: GlassLensRenderedFrame,
+        left: Float,
+        top: Float,
+        w: Int,
+        h: Int,
+        axes: GlassLensSourceAxes,
+        t: GlassLensTransform
+    ): Boolean {
+        val previous = frame.params
+        if (previous.srcLeftPx == left && previous.srcTopPx == top && previous.sourceAxes == axes &&
+            previous.widthPx == w && previous.heightPx == h) return false
+        val determinant = axes.xx * axes.yy - axes.xy * axes.yx
+        if (!determinant.isFinite() || kotlin.math.abs(determinant) < 0.0001f) return false
+        fun map(x: Float, y: Float) = Offset(
+            (axes.yy * x - axes.yx * y) / determinant,
+            (axes.xx * y - axes.xy * x) / determinant
+        )
+        val origin = map(previous.srcLeftPx - left, previous.srcTopPx - top)
+        val xAxis = map(previous.sourceAxes.xx, previous.sourceAxes.xy)
+        val yAxis = map(previous.sourceAxes.yx, previous.sourceAxes.yy)
+        matrixValues[0] = t.scaleX * xAxis.x
+        matrixValues[1] = t.scaleX * yAxis.x
+        matrixValues[2] = (w - w * t.scaleX) / 2f + t.translationX + t.scaleX * origin.x
+        matrixValues[3] = t.scaleY * xAxis.y
+        matrixValues[4] = t.scaleY * yAxis.y
+        matrixValues[5] = (h - h * t.scaleY) / 2f + t.translationY + t.scaleY * origin.y
+        matrixValues[6] = 0f
+        matrixValues[7] = 0f
+        matrixValues[8] = 1f
+        frameMatrix.setValues(matrixValues)
+        previousFrameBounds.set(0f, 0f, previous.widthPx.toFloat(), previous.heightPx.toFloat())
+        val corners = previous.corners
+        cornerValues[0] = corners.topLeft
+        cornerValues[1] = corners.topLeft
+        cornerValues[2] = corners.topRight
+        cornerValues[3] = corners.topRight
+        cornerValues[4] = corners.bottomRight
+        cornerValues[5] = corners.bottomRight
+        cornerValues[6] = corners.bottomLeft
+        cornerValues[7] = corners.bottomLeft
+        previousFrameClip.reset()
+        previousFrameClip.addRoundRect(previousFrameBounds, cornerValues, Path.Direction.CW)
+        previousFrameClip.transform(frameMatrix)
+        frameMatrix.preScale(previous.widthPx.toFloat() / frame.bitmap.width,
+            previous.heightPx.toFloat() / frame.bitmap.height)
+        return true
     }
 
     /**
@@ -922,10 +997,11 @@ private class GlassLensNode(
         h: Int,
         axes: GlassLensSourceAxes,
         t: GlassLensTransform,
-        vibrancy: Float
+        vibrancy: Float,
+        useLiveSource: Boolean = false
     ) {
-        val bmp = anchor.fallbackBitmap ?: return
-        if (bmp.isRecycled) return
+        val recorded = if (useLiveSource) null else anchor.sourceFrame ?: anchor.captureFrame
+        val sourceCoordinates = anchor.coordinates?.takeIf { it.isAttached } ?: return
         val determinant = axes.xx * axes.yy - axes.xy * axes.yx
         if (!determinant.isFinite() || kotlin.math.abs(determinant) < 0.0001f) return
 
@@ -953,13 +1029,24 @@ private class GlassLensNode(
         fallbackMatrix.setValues(matrixValues)
 
         val canvas = drawContext.canvas.nativeCanvas
-        val save = canvas.save()
+        val save = canvas.saveLayer(fallbackFullDst, p)
         // 圆角按元素**完整**轮廓构造，半径只随形变缩放 —— 圆角是形状的属性，不是
         // 「可见了多少」的属性。曾经这里把半径乘了可见比例 (u1-u0)，于是被底图
         // 边界裁掉一半的元素会得到半圆角。与可见区域求交不必再 clip 一次：
         // 下面的 drawBitmap 本就只覆盖 dstRect。
         canvas.clipPath(fallbackClip)
-        canvas.drawBitmap(bmp, fallbackMatrix, p)
+        canvas.concat(fallbackMatrix)
+        if (recorded != null) {
+            canvas.drawRenderNode(recorded.node)
+        } else {
+            // Replay live layers before the first readback, and whenever no optical
+            // displacement is needed. This also preserves animated foregrounds.
+            CanvasDrawScope().draw(anchor.density, layoutDirection, drawContext.canvas,
+                androidx.compose.ui.geometry.Size(anchor.sizePx.width.toFloat(), anchor.sizePx.height.toFloat())) {
+                anchor.drawSource(this, sourceCoordinates)
+                anchor.drawOverlaySource?.invoke(this, sourceCoordinates)
+            }
+        }
         canvas.restoreToCount(save)
     }
 

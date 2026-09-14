@@ -23,7 +23,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Uses each MuMu activity's actual display and never waits for Compose animations to be idle. */
+/** Uses the activity's actual display and never waits for Compose animations to be idle. */
 internal class DemoUiDriver : AutoCloseable {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as Application
@@ -35,6 +35,7 @@ internal class DemoUiDriver : AutoCloseable {
         private set
     private val callbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
+            activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             foreground = activity
             if (activity is MainActivity) main = activity
         }
