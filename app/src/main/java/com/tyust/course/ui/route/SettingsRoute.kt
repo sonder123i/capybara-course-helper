@@ -85,7 +85,9 @@ import com.tyust.course.ui.theme.SemanticWarning
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsRoute(
-    onAccountChanged: () -> Unit = {}
+    onAccountChanged: () -> Unit = {},
+    onSurveyCenter: () -> Unit = {},
+    surveyUnreadCount: Int = 0
 ) {
     val context = LocalContext.current
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
@@ -365,6 +367,8 @@ fun SettingsRoute(
         onSchoolAdaptation = {
             if (isDemoMode) GlassToaster.show("本地演示模式不连接学校适配服务") else showSchoolAdaptation = true
         },
+        onSurveyCenter = onSurveyCenter,
+        surveyUnreadCount = surveyUnreadCount,
         onWallpaperSelect = { showWallpaperDialog = true },
         wallpaperName = currentWallpaperName,
         themeName = AppearanceSettingsManager.themeMode.label,

@@ -153,6 +153,7 @@ promo-video
 .superpowers
 
 # Tool caches & debug artifacts
+.survey-work/
 .gradle-user/
 .playwright-cli/
 .playwright-mcp/

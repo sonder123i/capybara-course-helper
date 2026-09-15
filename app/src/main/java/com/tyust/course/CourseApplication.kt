@@ -18,6 +18,7 @@ class CourseApplication : Application() {
         if (processName == packageName) {
             com.tyust.course.schedule.ScheduleReminderScheduler.get(this).start(this)
             com.tyust.course.usage.UsageStatsManager.initialize(this)
+            com.tyust.course.survey.SurveyVisitTracker.initialize(this)
         }
     }
 
