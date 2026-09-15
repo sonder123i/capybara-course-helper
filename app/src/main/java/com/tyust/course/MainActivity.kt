@@ -247,6 +247,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val sessionStore = UserManager.getInstance().sessionState
     val session by sessionStore.state.collectAsState()
     val currentAccountStorageKey = session.token.accountStorageKey
+    val surveyModel: com.tyust.course.survey.SurveyViewModel = viewModel()
+    val surveyRepository = surveyModel.forAccount(currentAccountStorageKey, UserManager.getInstance().currentSchool?.baseUrl)
+    val surveyFeed by surveyRepository.state.collectAsState()
+    val surveyVisit by com.tyust.course.survey.SurveyVisitTracker.visit.collectAsState()
+    val surveyUsagePreferences by com.tyust.course.usage.UsageStatsManager.preferences.collectAsState()
+    var showSurveyCenter by rememberSaveable(currentAccountStorageKey) { mutableStateOf(false) }
+    var initialSurveyId by rememberSaveable(currentAccountStorageKey) { mutableStateOf<String?>(null) }
     val accessibility = rememberGlassAccessibilityMode()
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
@@ -301,6 +308,9 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         }
         fragmentActivity.lifecycle.addObserver(observer)
         onDispose { fragmentActivity.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(surveyRepository, foreground, surveyVisit) {
+        if (foreground) surveyRepository.refresh()
     }
     LaunchedEffect(session, isTokenExpired, foreground, dialogHostState.hasBlockingSurface) {
         noticeModel.notices.update(session, isTokenExpired, foreground && !dialogHostState.hasBlockingSurface)
@@ -552,7 +562,10 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                     1 -> com.tyust.course.ui.route.ScheduleRoute()
                                     2 -> com.tyust.course.ui.route.GrabProRoute()
                                     3 -> com.tyust.course.ui.route.GradesRoute()
-                                    4 -> com.tyust.course.ui.route.SettingsRoute()
+                                    4 -> com.tyust.course.ui.route.SettingsRoute(
+                                        onSurveyCenter = { initialSurveyId = null; showSurveyCenter = true },
+                                        surveyUnreadCount = surveyFeed.unreadCount(System.currentTimeMillis())
+                                    )
                                     else -> com.tyust.course.ui.route.CourseListRoute()
                                 }
                               }
@@ -597,6 +610,22 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             DialogHost(
                 state = dialogHostState,
                 modifier = Modifier.fillMaxSize()
+            )
+            if (showSurveyCenter) {
+                key(currentAccountStorageKey) {
+                    com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSurveyCenter = false; initialSurveyId = null }) { close ->
+                        com.tyust.course.ui.route.SurveyCenterRoute(surveyRepository, onBack = close, initialSurveyId = initialSurveyId)
+                    }
+                }
+            }
+            com.tyust.course.ui.screen.SurveyReminder(
+                repository = surveyRepository,
+                canPresent = startupOverlaysReady && !session.expired && !showStarDialog && !updateState.showDialog() &&
+                    !dialogHostState.hasBlockingSurface && !showSurveyCenter && selectedTab != 2 &&
+                    (surveyUsagePreferences.noticeSeen || isDemoMode),
+                foreground = foreground,
+                onOpen = { id -> initialSurveyId = id; showSurveyCenter = true },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp).padding(bottom = navBarContentInset + 12.dp)
             )
 
             if (!session.expired && updateState.showDialog() && updateInfo != null) {

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AssignmentInd
+import androidx.compose.material.icons.outlined.Assignment
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ContentPasteSearch
 import androidx.compose.material.icons.automirrored.outlined.Login
@@ -79,6 +80,8 @@ fun SettingsScreen(
     onRefreshCookieClick: () -> Unit = {},
     onLogExport: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
+    onSurveyCenter: () -> Unit = {},
+    surveyUnreadCount: Int = 0,
     onWallpaperSelect: () -> Unit = {},
     wallpaperName: String = "",
     themeName: String = "跟随系统",
@@ -214,6 +217,19 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "应用与支持") {
+                InsetGroupedRow(
+                    icon = Icons.Outlined.Assignment,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                    title = "问卷中心",
+                    subtitle = if (surveyUnreadCount > 0) "有 $surveyUnreadCount 份新问卷" else "查看问卷、收藏与填写记录",
+                    onClick = onSurveyCenter,
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (surveyUnreadCount > 0) Box(Modifier.size(8.dp).background(SemanticDanger, CircleShape))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                )
                 SettingsRow(
                     icon = Icons.Outlined.SystemUpdate,
                     iconTint = Color(0xFF34C759),
@@ -255,7 +271,7 @@ fun SettingsScreen(
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "数据与安全") {
                 InsetGroupedRow(
                     title = "匿名使用统计",
-                    subtitle = "仅发送随机安装标识和版本，每天一次；关闭后停止上报",
+                    subtitle = "统计每日活跃与问卷入口点击；关闭后停止上报",
                     trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
                 )
                 SettingsRow(
