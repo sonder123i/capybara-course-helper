@@ -11,25 +11,83 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 internal open class QzAcademicAdapter(
     school: SchoolConfig, session: AcademicSession, transport: AcademicHttpTransport,
     system: AcademicSystem = AcademicSystem.QZ
-) : BaseAcademicAdapter(school, session, transport, system) {
+) : BaseAcademicAdapter(school, session, transport, system), AcademicCaptchaLogin {
+    @Volatile private var loginAttempt: AcademicLoginAttempt? = null
+
     override suspend fun login(credentials: Credentials): LoginResult = serial {
+        clearLoginState()
         session.invalidate()
         session.username = credentials.username
-        val page = transport.get(transport.appUrl("framework/xsMainV.htmlx"))
+        val page = transport.get(transport.appUrl(""))
+        val form = AcademicLoginHtml.form(page)
+            ?: return@serial LoginResult(AcademicStatus.HUMAN_VERIFICATION_REQUIRED, message = "请在教务网页完成登录验证")
         val scode = AcademicHtml.firstScriptValue(page.text, "scode")
         val sxh = AcademicHtml.firstScriptValue(page.text, "sxh")
         if (scode.isNullOrBlank() || sxh.isNullOrBlank())
             return@serial LoginResult(AcademicStatus.HUMAN_VERIFICATION_REQUIRED, message = "请在教务网页完成登录验证")
-        val fields = AcademicHtml.hiddenFields(Jsoup.parse(page.text)).toMutableMap().apply {
-            put("loginMethod", "LoginToXk"); put("userlanguage", "0")
+
+        val attempt = AcademicLoginAttempt(credentials, page, session.epoch)
+        loginAttempt = attempt
+        val captcha = AcademicLoginHtml.captcha(form, "RANDOMCODE")
+        if (captcha != null) LoginResult(AcademicStatus.CAPTCHA_REQUIRED, captcha = captcha.load(transport, page.url))
+        else submitLogin(attempt, "")
+    }
+
+    override suspend fun submitCaptcha(code: String): LoginResult = serial {
+        val attempt = currentLoginAttempt()
+            ?: return@serial LoginResult(AcademicStatus.SESSION_EXPIRED, message = "登录会话已失效，请重新登录")
+        if (code.isBlank()) return@serial LoginResult(AcademicStatus.CAPTCHA_REQUIRED, message = "请输入验证码")
+        submitLogin(attempt, code.trim())
+    }
+
+    override suspend fun refreshCaptcha(): CaptchaChallenge? = serial {
+        val attempt = currentLoginAttempt() ?: return@serial null
+        val form = AcademicLoginHtml.form(attempt.page) ?: return@serial null
+        AcademicLoginHtml.captcha(form, "RANDOMCODE")?.load(transport, attempt.page.url, refresh = true)
+    }
+
+    override fun clearLoginState() { loginAttempt = null }
+
+    private fun currentLoginAttempt(): AcademicLoginAttempt? = loginAttempt?.takeIf { it.sessionEpoch == session.epoch }
+        .also { if (it == null) clearLoginState() }
+
+    private suspend fun submitLogin(attempt: AcademicLoginAttempt, code: String): LoginResult {
+        val page = attempt.page
+        val form = AcademicLoginHtml.form(page)
+            ?: return finishLogin(LoginResult(AcademicStatus.PAGE_CHANGED, message = "学校登录表单已变化"))
+        val scode = AcademicHtml.firstScriptValue(page.text, "scode")
+        val sxh = AcademicHtml.firstScriptValue(page.text, "sxh")
+        if (scode.isNullOrBlank() || sxh.isNullOrBlank())
+            return finishLogin(LoginResult(AcademicStatus.PAGE_CHANGED, message = "登录编码参数已变化，请重新登录"))
+        val credentials = attempt.credentials
+        val fields = AcademicHtml.formFields(form).toMap().toMutableMap().apply {
+            putIfAbsent("loginMethod", "LoginToXk"); putIfAbsent("userlanguage", "0")
             put("userAccount", credentials.username); put("userPassword", "")
             put("encoded", LoginEncoding.qzNew(credentials.username, credentials.password, scode, sxh))
         }
-        val result = transport.postForm(transport.appUrl("xk/LoginToXk"), fields.toList(), page.url)
+        AcademicLoginHtml.captcha(form, "RANDOMCODE")?.let { fields[it.fieldName] = code }
+        val result = transport.postForm(AcademicHtml.action(form, page.url), fields.toList(), page.url)
+        AcademicLoginHtml.form(result)?.let { attempt.page = result }
+        AcademicLoginHtml.failure(result)?.let { failure ->
+            if (failure.status == AcademicStatus.CAPTCHA_REQUIRED) {
+                val updatedForm = AcademicLoginHtml.form(attempt.page)
+                val captcha = updatedForm?.let { AcademicLoginHtml.captcha(it, "RANDOMCODE") }
+                    ?: return finishLogin(LoginResult(AcademicStatus.HUMAN_VERIFICATION_REQUIRED, message = "请在教务网页完成验证码验证"))
+                return if (code.isBlank()) failure.copy(captcha = captcha.load(transport, attempt.page.url)) else failure
+            }
+            return finishLogin(failure)
+        }
         val status = AcademicJson.status(result.text, result.code)
-        if (status == AcademicStatus.INVALID_CREDENTIALS || status == AcademicStatus.HUMAN_VERIFICATION_REQUIRED)
-            return@serial LoginResult(status, message = AcademicJson.message(result.text))
-        validateSession()
+        if (status in setOf(AcademicStatus.INVALID_CREDENTIALS, AcademicStatus.HUMAN_VERIFICATION_REQUIRED, AcademicStatus.SESSION_EXPIRED))
+            return finishLogin(LoginResult(status, message = AcademicJson.message(result.text).ifBlank { "登录未完成，请重新登录" }))
+        val json = runCatching { JSONObject(result.text) }.getOrNull()
+        if (json != null && status != AcademicStatus.SUCCESS)
+            return finishLogin(LoginResult(AcademicStatus.VALIDATION_FAILED, message = AcademicJson.message(result.text).ifBlank { "学校未接受登录请求，请重新登录" }))
+        return finishLogin(validateSession())
+    }
+
+    private fun finishLogin(result: LoginResult): LoginResult = result.also {
+        if (it.status != AcademicStatus.CAPTCHA_REQUIRED) clearLoginState()
     }
 
     override suspend fun validateSession(): LoginResult = serial {

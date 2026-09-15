@@ -29,6 +29,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import java.io.IOException
 import com.tyust.course.academic.*
+import com.tyust.course.utils.TeachingClassMatcher
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -68,6 +69,7 @@ class GrabService : Service() {
         const val EXTRA_IS_RUNNING = "is_running"
         const val EXTRA_QUEUE_UPDATED = "queue_updated"  // 队列已更新标志
         const val EXTRA_COURSE_STATUS = "course_status"  // success/failed/grabbing
+        const val EXTRA_QUEUE_STATUS_KEY = "queue_status_key"
         const val EXTRA_COURSE_NAME_STATUS = "course_name_status"  // 课程名
     }
     
@@ -200,6 +202,8 @@ class GrabService : Service() {
         return org.json.JSONObject().apply {
             put("name", course.name)
             put("teacher", course.teacher)
+            put("jxbmc", course.jxbmc)
+            put("teachingClassFilter", course.teachingClassFilter)
             put("time", course.time)
             put("location", course.location)
             put("classId", course.classId)
@@ -243,7 +247,9 @@ class GrabService : Service() {
     }
 
     private fun removeCourseFromServiceQueue(course: Course): Boolean {
-        val index = serviceQueue.indexOfFirst { queued ->
+        val index = serviceQueue.indexOfFirst { it.getUuid() == course.getUuid() }.takeIf { it >= 0 }
+            ?: serviceQueue.indexOfFirst { queued ->
+            if (queued.hasTeachingClassFilter() || course.hasTeachingClassFilter()) return@indexOfFirst queued == course
             val sameClass = !queued.classId.isNullOrEmpty()
                 && !course.classId.isNullOrEmpty()
                 && queued.classId == course.classId
@@ -255,7 +261,6 @@ class GrabService : Service() {
                 && queued.time == course.time
             sameClass || sameDoJxb || sameDisplay
         }.takeIf { it >= 0 }
-            ?: serviceQueue.indexOfFirst { queued -> queued.name == course.name }.takeIf { it >= 0 }
 
         if (index == null) return false
 
@@ -263,6 +268,14 @@ class GrabService : Service() {
         saveServiceQueueSnapshot()
         return true
     }
+
+    private fun findQueuedCourse(course: Course): Course? =
+        serviceQueue.find { it.getUuid() == course.getUuid() }
+            ?: serviceQueue.filter { it == course }.singleOrNull()
+            ?: serviceQueue.filter {
+                CourseNameKit.normalizeBrackets(it.name) == CourseNameKit.normalizeBrackets(course.name) &&
+                    (!course.hasTeachingClassFilter() || it.teachingClassFilter == course.teachingClassFilter)
+            }.singleOrNull()
 
     private fun clearServiceFuzzyMatchTarget() {
         serviceFuzzyMatchCourseId = null
@@ -796,7 +809,7 @@ class GrabService : Service() {
             val task = pendingGrabTasks.removeFirst()
             activeGrabTasks[task.workerId] = task
             activeWorkers.add(task.workerId)
-            broadcastQueueUpdate(courseDisplayName(task.course), "grabbing", task.course.courseId ?: task.course.classId ?: task.courseKey)
+            broadcastCourseStatus(task.course, "grabbing")
             broadcastLog("线程 ${task.workerId} 开始处理：${courseDisplayName(task.course)}")
             runParallelTaskLoop(school, task)
         }
@@ -1025,11 +1038,10 @@ class GrabService : Service() {
 
             override fun onResponse(call: Call, response: Response) {
                 val json = response.body?.string() ?: ""
-                val targetClassId = if (course.useExactMatch) course.classId else null
-                val details = parseSelectionDetails(json, targetClassId, course.teacher)
+                val details = parseSelectionDetails(json, course)
                 if (details != null) {
                     executeSelection(school, task, details, rwlx, xklc)
-                } else if (!course.doJxbId.isNullOrEmpty() && !course.classId.isNullOrEmpty()) {
+                } else if (TeachingClassMatcher.canUseSavedClass(course) && !course.doJxbId.isNullOrEmpty() && !course.classId.isNullOrEmpty()) {
                     val fallbackDetails = SelectionDetails(
                         doJxbId = course.doJxbId!!,
                         njdmId = course.njdm_id ?: "2024",
@@ -1146,12 +1158,12 @@ class GrabService : Service() {
             } else {
                 removeCourseFromServiceQueue(task.course)
             }
-            broadcastQueueUpdate(courseDisplayName(task.course), "success", task.course.courseId ?: task.course.classId ?: task.courseKey)
+            broadcastCourseStatus(task.course, "success")
             showSuccessNotification(courseDisplayName(task.course))
         } else {
             failCount++
             broadcastLog("线程 ${task.workerId} 任务失败：${courseDisplayName(task.course)}，$message")
-            broadcastQueueUpdate(courseDisplayName(task.course), "failed", task.course.courseId ?: task.course.classId ?: task.courseKey)
+            broadcastCourseStatus(task.course, "failed")
         }
 
         val school = currentSchool
@@ -1191,11 +1203,7 @@ class GrabService : Service() {
         
         // 发送 GRABBING 状态给 UI
         if (course != null) {
-            broadcastQueueUpdate(
-                courseName = course.name,
-                status = "grabbing",
-                courseId = course.courseId ?: course.classId ?: course.name
-            )
+            broadcastCourseStatus(course, "grabbing")
         }
         
         runGrabLoop()
@@ -1224,11 +1232,7 @@ class GrabService : Service() {
         updateNotification("队列抢课：${course.name} [${currentQueueIndex + 1}/${queue.size}]")
         
         // 🔧 发送 GRABBING 状态 (使用完整课程名，与UI匹配)
-        broadcastQueueUpdate(
-            courseName = course.name,
-            status = "grabbing",
-            courseId = course.courseId ?: course.classId ?: course.name
-        )
+        broadcastCourseStatus(course, "grabbing")
         
         startGrabbing()
     }
@@ -1274,7 +1278,7 @@ class GrabService : Service() {
                 failCount++
                 val failedCourse = targetCourse
                 if (failedCourse != null) {
-                    broadcastQueueUpdate(failedCourse.name, "failed", failedCourse.courseId ?: failedCourse.classId ?: failedCourse.name)
+                    broadcastCourseStatus(failedCourse, "failed")
                 }
                 
                 // 🔧 检查是否还有更多关键词需要处理
@@ -1839,13 +1843,14 @@ class GrabService : Service() {
     private fun matchCourseFromList(school: SchoolConfig, targetCourse: Course, courses: List<Course>) {
         // 🔧 关键修复：确保从队列中同步最新的老师/时间要求
         val queue = serviceQueue
-        val queueCourse = queue.find { it.name == targetCourse.name }
+        val queueCourse = findQueuedCourse(targetCourse)
         
         Log.d(TAG, "❗❗❗ 开始同步信息: 目标=${targetCourse.name}, 队列大小=${queue.size}")
         if (queueCourse != null) {
             Log.d(TAG, "❗❗❗ 找到队列课程: 老师=${queueCourse.teacher}")
             if (!queueCourse.teacher.isNullOrEmpty()) targetCourse.teacher = queueCourse.teacher
             if (!queueCourse.time.isNullOrEmpty()) targetCourse.time = queueCourse.time
+            targetCourse.teachingClassFilter = queueCourse.teachingClassFilter
         } else {
             Log.d(TAG, "❗❗❗ 未在队列中找到课程: ${targetCourse.name}")
         }
@@ -2038,15 +2043,13 @@ class GrabService : Service() {
                 
                 override fun onResponse(call: Call, response: Response) {
                     val json = response.body?.string() ?: ""
-                    // 🔧 智能模式时不传 classId，让 parseSelectionDetails 匹配第一个或按老师匹配
-                    val targetClassId = if (course.useExactMatch) course.classId else null
-                    val details = parseSelectionDetails(json, targetClassId, course.teacher)
+                    val details = parseSelectionDetails(json, course)
                     
                     if (details != null) {
                         executeSelection(school, course, details, rwlx, xklc)
                     } else {
                         // 🔧 Fallback: 如果解析失败（如返回"0"）但我们有保存的 doJxbId，直接尝试抢课
-                        if (!course.doJxbId.isNullOrEmpty() && !course.classId.isNullOrEmpty()) {
+                        if (TeachingClassMatcher.canUseSavedClass(course) && !course.doJxbId.isNullOrEmpty() && !course.classId.isNullOrEmpty()) {
                             Log.w(TAG, "⚠️ 解析失败，强制使用保存的 doJxbId=${course.doJxbId}")
                             broadcastLog("注意：解析失败，强制使用保存的 ID 抢课")
                             
@@ -2077,8 +2080,7 @@ class GrabService : Service() {
         )
     }
     
-    // 🔧 修复：增加 targetClassId 和 targetTeacher 参数，匹配用户指定的教学班
-    private fun parseSelectionDetails(json: String, targetClassId: String? = null, targetTeacher: String? = null): SelectionDetails? {
+    private fun parseSelectionDetails(json: String, course: Course): SelectionDetails? {
         // 如果返回 "0" 直接返回 null
         if (json.trim() == "0") return null
         
@@ -2086,52 +2088,8 @@ class GrabService : Service() {
             val arr = JSONArray(json)
             if (arr.length() == 0) return null
             
-            Log.d(TAG, "=== 开始匹配教学班 ===")
-            Log.d(TAG, "目标 classId: '$targetClassId', 目标老师: '$targetTeacher', 响应包含 ${arr.length()} 个教学班")
-            
-            // 🔧 优先按 classId 匹配，否则按老师匹配，最后取第一个
-            var targetObj: org.json.JSONObject? = null
-            
-            // 1. 精确模式：按 classId 匹配
-            if (!targetClassId.isNullOrEmpty()) {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    val jxbId = obj.optString("jxb_id", "")
-                    val doJxbId = obj.optString("do_jxb_id", "")
-                    
-                    Log.d(TAG, "[$i] jxb_id='$jxbId', do_jxb_id长度=${doJxbId.length}")
-                    
-                    if (jxbId == targetClassId || doJxbId == targetClassId) {
-                        targetObj = obj
-                        Log.d(TAG, "✅ classId匹配成功: index=$i, jxb_id=$jxbId")
-                        break
-                    }
-                }
-            }
-            
-            // 2. 智能模式：按老师名匹配
-            if (targetObj == null && !targetTeacher.isNullOrEmpty()) {
-                Log.d(TAG, "🔄 智能模式：按老师名匹配...")
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    val jsxx = obj.optString("jsxx", "") // 格式: "工号/姓名/职称;工号/姓名/职称"
-                    val teacherNames = jsxx.split(";", "/").filter { it.length in 2..6 } // 提取姓名
-                    
-                    Log.d(TAG, "[$i] jsxx='$jsxx', 解析出老师: $teacherNames")
-                    
-                    if (teacherNames.any { it.contains(targetTeacher) || targetTeacher.contains(it) }) {
-                        targetObj = obj
-                        Log.d(TAG, "✅ 老师匹配成功: index=$i, 老师='$targetTeacher' in $teacherNames")
-                        break
-                    }
-                }
-            }
-            
-            // 3. 没有匹配到则取第一个
-            val obj = targetObj ?: arr.getJSONObject(0)
-            if (targetObj == null && arr.length() > 1) {
-                Log.w(TAG, "⚠️ 未匹配到目标教学班，使用第一个")
-            }
+            val obj = TeachingClassMatcher.selectRow(arr, course) ?: return null
+            course.jxbmc = obj.optString("jxbmc", course.jxbmc)
                 
             // 提取加密的 jxb_id（Web版通常是100+字符的长字符串，但有时是32字符的短ID也可用）
             var doJxbId = obj.optString("do_jxb_id", "")
@@ -2272,7 +2230,7 @@ class GrabService : Service() {
                 multiKeywordTotalSuccess++
                 
                 // 通知 UI 刷新队列，并标记课程为成功
-                broadcastQueueUpdate(course.name, "success")
+                broadcastCourseStatus(course, "success")
                 
                 showSuccessNotification(course.name ?: "未知课程")
                 
@@ -2386,13 +2344,14 @@ class GrabService : Service() {
     }
     
     // 通知 UI 队列已更新（带课程状态）
-private fun broadcastQueueUpdate(courseName: String? = null, status: String? = null, courseId: String? = null) {
+private fun broadcastQueueUpdate(courseName: String? = null, status: String? = null, courseId: String? = null, queueStatusKey: String? = null) {
     val intent = Intent(BROADCAST_UPDATE).apply {
         putExtra(EXTRA_QUEUE_UPDATED, true)
         putExtra(EXTRA_IS_RUNNING, isRunning)  // 🔧 添加运行状态
         courseName?.let { putExtra(EXTRA_COURSE_NAME_STATUS, it) }
         status?.let { putExtra(EXTRA_COURSE_STATUS, it) }
         courseId?.let { putExtra(EXTRA_COURSE_ID, it) }
+        queueStatusKey?.let { putExtra(EXTRA_QUEUE_STATUS_KEY, it) }
         putExtra(EXTRA_SUCCESS_COUNT, successCount)
         putExtra(EXTRA_FAIL_COUNT, failCount)
         putServiceAccountExtras(this)
@@ -2400,6 +2359,10 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
     }
     sendBroadcast(intent)
 }
+
+    private fun broadcastCourseStatus(course: Course, status: String) {
+        broadcastQueueUpdate(course.name, status, course.courseId, course.queueStatusKey)
+    }
     
     private fun showSuccessNotification(courseName: String) {
         val intent = Intent(this, MainActivity::class.java)
@@ -2936,9 +2899,13 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
         val queue = serviceQueue
         Log.d(TAG, "📋 队列状态: 共 ${queue.size} 门课程")
         
-        // 🔧 修复：只按课程名匹配，支持手动添加的课程（classId 可能为空）
-        val queueCourse = queue.find { 
-            it.name == baseCourse.name
+        val queueCourse = findQueuedCourse(baseCourse)
+        if (queueCourse == null && queue.any {
+                it.hasTeachingClassFilter() &&
+                    CourseNameKit.normalizeBrackets(it.name) == CourseNameKit.normalizeBrackets(baseCourse.name)
+            }) {
+            retryOrFail("同名课程包含多个教学班，请从队列启动指定课程")
+            return
         }
         val targetClassId = queueCourse?.classId
         val useExactMatch = queueCourse?.useExactMatch == true && !targetClassId.isNullOrEmpty()
@@ -3039,7 +3006,7 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
                 try {
                     val classes = JSONArray(body)
                     var matchedClass: Course? = null
-                    var bestScore = 0
+                    var bestScore = -1
                     
                     // 🔧 优先级1：精确模式 - 使用队列中保存的 classId 精确匹配
                     if (useExactMatch && targetClassId != null) {
@@ -3048,8 +3015,12 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
                             val jxbId = cls.optString("jxb_id", "")
                             val doJxbId = cls.optString("do_jxb_id", "")
                             
-                            if (jxbId == targetClassId || doJxbId == targetClassId) {
+                            if ((jxbId == targetClassId || doJxbId == targetClassId) &&
+                                (queueCourse == null || TeachingClassMatcher.matchesRequest(cls, queueCourse))) {
                                 matchedClass = Course().apply {
+                                    uuid = queueCourse?.getUuid() ?: baseCourse.getUuid()
+                                    teachingClassFilter = queueCourse?.teachingClassFilter.orEmpty()
+                                    jxbmc = cls.optString("jxbmc", "")
                                     name = baseCourse.name
                                     courseId = baseCourse.courseId
                                     classId = jxbId
@@ -3080,7 +3051,8 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
                     // 🔧 优先级2：智能模式 - 按关键词匹配老师/时间
                     for (i in 0 until classes.length()) {
                         val cls = classes.getJSONObject(i)
-                        val teacher = cls.optString("jsxm", "").lowercase()
+                        if (queueCourse != null && !TeachingClassMatcher.matchesRequest(cls, queueCourse)) continue
+                        val teacher = TeachingClassMatcher.teacher(cls).lowercase()
                         val time = cls.optString("sksj", "").lowercase()
                         
                         var score = 0
@@ -3098,10 +3070,13 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
                         }
                         
                         // 如果没有指定关键词，或者匹配到了关键词
-                        if (keywordList.isEmpty() || score > 0) {
+                        if (queueCourse?.hasTeachingClassFilter() == true || keywordList.isEmpty() || score > 0) {
                             if (score > bestScore) {  // 🔧 用严格大于，防止后者覆盖
                                 bestScore = score
                                 matchedClass = Course().apply {
+                                    uuid = queueCourse?.getUuid() ?: baseCourse.getUuid()
+                                    teachingClassFilter = queueCourse?.teachingClassFilter.orEmpty()
+                                    jxbmc = cls.optString("jxbmc", "")
                                     name = baseCourse.name
                                     courseId = baseCourse.courseId
                                     classId = cls.optString("jxb_id", "")
@@ -3127,7 +3102,7 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
                         broadcastLog("成功：智能匹配到教学班 ${matchedClass.teacher} | ${matchedClass.time}")
                         useMatchedCourseAndGrab(matchedClass)
                     } else {
-                        broadcastLog("注意：未找到匹配的教学班，随机尝试…")
+                        broadcastLog("注意：未找到匹配的教学班")
                         handleFallback(baseCourse, queueCourse)
                     }
                     
@@ -3141,9 +3116,15 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
     
     // 处理回退逻辑：优先使用队列中的 Course 信息
     private fun handleFallback(baseCourse: Course, queueCourse: Course?) {
+        if (queueCourse?.hasTeachingClassFilter() == true || baseCourse.hasTeachingClassFilter()) {
+            retryOrFail("未找到指定教学班，等待下一次匹配")
+            return
+        }
         if (queueCourse != null && queueCourse.useExactMatch && !queueCourse.classId.isNullOrEmpty()) {
             broadcastLog("注意：使用队列中的精确配置进行强制抢课：classId=${queueCourse.classId}")
             val fallbackCourse = Course().apply {
+                uuid = queueCourse.getUuid()
+                jxbmc = queueCourse.jxbmc
                 name = baseCourse.name
                 courseId = baseCourse.courseId
                 classId = queueCourse.classId
@@ -3175,19 +3156,16 @@ private fun broadcastQueueUpdate(courseName: String? = null, status: String? = n
         saveServiceTargetCourseSnapshot(match)
         
         // 🔧 关键修复：同步更新服务队列快照中对应课程的 classId 和 doJxbId
-        val queue = serviceQueue
-        for (c in queue) {
-            if (c.name == match.name) {
+        findQueuedCourse(match)?.let { c ->
                 c.classId = match.classId
                 c.doJxbId = match.doJxbId
+                c.jxbmc = match.jxbmc
                 c.useExactMatch = match.useExactMatch
                 c.rlkz = match.rlkz
                 c.rlzlkz = match.rlzlkz
                 c.sxbj = match.sxbj
                 c.xxkbj = match.xxkbj
                 Log.d(TAG, "📝 已更新服务队列课程: ${c.name}, classId=${c.classId}, doJxbId=${c.doJxbId?.length}字符")
-                break
-            }
         }
         saveServiceQueueSnapshot()
         

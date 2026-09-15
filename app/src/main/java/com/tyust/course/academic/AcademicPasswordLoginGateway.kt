@@ -29,16 +29,19 @@ class AcademicPasswordLoginGateway(private val school: SchoolConfig) : PasswordL
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val requestScope = scope
         requestScope.launch {
-            if (school.academicSystem == AcademicSystem.AUTO.id) {
-                val detected = AcademicGatewayFactory.detect(school, key)
-                if (detected == null) { callback.onError("无法识别教务系统，请在学校配置中手动选择"); return@launch }
+            val result = loginResult {
+                if (school.academicSystem == AcademicSystem.AUTO.id && AcademicGatewayFactory.detect(school, key) == null)
+                    throw AcademicException(AcademicStatus.PAGE_CHANGED, "无法识别教务系统，请在学校配置中手动选择")
+                val created = AcademicGatewayFactory.create(school, key)
+                currentCoroutineContext().ensureActive()
+                adapter = created
+                created.login(Credentials(username, password))
             }
-            val created = AcademicGatewayFactory.create(school, key)
             currentCoroutineContext().ensureActive()
-            adapter = created
-            val result = loginResult { created.login(Credentials(username, password)) }
-            currentCoroutineContext().ensureActive()
-            if (scope === requestScope && adapter === created) deliver(created, result, callback)
+            if (scope !== requestScope) return@launch
+            val current = adapter
+            if (current != null) deliver(current, result, callback)
+            else callback.onError(result.message.ifBlank { "登录初始化失败，请重新选择教务系统" })
         }
     }
 

@@ -58,7 +58,7 @@ class SchoolFormDraftTest {
 
     @Test fun manuallyChosenTypesRouteToTheCorrespondingLoginPages() {
         val paths = mapOf(AcademicSystem.ZF to "xtgl/login_slogin.html", AcademicSystem.ZF_OLD to "default2.aspx",
-            AcademicSystem.QZ to "framework/xsMainV.htmlx", AcademicSystem.QZ_OLD to "")
+            AcademicSystem.QZ to "", AcademicSystem.QZ_OLD to "")
         for ((type, path) in paths) {
             val school = SchoolFormDraft("test", "jw.example.edu.cn", "https", "/custom", type.id).toSchoolConfig()
             assertEquals("https://jw.example.edu.cn/custom/$path", AcademicGatewayFactory.loginUrl(school))

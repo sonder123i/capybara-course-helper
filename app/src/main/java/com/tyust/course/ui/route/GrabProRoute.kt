@@ -20,6 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -137,7 +139,7 @@ fun GrabProRoute() {
     var queueItemStatuses by remember {
         val loaded = if (isDemoMode) {
             queue.associate { course ->
-                "${course.name}_${course.teacher}_${course.time}" to GrabQueueItemStatus.WAITING
+                course.queueStatusKey to GrabQueueItemStatus.WAITING
             }
         } else {
             val savedStatuses = prefs.getString(scopedPrefKey("queue_item_statuses"), null)
@@ -166,6 +168,7 @@ fun GrabProRoute() {
     var manualCourseInput by remember { mutableStateOf("") }
     // 🔧 新增：分开的输入框状态
     var inputCourseName by remember { mutableStateOf("") }
+    var inputTeachingClass by remember { mutableStateOf("") }
     var inputTeacher by remember { mutableStateOf("") }
     var selectedWeekday by remember { mutableStateOf("") }
     var selectedPeriod by remember { mutableStateOf("") }
@@ -214,7 +217,7 @@ fun GrabProRoute() {
         if (isDemoMode) {
             queue = DemoData.grabQueue()
             queueItemStatuses = queue.associate { course ->
-                "${course.name}_${course.teacher}_${course.time}" to GrabQueueItemStatus.WAITING
+                course.queueStatusKey to GrabQueueItemStatus.WAITING
             }
             logText = ""
             appendLog("演示队列已就绪，共 ${queue.size} 门课程")
@@ -263,18 +266,12 @@ fun GrabProRoute() {
                         val courseName = intent.getStringExtra(GrabService.EXTRA_COURSE_NAME_STATUS)
                         val courseStatus = intent.getStringExtra(GrabService.EXTRA_COURSE_STATUS)
                         
-                        var courseKey = ""
-                        if (!courseName.isNullOrEmpty()) {
-                            // 查找匹配的课程以构建正确的 key
-                            val matchedCourse = queue.find { 
-                                it.name == courseName || (it.name?.contains(courseName) == true) || (courseName.contains(it.name ?: ""))
-                            }
-                            if (matchedCourse != null) {
-                                courseKey = "${matchedCourse.name ?: ""}_${matchedCourse.teacher ?: ""}_${matchedCourse.time ?: ""}"
-                            } else {
-                                courseKey = "${courseName}__"
-                            }
-                        }
+                        // 新服务直接携带稳定标识；兼容旧广播时只接受唯一匹配。
+                        val courseKey = intent.getStringExtra(GrabService.EXTRA_QUEUE_STATUS_KEY)
+                            ?: queue.filter { !courseId.isNullOrEmpty() && it.courseId == courseId }
+                                .singleOrNull()?.queueStatusKey
+                            ?: queue.filter { !courseName.isNullOrEmpty() && it.name == courseName }
+                                .singleOrNull()?.queueStatusKey.orEmpty()
 
                         if (courseKey.isNotEmpty() && courseStatus != null) {
                             val newStatuses = queueItemStatuses.toMutableMap()
@@ -338,7 +335,7 @@ fun GrabProRoute() {
             retryCount = 0
             demoQueueIndex = -1
             queueItemStatuses = queue.associate { course ->
-                "${course.name}_${course.teacher}_${course.time}" to GrabQueueItemStatus.WAITING
+                course.queueStatusKey to GrabQueueItemStatus.WAITING
             }
             isRunning = true
             appendLog("开始演示抢课：${queue.size} 门课程（仅本地模拟）")
@@ -346,7 +343,7 @@ fun GrabProRoute() {
 
             demoRunJob = demoScope.launch {
                 queue.forEachIndexed { index, course ->
-                    val courseKey = "${course.name}_${course.teacher}_${course.time}"
+                    val courseKey = course.queueStatusKey
                     demoQueueIndex = index
                     queueItemStatuses = queueItemStatuses + (courseKey to GrabQueueItemStatus.GRABBING)
                     appendLog("正在提交：${course.name} · ${course.teacher}")
@@ -762,7 +759,7 @@ fun GrabProRoute() {
             if (index in queue.indices) {
                 if (isDemoMode) {
                     val removed = queue[index]
-                    val key = "${removed.name}_${removed.teacher}_${removed.time}"
+                    val key = removed.queueStatusKey
                     queue = queue.toMutableList().also { it.removeAt(index) }
                     queueItemStatuses = queueItemStatuses - key
                     queueVersion++
@@ -859,13 +856,14 @@ fun GrabProRoute() {
             onDismissRequest = { 
                 showAddCourseDialog = false
                 inputCourseName = ""
+                inputTeachingClass = ""
                 inputTeacher = ""
                 selectedWeekday = ""
                 selectedPeriod = ""
             },
             title = { Text("添加课程到队列") },
             content = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // 课程名（必填）
                     com.tyust.course.ui.screen.SchoolFormField(
                         value = inputCourseName,
@@ -876,6 +874,16 @@ fun GrabProRoute() {
                         modifier = Modifier.fillMaxWidth()
                     )
                     
+                    com.tyust.course.ui.screen.SchoolFormField(
+                        value = inputTeachingClass,
+                        onValueChange = { inputTeachingClass = it },
+                        label = "教学班（选填）",
+                        placeholder = "例如：篮球0003",
+                        helper = "按教学班名称匹配，留空则不限",
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     // 教师（选填）
                     com.tyust.course.ui.screen.SchoolFormField(
                         value = inputTeacher,
@@ -928,6 +936,8 @@ fun GrabProRoute() {
                             
                             val tempCourse = com.tyust.course.model.Course().apply {
                                 name = inputCourseName.trim()
+                                teachingClassFilter = inputTeachingClass.trim()
+                                jxbmc = teachingClassFilter
                                 teacher = inputTeacher.trim()
                                 time = timeStr
                                 courseId = "manual_${System.currentTimeMillis()}"
@@ -945,7 +955,7 @@ fun GrabProRoute() {
                             }
                             if (added) {
                                 // 🔧 添加时重置该课程的状态，防止显示之前的“失败”状态
-                                val courseKey = "${tempCourse.name ?: ""}_${tempCourse.teacher ?: ""}_${tempCourse.time ?: ""}"
+                                val courseKey = tempCourse.queueStatusKey
                                 val newStatuses = queueItemStatuses.toMutableMap()
                                 newStatuses[courseKey] = com.tyust.course.ui.screen.GrabQueueItemStatus.WAITING
                                 queueItemStatuses = newStatuses
@@ -954,6 +964,7 @@ fun GrabProRoute() {
                                 refreshQueue()
                                 val displayInfo = buildString {
                                     append(tempCourse.name)
+                                    if (tempCourse.jxbmc.isNotEmpty()) append(" | ${tempCourse.jxbmc}")
                                     if (tempCourse.teacher.isNotEmpty()) append(" | ${tempCourse.teacher}")
                                     if (tempCourse.time.isNotEmpty()) append(" | ${tempCourse.time}")
                                 }
@@ -963,6 +974,7 @@ fun GrabProRoute() {
                             }
                             // 清空输入
                             inputCourseName = ""
+                            inputTeachingClass = ""
                             inputTeacher = ""
                             selectedWeekday = ""
                             selectedPeriod = ""
@@ -979,6 +991,7 @@ fun GrabProRoute() {
                     onClick = {
                         showAddCourseDialog = false
                         inputCourseName = ""
+                        inputTeachingClass = ""
                         inputTeacher = ""
                         selectedWeekday = ""
                         selectedPeriod = ""

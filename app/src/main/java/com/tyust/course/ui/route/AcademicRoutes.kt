@@ -127,7 +127,7 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
         if (AcademicGrabRuntimeStore.get(account).running) { GlassToaster.show("请先停止当前抢课任务再修改队列"); return }
         val added = queue.add(AcademicGrabItem(account, school.id, course.name, course.teacher, course.time,
             course.completeParams["academic_course_id"].orEmpty().ifBlank { course.courseId }, course.classId,
-            course.completeParams["academic_scope_id"].orEmpty()))
+            course.completeParams["academic_scope_id"].orEmpty(), sectionName = course.jxbmc))
         GlassToaster.show(if (added) "已加入抢课队列" else "课程已在队列中")
     }
 
@@ -136,7 +136,8 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
         queue.setTarget(account, AcademicGrabItem(account, school.id, course.name,
             if (exact) course.teacher else "", if (exact) course.time else "",
             course.completeParams["academic_course_id"].orEmpty().ifBlank { course.courseId },
-            if (exact) course.classId else "", course.completeParams["academic_scope_id"].orEmpty(), useExactMatch = exact))
+            if (exact) course.classId else "", course.completeParams["academic_scope_id"].orEmpty(), useExactMatch = exact,
+            sectionName = if (exact) course.jxbmc else ""))
         GlassToaster.show(if (exact) "已设为目标教学班" else "已设为同课程教学班监控目标")
     }
 
@@ -233,8 +234,11 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                                 scope.launch {
                                     try {
                                         val sections = withContext(Dispatchers.IO) {
-                                            classes.flatMap { AcademicCourseBridge.listSections(school, account, it, expectedSession) }
-                                                .distinctBy { it.completeParams["academic_scope_id"] to it.classId }
+                                            // 同一课程组的行是同一门课的教学班（正方列表按教学班粒度返回），
+                                            // 每个选课分类只需取一行请求；逐行请求会在几十行的组上串行几十轮。
+                                            classes.distinctBy { it.completeParams["academic_scope_id"] }.flatMap { request ->
+                                                AcademicCourseBridge.listSections(school, account, request, expectedSession)
+                                            }.distinctBy { it.completeParams["academic_scope_id"] to it.classId }
                                         }
                                         if (!sessions.isCurrent(expectedSession) || selectedCategory != requestCategory || revision != requestRevision) return@launch
                                         classes.forEach { requested ->
@@ -380,6 +384,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
     var showDateTimePicker by remember(account) { mutableStateOf(false) }
     var showManualAdd by remember(account) { mutableStateOf(false) }
     var inputCourse by remember(account) { mutableStateOf("") }
+    var inputSection by remember(account) { mutableStateOf("") }
     var inputTeacher by remember(account) { mutableStateOf("") }
     var inputTime by remember(account) { mutableStateOf("") }
     var pendingScheduledStart by remember(account) { mutableStateOf(false) }
@@ -450,7 +455,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         onDispose { context.unregisterReceiver(receiver) }
     }
     val courses = remember(items) { items.map { item -> Course().apply {
-        name = item.courseName; teacher = item.teacher; time = item.time
+        name = item.courseName; teacher = item.teacher; time = item.time; jxbmc = item.sectionName
         courseId = item.stableCourseId; classId = item.stableSectionId; useExactMatch = item.useExactMatch
         uuid = item.key
         completeParams["academic_queue_key"] = item.key
@@ -462,7 +467,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         isFuzzyMatchMode = target?.useExactMatch == false, fuzzyMatchTarget = target?.takeUnless { it.useExactMatch }?.courseName,
         onStartFuzzyMatch = { requestStart(false) }, onClearFuzzyMatchTarget = { store.setTarget(account, null); target = null },
         supportsImmediateManual = true,
-        systemNotice = AcademicCapabilities.queueLimit(school) + " 间隔至少 500 毫秒，每门最多 1000 轮。智能模式每轮可尝试同课程的多个教学班，教师和时段可能变化；手动添加的教师与时间仍作为条件。",
+        systemNotice = AcademicCapabilities.queueLimit(school) + " 间隔至少 500 毫秒，每门最多 1000 轮。智能模式每轮可尝试同课程的多个教学班，教师和时段可能变化；手动填写的教学班、教师与时间仍作为条件。",
         interval = interval, onIntervalChange = { interval = it; prefs.edit().putString("interval_$account", it).apply() },
         maxRetry = maxRetry, onMaxRetryChange = { maxRetry = it; prefs.edit().putString("max_retry_$account", it).apply() },
         onStart = { requestStart(false) },
@@ -500,18 +505,23 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
     }, onDismiss = { showDateTimePicker = false })
     if (showManualAdd) SystemDialog(onDismissRequest = { showManualAdd = false }, title = { Text("添加课程到队列") },
         content = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 com.tyust.course.ui.screen.SchoolFormField(label = "课程名称", value = inputCourse, onValueChange = { inputCourse = it }, placeholder = "完整课程名称")
+                if (school.academicSystem == AcademicSystem.ZF.id) {
+                    com.tyust.course.ui.screen.SchoolFormField(label = "教学班（选填）", value = inputSection, onValueChange = { inputSection = it },
+                        placeholder = "例如：篮球0003", helper = "按教学班名称匹配，留空则不限")
+                }
                 com.tyust.course.ui.screen.SchoolFormField(label = "教师（选填）", value = inputTeacher, onValueChange = { inputTeacher = it })
                 com.tyust.course.ui.screen.SchoolFormField(label = "上课时间（选填）", value = inputTime, onValueChange = { inputTime = it })
             }
         }, confirmButton = {
             SystemPrimaryButton(text = "添加", enabled = inputCourse.isNotBlank() && !running, onClick = {
                 if (!sessions.isCurrent(expectedSession)) return@SystemPrimaryButton
-                val added = store.add(AcademicGrabItem(account, school.id, inputCourse.trim(), inputTeacher.trim(), inputTime.trim(), useExactMatch = false))
+                val added = store.add(AcademicGrabItem(account, school.id, inputCourse.trim(), inputTeacher.trim(), inputTime.trim(),
+                    useExactMatch = false, sectionName = if (school.academicSystem == AcademicSystem.ZF.id) inputSection.trim() else ""))
                 if (added) {
                     items = store.items(account); showManualAdd = false
-                    inputCourse = ""; inputTeacher = ""; inputTime = ""
+                    inputCourse = ""; inputSection = ""; inputTeacher = ""; inputTime = ""
                 } else GlassToaster.show("该课程已在队列中")
             })
         }, dismissButton = { SystemSecondaryButton(text = "取消", onClick = { showManualAdd = false }) })

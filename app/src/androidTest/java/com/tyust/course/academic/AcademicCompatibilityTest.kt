@@ -12,8 +12,12 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import com.tyust.course.AcademicWebViewActivity
 import com.tyust.course.manager.StudentLimitManager
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -141,6 +145,52 @@ class AcademicCompatibilityTest {
         }
     }
 
+    @Test fun manualTeachingClassesPersistAndHaveIndependentQueueStatuses() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = AcademicGrabQueueStore(context)
+        val account = "academic_teaching_class_queue_test"
+        val basketball = AcademicGrabItem(account, "test", "体育（一）", sectionName = "篮球0003")
+        val football = basketball.copy(sectionName = "足球0003")
+        val anyClass = basketball.copy(sectionName = "")
+        try {
+            store.replace(account, emptyList())
+            assertTrue(store.add(basketball))
+            assertFalse(store.add(basketball))
+            assertTrue(store.add(football))
+            assertTrue(store.add(anyClass))
+            store.setTarget(account, basketball)
+            store.resetStatuses(account, listOf(basketball, football, anyClass))
+            store.setStatus(account, basketball, "SUCCESS")
+            val reloaded = AcademicGrabQueueStore(context)
+            assertEquals(listOf(basketball, football, anyClass), reloaded.items(account))
+            assertEquals(basketball, reloaded.target(account))
+            assertFalse(reloaded.add(football))
+            assertEquals("SUCCESS", reloaded.statuses(account)[basketball.key])
+            assertEquals("WAITING", reloaded.statuses(account)[football.key])
+            assertEquals("WAITING", reloaded.statuses(account)[anyClass.key])
+        } finally {
+            store.replace(account, emptyList()); store.setTarget(account, null); store.resetStatuses(account, emptyList())
+        }
+    }
+
+    @Test fun aLegacyQueueEntryKeepsItsStatusAndHasNoTeachingClassConstraint() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs = context.getSharedPreferences("academic_grab_queue", Context.MODE_PRIVATE)
+        val account = "academic_legacy_teaching_class_test"
+        val legacyKey = "4:test|0:|0:|0:|6:Course|7:Teacher|6:Monday"
+        try {
+            prefs.edit()
+                .putString(account, """[{"schoolId":"test","courseName":"Course","teacher":"Teacher","time":"Monday"}]""")
+                .putString("statuses:$account", JSONObject(mapOf(legacyKey to "WAITING")).toString()).apply()
+            val store = AcademicGrabQueueStore(context)
+            val restored = store.items(account).single()
+            assertEquals("", restored.sectionName)
+            assertEquals(legacyKey, restored.key)
+            assertEquals("WAITING", store.statuses(account)[restored.key])
+            assertFalse(restored.useExactMatch)
+        } finally { prefs.edit().remove(account).remove("statuses:$account").apply() }
+    }
+
     @Test fun exactSchedulesPersistAndCancelIndependentlyForEachAccount() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val scheduler = AcademicGrabScheduler(context)
@@ -164,7 +214,7 @@ class AcademicCompatibilityTest {
         } finally { scheduler.cancel(a); scheduler.cancel(b) }
     }
 
-    @Test fun restrictedWebViewLoadsSchoolAndBlocksAnUnlistedPort() {
+    @Test fun loginBrowserLoadsCrossOriginResourcesAndAllowsManualNavigation() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val automation = instrumentation.uiAutomation
@@ -177,7 +227,17 @@ class AcademicCompatibilityTest {
         val blocked = ServerSocket(0)
         val school = ServerSocket(0)
         val blockedWorker = thread(isDaemon = true) {
-            try { while (!blocked.isClosed) blocked.accept().use { blockedRequests.incrementAndGet() } } catch (_: Exception) {}
+            try {
+                while (!blocked.isClosed) blocked.accept().use { socket ->
+                    socket.soTimeout = 5000
+                    val input = socket.getInputStream().bufferedReader()
+                    input.readLine()
+                    while (!input.readLine().isNullOrEmpty()) {}
+                    blockedRequests.incrementAndGet()
+                    val body = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body><h1>ACADEMIC_SSO_READY</h1></body></html>".toByteArray()
+                    socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray() + body)
+                }
+            } catch (_: Exception) {}
         }
         val serverWorker = thread(isDaemon = true) {
             try {
@@ -221,10 +281,21 @@ class AcademicCompatibilityTest {
                 if (visible) break
                 SystemClock.sleep(150)
             }
-            assertTrue("The school page did not render in the restricted WebView", visible)
+            assertTrue("The school page did not render in the login browser", visible)
             assertTrue("The page did not finish processing its subresources", pageRendered.await(5, TimeUnit.SECONDS))
-            assertEquals("An unlisted academic origin must not receive a subresource request", 0, blockedRequests.get())
+            assertTrue("Interactive login must allow cross-origin school resources", blockedRequests.get() > 0)
+
+            val device = UiDevice.getInstance(instrumentation)
+            val address = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)
+            assertNotNull("The browser needs an editable address/search bar", address)
+            address.text = "http://127.0.0.2:${blocked.localPort}/login"
+            device.findObject(By.desc("前往")).click()
+            assertTrue("A user-entered SSO host must open", device.wait(Until.hasObject(By.text("ACADEMIC_SSO_READY")), 10000))
+            val screenshot = java.io.File(context.getExternalFilesDir(null), "login-fixes/browser-manual-sso.png")
+            screenshot.parentFile?.mkdirs()
+            device.takeScreenshot(screenshot)
         } finally {
+            automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalServiceFlags }
             school.close(); blocked.close()

@@ -218,7 +218,8 @@ class AcademicProtocolSafetyTest {
                 })
             }
         }
-        val result = ProtocolGrabRunner(adapter).runOnce(item.copy(scopeId = "scope", useExactMatch = false, teacher = "Previous teacher"), true)
+        val result = ProtocolGrabRunner(adapter).runOnce(item.copy(scopeId = "scope", useExactMatch = false,
+            teacher = "Previous teacher", sectionName = "Previous class"), true)
         assertTrue(result is GrabRunEvent.Success)
         assertEquals(listOf("full", "conflict", "available"), submitted)
     }
@@ -270,6 +271,55 @@ class AcademicProtocolSafetyTest {
             }
         }
         assertTrue(ProtocolGrabRunner(adapter).runOnce(item.copy(stableSectionId = "", stableCourseId = "", teacher = "Teacher B", time = "Tuesday", useExactMatch = false), true) is GrabRunEvent.Success)
+        assertEquals(1, adapter.writes)
+    }
+
+    @Test fun aManualTeachingClassMustAlsoMatchTheTeacherAndTime() = runBlocking {
+        val adapter = object : FakeAdapter(AcademicStatus.SUCCESS) {
+            override suspend fun listCourses(context: CourseContext, query: CourseQuery): List<CourseOffer> {
+                assertEquals("Course", query.keyword)
+                return super.listCourses(context, query)
+            }
+            override suspend fun listSections(course: CourseOffer) = listOf(
+                CourseSection("other-class", "course", name = "26-足球0003", teacher = "Teacher A", time = "Monday"),
+                CourseSection("other-teacher", "course", name = "26-篮球0003", teacher = "Teacher B", time = "Monday"),
+                CourseSection("other-time", "course", name = "26-篮球0003", teacher = "Teacher A", time = "Tuesday"),
+                CourseSection("target", "course", name = "26-篮球0003", teacher = "Teacher A", time = "Monday"))
+            override suspend fun select(target: SelectionTarget): SelectionResult {
+                assertEquals("target", target.section.stableId)
+                return super.select(target)
+            }
+        }
+        val manual = AcademicGrabItem("account", "school", "Course", teacher = "Teacher A", time = "Monday", sectionName = "篮球0003")
+        assertTrue(ProtocolGrabRunner(adapter).runOnce(manual, true) is GrabRunEvent.Success)
+        assertEquals(1, adapter.writes)
+    }
+
+    @Test fun aMissingTeachingClassWaitsWithoutSelectingAnotherClass() = runBlocking {
+        val adapter = object : FakeAdapter(AcademicStatus.SUCCESS) {
+            override suspend fun listSections(course: CourseOffer) = listOf(
+                CourseSection("other", "course", name = "26-足球0003"),
+                CourseSection("unnamed", "course"))
+        }
+        val manual = AcademicGrabItem("account", "school", "Course", sectionName = "篮球0003")
+        val result = ProtocolGrabRunner(adapter).runOnce(manual, true)
+        assertTrue(result is GrabRunEvent.Waiting && result.status == AcademicStatus.NO_CAPACITY)
+        assertEquals(0, adapter.writes)
+    }
+
+    @Test fun aFullTeachingClassDoesNotFallBackToAnUnrequestedClass() = runBlocking {
+        val adapter = object : FakeAdapter(AcademicStatus.NO_CAPACITY) {
+            override suspend fun listSections(course: CourseOffer) = listOf(
+                CourseSection("other", "course", name = "26-足球0003", capacity = 50, selected = 10),
+                CourseSection("target", "course", name = "26-篮球0003", capacity = 50, selected = 50))
+            override suspend fun select(target: SelectionTarget): SelectionResult {
+                assertEquals("target", target.section.stableId)
+                return super.select(target)
+            }
+        }
+        val manual = AcademicGrabItem("account", "school", "Course", sectionName = "篮球0003")
+        val result = ProtocolGrabRunner(adapter).runOnce(manual, true)
+        assertTrue(result is GrabRunEvent.Waiting && result.status == AcademicStatus.NO_CAPACITY)
         assertEquals(1, adapter.writes)
     }
 

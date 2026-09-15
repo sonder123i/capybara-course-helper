@@ -37,6 +37,7 @@ import com.tyust.course.LoginActivity
 import com.tyust.course.login.PasswordLoginCallback
 import com.tyust.course.login.PasswordLoginGatewayFactory
 import com.tyust.course.manager.AppearanceSettingsManager
+import com.tyust.course.manager.StartupPagePreferences
 import com.tyust.course.manager.UserManager
 import com.tyust.course.network.CourseApiClient
 import com.tyust.course.ui.screen.SettingsScreen
@@ -110,6 +111,9 @@ fun SettingsRoute(
     var showSchoolAdaptation by remember { mutableStateOf(false) }
     var showWallpaperDialog by remember { mutableStateOf(false) }
     var showThemeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showStartupPageDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
+    var startupPage by remember(startupPagePreferences) { mutableStateOf(startupPagePreferences.read()) }
     val currentWallpaperName = com.tyust.course.manager.AppearanceSettingsManager.currentWallpaperName
     
     // Quota States
@@ -373,6 +377,8 @@ fun SettingsRoute(
         wallpaperName = currentWallpaperName,
         themeName = AppearanceSettingsManager.themeMode.label,
         onThemeSelect = { showThemeDialog = true },
+        startupPageName = startupPage.label,
+        onStartupPageSelect = { showStartupPageDialog = true },
         glassEffectEnabled = AppearanceSettingsManager.glassEffectEnabled,
         onGlassEffectChange = { AppearanceSettingsManager.updateGlassEffect(it) },
         usageEnabled = usagePreferences.enabled,
@@ -389,6 +395,16 @@ fun SettingsRoute(
     
     if (showThemeDialog) {
         com.tyust.course.ui.screen.AppThemeSettingsDialog { showThemeDialog = false }
+    }
+    if (showStartupPageDialog) {
+        com.tyust.course.ui.screen.StartupPageSettingsDialog(
+            page = startupPage,
+            onPageChange = {
+                startupPagePreferences.write(it)
+                startupPage = it
+            },
+            onDismiss = { showStartupPageDialog = false }
+        )
     }
     if (showWallpaperDialog) {
         com.tyust.course.ui.screen.WallpaperSettingsDialog(

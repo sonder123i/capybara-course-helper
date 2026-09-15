@@ -23,9 +23,12 @@ data class AcademicGrabItem(
     val stableSectionId: String = "",
     val scopeId: String = "",
     val enabled: Boolean = true,
-    val useExactMatch: Boolean = stableSectionId.isNotBlank()
+    val useExactMatch: Boolean = stableSectionId.isNotBlank(),
+    val sectionName: String = ""
 ) {
+    // 没有教学班条件时沿用旧 key，保留已有队列状态。
     val key: String get() = listOf(schoolId, scopeId, stableCourseId, stableSectionId, courseName, teacher, time)
+        .let { if (sectionName.isBlank()) it else it + sectionName }
         .joinToString("|") { "${it.length}:$it" }
 }
 
@@ -37,7 +40,8 @@ class AcademicGrabQueueStore(private val context: Context) {
         val current = items(item.accountStorageKey).toMutableList()
         if (current.any { existing -> existing.schoolId == item.schoolId && existing.scopeId == item.scopeId &&
             if (item.stableSectionId.isNotBlank()) existing.stableSectionId == item.stableSectionId && existing.stableCourseId == item.stableCourseId
-            else existing.stableSectionId.isBlank() && existing.courseName == item.courseName && existing.teacher == item.teacher && existing.time == item.time
+            else existing.stableSectionId.isBlank() && existing.courseName == item.courseName && existing.teacher == item.teacher &&
+                existing.time == item.time && existing.sectionName == item.sectionName
         }) return@synchronized false
         current += item; replace(item.accountStorageKey, current); true
     }
@@ -76,11 +80,12 @@ class AcademicGrabQueueStore(private val context: Context) {
     }
     private fun fromJson(account: String, json: JSONObject) = AcademicGrabItem(account, json.optString("schoolId"), json.optString("courseName"),
         json.optString("teacher"), json.optString("time"), json.optString("stableCourseId"), json.optString("stableSectionId"),
-        json.optString("scopeId"), json.optBoolean("enabled", true), json.optBoolean("useExactMatch", json.optString("stableSectionId").isNotBlank()))
+        json.optString("scopeId"), json.optBoolean("enabled", true), json.optBoolean("useExactMatch", json.optString("stableSectionId").isNotBlank()),
+        json.optString("sectionName"))
     private fun toJson(item: AcademicGrabItem) = JSONObject().apply {
         put("schoolId", item.schoolId); put("courseName", item.courseName); put("teacher", item.teacher); put("time", item.time)
         put("stableCourseId", item.stableCourseId); put("stableSectionId", item.stableSectionId); put("scopeId", item.scopeId)
-        put("enabled", item.enabled); put("useExactMatch", item.useExactMatch)
+        put("enabled", item.enabled); put("useExactMatch", item.useExactMatch); put("sectionName", item.sectionName)
     }
     companion object { private val lock = Any() }
 }

@@ -31,6 +31,8 @@ class AcademicPasswordDeviceTest {
         require(system in setOf("qz", "qz_old", "zf_old"))
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val configs = JSONArray(File(context.cacheDir, fixture).readText())
+        val loginOnly = args.getString("academicLoginOnly") == "true"
+        if (loginOnly) File(context.cacheDir, fixture).delete()
         val config = (0 until configs.length()).map(configs::getJSONObject).first { it.getString("system") == system }
         val school = SchoolConfig(config.getString("id"), config.optString("name"), config.getString("domain"), config.getString("protocol")).apply {
             basePath = config.getString("basePath")
@@ -102,6 +104,18 @@ class AcademicPasswordDeviceTest {
             val identity = adapter.validateSession()
             assertEquals("Fresh password session must authenticate", AcademicStatus.SUCCESS, identity.status)
             assertTrue(identity.studentId.isNotBlank())
+            if (loginOnly) {
+                val cookie = (adapter as SessionBackedAdapter).cookieHeader()
+                assertTrue("The login must yield a reusable academic Cookie", cookie.isNotBlank())
+                val importedKey = "$key-cookie-verification"
+                try {
+                    AcademicGatewayFactory.importCookie(school, importedKey, cookie, username = username)
+                    assertEquals("Cookie login must authenticate independently", AcademicStatus.SUCCESS,
+                        AcademicGatewayFactory.create(school, importedKey).validateSession().status)
+                } finally { AcademicGatewayFactory.invalidate(school, importedKey) }
+                println("Password login and Cookie validation passed: system=$system, captchaRounds=$revision")
+                return@runBlocking
+            }
             val courseContext = adapter.loadCourseContext()
             val courses = if (courseContext.scopes.isEmpty()) emptyList() else adapter.listCourses(courseContext, CourseQuery(pageSize = 100))
             val selected = adapter.selected(courseContext)

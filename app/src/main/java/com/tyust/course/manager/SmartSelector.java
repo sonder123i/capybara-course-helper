@@ -9,6 +9,7 @@ import com.tyust.course.model.Course;
 import com.tyust.course.model.SchoolConfig;
 import com.tyust.course.network.CourseApiClient;
 import com.tyust.course.utils.CourseNameKit;
+import com.tyust.course.utils.TeachingClassMatcher;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -153,6 +154,10 @@ public class SmartSelector {
         String newClassId = course.classId;
 
         for (Course c : courseQueue) {
+            if (c.hasTeachingClassFilter() || course.hasTeachingClassFilter()) {
+                if (c.equals(course)) return false;
+                continue;
+            }
             // 如果 classId 都非空，直接用 classId 判断
             if (newClassId != null && !newClassId.isEmpty() && c.classId != null && !c.classId.isEmpty()) {
                 if (newClassId.equals(c.classId)) {
@@ -193,7 +198,7 @@ public class SmartSelector {
             return;
         boolean removed = false;
         for (int i = 0; i < courseQueue.size(); i++) {
-            if (courseQueue.get(i).equals(course)) {
+            if (courseQueue.get(i).getUuid().equals(course.getUuid()) || courseQueue.get(i).equals(course)) {
                 courseQueue.remove(i);
                 removed = true;
                 break;
@@ -482,7 +487,8 @@ public class SmartSelector {
                         String doJxbId = cls.optString("do_jxb_id", "");
 
                         // 精确匹配 classId
-                        if (jxbId.equals(targetCourse.classId) || doJxbId.equals(targetCourse.classId)) {
+                        if ((jxbId.equals(targetCourse.classId) || doJxbId.equals(targetCourse.classId))
+                                && TeachingClassMatcher.matchesRequest(cls, targetCourse)) {
                             matchedClass = new Course();
                             matchedClass.name = targetCourse.name;
                             matchedClass.courseId = targetCourse.courseId;
@@ -490,6 +496,9 @@ public class SmartSelector {
                             matchedClass.doJxbId = doJxbId;
                             matchedClass.teacher = cls.optString("jsxm", targetCourse.teacher);
                             matchedClass.time = cls.optString("sksj", targetCourse.time);
+                            matchedClass.uuid = targetCourse.getUuid();
+                            matchedClass.jxbmc = cls.optString("jxbmc", targetCourse.jxbmc);
+                            matchedClass.teachingClassFilter = targetCourse.teachingClassFilter;
                             matchedClass._rwlx = targetCourse._rwlx;
                             matchedClass._xkkz_id = targetCourse._xkkz_id;
                             matchedClass.rlkz = cls.optString("rlkz", "0");
@@ -504,7 +513,7 @@ public class SmartSelector {
 
                     if (matchedClass == null) {
                         // 如果精确匹配失败，回退到第一个（兼容旧数据）
-                        if (classes.length() > 0) {
+                        if (classes.length() > 0 && TeachingClassMatcher.canUseSavedClass(targetCourse)) {
                             JSONObject cls = classes.getJSONObject(0);
                             matchedClass = new Course();
                             matchedClass.name = targetCourse.name;
@@ -513,6 +522,8 @@ public class SmartSelector {
                             matchedClass.doJxbId = cls.optString("do_jxb_id", "");
                             matchedClass.teacher = cls.optString("jsxm", "");
                             matchedClass.time = cls.optString("sksj", "");
+                            matchedClass.uuid = targetCourse.getUuid();
+                            matchedClass.jxbmc = cls.optString("jxbmc", "");
                             matchedClass._rwlx = targetCourse._rwlx;
                             matchedClass._xkkz_id = targetCourse._xkkz_id;
                             matchedClass.rlkz = cls.optString("rlkz", "0");
@@ -534,7 +545,8 @@ public class SmartSelector {
                     log("⚠️ 精确模式解析失败: " + e.getMessage());
 
                     // 🔧 Fallback: 如果解析失败（如返回"0"）但我们有保存的 doJxbId，直接尝试抢课
-                    if (targetCourse != null && targetCourse.doJxbId != null && !targetCourse.doJxbId.isEmpty()) {
+                    if (targetCourse != null && TeachingClassMatcher.canUseSavedClass(targetCourse)
+                            && targetCourse.doJxbId != null && !targetCourse.doJxbId.isEmpty()) {
                         log("⚠️ 解析失败，强制使用保存的 doJxbId=" + targetCourse.doJxbId);
 
                         // 确保必要的参数存在 (默认值与 GrabService 保持一致)
@@ -592,7 +604,7 @@ public class SmartSelector {
 
                     for (int i = 0; i < classes.length(); i++) {
                         JSONObject cls = classes.getJSONObject(i);
-                        String teacher = cls.optString("jsxm", "");
+                        String teacher = TeachingClassMatcher.teacher(cls);
                         String time = cls.optString("sksj", "");
 
                         // 匹配老师和时间
@@ -601,7 +613,9 @@ public class SmartSelector {
                         boolean timeMatch = targetMatch.time == null || targetMatch.time.isEmpty()
                                 || time.contains(targetMatch.time);
 
-                        if (teacherMatch && timeMatch) {
+                        boolean matches = targetMatch.hasTeachingClassFilter()
+                                ? TeachingClassMatcher.matchesRequest(cls, targetMatch) : teacherMatch && timeMatch;
+                        if (matches) {
                             matchedClass = new Course();
                             matchedClass.name = baseCourse.name;
                             matchedClass.courseId = baseCourse.courseId;
@@ -609,6 +623,9 @@ public class SmartSelector {
                             matchedClass.doJxbId = cls.optString("do_jxb_id", "");
                             matchedClass.teacher = teacher;
                             matchedClass.time = time;
+                            matchedClass.uuid = targetMatch.getUuid();
+                            matchedClass.jxbmc = cls.optString("jxbmc", "");
+                            matchedClass.teachingClassFilter = targetMatch.teachingClassFilter;
                             matchedClass._rwlx = baseCourse._rwlx;
                             matchedClass._xkkz_id = baseCourse._xkkz_id;
                             matchedClass.rlkz = cls.optString("rlkz", "0");
@@ -679,6 +696,8 @@ public class SmartSelector {
         // 基本匹配信息
         json.put("name", course.name); // 课程名
         json.put("teacher", course.teacher); // 教师
+        json.put("jxbmc", course.jxbmc);
+        json.put("teachingClassFilter", course.teachingClassFilter);
         json.put("time", course.time); // 时间
         json.put("location", course.location); // 地点
 
@@ -713,6 +732,8 @@ public class SmartSelector {
         // 基本信息
         course.name = json.optString("name", "");
         course.teacher = json.optString("teacher", "");
+        course.jxbmc = json.optString("jxbmc", "");
+        course.teachingClassFilter = json.optString("teachingClassFilter", "");
         course.time = json.optString("time", "");
         course.location = json.optString("location", "");
 

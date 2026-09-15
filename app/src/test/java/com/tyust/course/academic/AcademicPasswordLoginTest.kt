@@ -207,6 +207,82 @@ class AcademicPasswordLoginTest {
         assertEquals("c3R1ZGVudA==%%%cmVwbGFjZW1lbnQ=", fields(post)["encoded"])
     }
 
+    @Test fun newQzCaptchaUsesTheSameSessionAndFreshFormTokensAfterAnError() = withGateway(AcademicSystem.QZ) { server, gateway, events ->
+        server.enqueue(html(newQzForm("first", "ABCD")).addHeader("Set-Cookie", "sid=new-qz; Path=/jsxsd"))
+        server.enqueue(captcha(1))
+        gateway.login(AcademicCoreTest.testSchool(server, AcademicSystem.QZ), "u", "p", events)
+        assertArrayEquals(image(1), events.next("captcha").image)
+        assertEquals("/jsxsd/", server.next().path)
+        assertEquals("sid=new-qz", server.next().getHeader("Cookie"))
+        assertEquals(2, server.requestCount)
+
+        server.enqueue(html(newQzForm("retry", "WXYZ", "验证码不正确，请重新输入")))
+        gateway.submitCaptcha("bad", events)
+        events.next("invalid-captcha")
+        val first = server.next()
+        assertEquals("/jsxsd/xk/LoginToXk", first.path)
+        assertEquals("sid=new-qz", first.getHeader("Cookie"))
+        assertEquals("bad", fields(first)["RANDOMCODE"])
+        assertEquals("dABQCD==%%%cA==%%%IA==", fields(first)["encoded"])
+        assertEquals("", fields(first)["userPassword"])
+
+        server.enqueue(captcha(2))
+        assertArrayEquals(image(2), refreshed(gateway))
+        assertEquals("sid=new-qz", server.next().getHeader("Cookie"))
+        server.enqueue(html(home()))
+        server.enqueue(html(home()))
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        gateway.submitCaptcha("aB39", events)
+        events.next("success")
+        val retry = server.next()
+        assertEquals("sid=new-qz", retry.getHeader("Cookie"))
+        assertEquals("retry", fields(retry)["csrf"])
+        assertEquals("aB39", fields(retry)["RANDOMCODE"])
+        assertEquals("dWXQYZ==%%%cA==%%%IA==", fields(retry)["encoded"])
+    }
+
+    @Test fun newQzJsonCaptchaAndPasswordFailuresAreNotReportedAsExpiredSessions() = withGateway(AcademicSystem.QZ) { server, gateway, events ->
+        server.enqueue(html(newQzForm("first", "ABCD")))
+        server.enqueue(captcha(1))
+        gateway.login(AcademicCoreTest.testSchool(server, AcademicSystem.QZ), "u", "p", events)
+        events.next("captcha")
+        server.next(); server.next()
+        server.enqueue(MockResponse().setBody("""{"flag1":2,"msgContent":"验证码错误"}"""))
+        gateway.submitCaptcha("bad", events)
+        events.next("invalid-captcha")
+        server.next()
+        server.enqueue(MockResponse().setBody("""{"flag1":2,"msgContent":"用户名或密码错误"}"""))
+        gateway.submitCaptcha("good", events)
+        events.next("invalid-credentials")
+        server.next()
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test fun newQzWithoutCaptchaStillLogsInAndClearingAPendingCaptchaPreventsSubmission() = withGateway(AcademicSystem.QZ) { server, gateway, events ->
+        server.enqueue(html(newQzForm("first", "ABCD", withCaptcha = false)))
+        server.enqueue(html(home()))
+        server.enqueue(html(home()))
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        gateway.login(AcademicCoreTest.testSchool(server, AcademicSystem.QZ), "u", "p", events)
+        events.next("success")
+        repeat(4) { server.next() }
+        server.enqueue(html(newQzForm("pending", "WXYZ")))
+        server.enqueue(captcha(1))
+        gateway.login(AcademicCoreTest.testSchool(server, AcademicSystem.QZ), "u", "p", events)
+        events.next("captcha")
+        gateway.clearSensitiveState()
+        gateway.submitCaptcha("must-not-submit", events)
+        events.next("error")
+        assertEquals(6, server.requestCount)
+    }
+
+    @Test fun invalidConfigurationReportsAnErrorWithoutCrashingTheLoginCoroutine() = withGateway(AcademicSystem.QZ) { server, gateway, events ->
+        val school = AcademicCoreTest.testSchool(server, AcademicSystem.QZ).apply { academicSystem = "unknown" }
+        gateway.login(school, "u", "p", events)
+        events.next("error")
+        assertEquals(0, server.requestCount)
+    }
+
     private fun withGateway(system: AcademicSystem, block: (MockWebServer, AcademicPasswordLoginGateway, Events) -> Unit) {
         val server = MockWebServer()
         server.start()
@@ -237,6 +313,14 @@ class AcademicPasswordLoginTest {
     }
 
     companion object {
+        private fun newQzForm(token: String, scode: String, error: String = "", withCaptcha: Boolean = true) = """
+            <form method="post" action="/jsxsd/xk/LoginToXk">
+                <input name="csrf" type="hidden" value="$token"><input name="userAccount"><input type="password" name="userPassword">
+                <input type="hidden" name="encoded"><span id="showMsg">$error</span>
+                ${if (withCaptcha) "<input name='RANDOMCODE'><img id='SafeCodeImg' src='/jsxsd/verifycode.servlet'>" else ""}
+            </form><script>var scode = '$scode'; var sxh = '2200000';</script>
+        """.trimIndent()
+
         private fun MockWebServer.next(): RecordedRequest = requireNotNull(takeRequest(5, TimeUnit.SECONDS))
         private fun fields(request: RecordedRequest): Map<String, String> = request.body.clone().readUtf8().split('&').associate {
             val pair = it.split('=', limit = 2)

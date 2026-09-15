@@ -30,10 +30,11 @@ class ProtocolGrabRunner(
         val context = adapter.loadCourseContext()
         if (context.scopes.isEmpty()) return GrabRunEvent.Waiting(item, AcademicStatus.ROUND_CLOSED, "学校当前未开放选课轮次，等待开放")
         val candidates = if (item.useExactMatch) listOfNotNull(adapter.resolveSelection(context, item.stableCourseId, item.stableSectionId,
-            item.courseName, item.teacher, item.time, item.scopeId)) else adapter.resolveCandidates(context,
+            item.courseName, item.teacher, item.time, item.scopeId, item.sectionName)) else adapter.resolveCandidates(context,
             item.stableCourseId, "", item.courseName,
             if (item.stableSectionId.isBlank()) item.teacher else "",
-            if (item.stableSectionId.isBlank()) item.time else "", item.scopeId)
+            if (item.stableSectionId.isBlank()) item.time else "", item.scopeId,
+            if (item.stableSectionId.isBlank()) item.sectionName else "")
         if (candidates.isEmpty()) return if (item.useExactMatch)
             GrabRunEvent.Paused(item, AcademicStatus.PAGE_CHANGED, "无法唯一确定目标教学班，请重新确认") else
             GrabRunEvent.Waiting(item, AcademicStatus.NO_CAPACITY, "目标课程暂未返回符合条件的教学班")

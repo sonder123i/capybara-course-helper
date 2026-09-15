@@ -10,14 +10,15 @@ internal suspend fun AcademicProtocolAdapter.resolveSelection(
     courseName: String,
     teacher: String = "",
     time: String = "",
-    scopeId: String = ""
+    scopeId: String = "",
+    sectionName: String = ""
 ): ResolvedAcademicSelection? {
-    return resolveCandidates(context, courseId, sectionId, courseName, teacher, time, scopeId).singleOrNull()
+    return resolveCandidates(context, courseId, sectionId, courseName, teacher, time, scopeId, sectionName).singleOrNull()
 }
 
 internal suspend fun AcademicProtocolAdapter.resolveCandidates(
     context: CourseContext, courseId: String, sectionId: String, courseName: String,
-    teacher: String = "", time: String = "", scopeId: String = ""
+    teacher: String = "", time: String = "", scopeId: String = "", sectionName: String = ""
 ): List<ResolvedAcademicSelection> {
     if (scopeId.isNotBlank() && context.scopes.none { it.id == scopeId })
         throw AcademicException(AcademicStatus.ROUND_CLOSED, "目标课程所在轮次尚未开放或已经结束")
@@ -34,7 +35,8 @@ internal suspend fun AcademicProtocolAdapter.resolveCandidates(
         for (section in listSections(offer)) {
             val exact = if (sectionId.isNotBlank()) section.stableId == sectionId
                 else (teacher.isBlank() || section.teacher.ifBlank { offer.teacher }.contains(teacher, true)) &&
-                    (time.isBlank() || section.time.ifBlank { offer.time }.contains(time, true))
+                    (time.isBlank() || section.time.ifBlank { offer.time }.contains(time, true)) &&
+                    (sectionName.isBlank() || section.name.contains(sectionName, true))
             if (exact) matches += ResolvedAcademicSelection(offer, section)
         }
     }

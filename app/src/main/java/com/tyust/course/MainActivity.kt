@@ -139,6 +139,8 @@ import com.tyust.course.ui.system.SystemPrimaryButton
 import com.tyust.course.ui.system.SystemSecondaryButton
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import com.tyust.course.manager.StartupPage
+import com.tyust.course.manager.StartupPagePreferences
 import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.glass.drawBlurred
 
@@ -219,16 +221,21 @@ class MainActivity : FragmentActivity() {
 }
 
 sealed class BottomNavItem(
-    val route: String,
-    val symbol: AppSymbolSpec,
-    val label: String
+    val page: StartupPage,
+    val symbol: AppSymbolSpec
 ) {
+    val route: String get() = page.route
+    val label: String get() = page.label
     val icon: ImageVector get() = symbol.outline
-    object Courses : BottomNavItem("courses", AppSymbolSpec.Courses, "课程")
-    object Schedule : BottomNavItem("schedule", AppSymbolSpec.Schedule, "课表")
-    object Grab : BottomNavItem("grab", AppSymbolSpec.Grab, "抢课")
-    object Grades : BottomNavItem("grades", AppSymbolSpec.Grades, "成绩")
-    object Settings : BottomNavItem("settings", AppSymbolSpec.Settings, "设置")
+    object Courses : BottomNavItem(StartupPage.Courses, AppSymbolSpec.Courses)
+    object Schedule : BottomNavItem(StartupPage.Schedule, AppSymbolSpec.Schedule)
+    object Grab : BottomNavItem(StartupPage.Grab, AppSymbolSpec.Grab)
+    object Grades : BottomNavItem(StartupPage.Grades, AppSymbolSpec.Grades)
+    object Settings : BottomNavItem(StartupPage.Settings, AppSymbolSpec.Settings)
+
+    companion object {
+        val entries: List<BottomNavItem> get() = listOf(Courses, Schedule, Grab, Grades, Settings)
+    }
 }
 
 @Composable
@@ -237,6 +244,8 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val appWallpaper = com.tyust.course.ui.theme.rememberAppWallpaperStyle()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
+    val items = remember { BottomNavItem.entries }
     
     val hasStarred = prefs.getBoolean("has_starred", false)
     val dismissCount = prefs.getInt("star_dismiss_count", 0)
@@ -257,7 +266,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val accessibility = rememberGlassAccessibilityMode()
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
-    var selectedTab by remember(pageData) { pageData.state("navigation.tab") { 0 } }
+    // Resolve before creating the motion state so the first frame is already on the chosen page.
+    var selectedTab by remember(pageData) {
+        pageData.state("navigation.tab") {
+            val startupPage = startupPagePreferences.read()
+            items.indexOfFirst { it.page == startupPage }.coerceAtLeast(0)
+        }
+    }
     val navigationMotion = com.tyust.course.ui.theme.rememberNavigationMotionState(selectedTab, currentAccountStorageKey, accessibility.reduceMotion)
     val reminderRequest = com.tyust.course.schedule.CourseReminderNavigation.requestedId
     LaunchedEffect(reminderRequest, currentAccountStorageKey) {
@@ -272,13 +287,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val dialogHostState = key(currentAccountStorageKey) { rememberDialogHostState() }
     val density = LocalDensity.current
     val pageTravelPx = with(density) { 8.dp.roundToPx() }
-    val items = remember { listOf(
-        BottomNavItem.Courses,
-        BottomNavItem.Schedule,
-        BottomNavItem.Grab,
-        BottomNavItem.Grades,
-        BottomNavItem.Settings
-    ) }
     val updateState = rememberUpdateState()
     val recovery by SessionRenewer.state.collectAsState()
     val isTokenExpired = session.expired && recovery.token == session.token && recovery.phase == RecoveryPhase.NeedsLogin

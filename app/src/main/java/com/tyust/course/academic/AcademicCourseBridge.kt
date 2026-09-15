@@ -60,9 +60,21 @@ object AcademicCourseBridge {
         val adapter = prepareSession(school, accountStorageKey, expected)
         if (school.academicType() in setOf(AcademicSystem.QZ, AcademicSystem.QZ_OLD)) return listOf(course)
         return adapter.inSession {
-            val context = adapter.loadCourseContext()
-            val offer = findOffer(adapter, context, course)
-                ?: throw AcademicException(AcademicStatus.PAGE_CHANGED, "课程已不在当前轮次，请刷新课程列表")
+            // 课程行自带列表页快照的完整协议参数（kklxdm/xkkz_id/xklc 等），
+            // 直接请求教学班即可。原先每次点击都要重走"入口页+Display+搜索定位"，
+            // 对教学班粒度的列表（如河北传媒学院）一组几十行会串行几十轮请求，
+            // 慢到像一直加载。
+            val raw = course.completeParams
+            val directOffer = raw.takeIf { it.containsKey("kklxdm") && it.containsKey("xkkz_id") }?.let {
+                CourseOffer(
+                    it["academic_course_id"].orEmpty().ifBlank { course.courseId },
+                    course.name, course.teacher, course.time, course.location, course.credit,
+                    scopeId = it["academic_scope_id"].orEmpty(), raw = it)
+            }
+            val offer = directOffer ?: run {
+                val context = adapter.loadCourseContext()
+                findOffer(adapter, context, course)
+            } ?: throw AcademicException(AcademicStatus.PAGE_CHANGED, "课程已不在当前轮次，请刷新课程列表")
             adapter.listSections(offer).map { section -> toCourse(offer, section).apply { completeParams["academic_system"] = school.academicSystem } }
         }
     }

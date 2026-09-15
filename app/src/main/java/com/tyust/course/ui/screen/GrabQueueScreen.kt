@@ -107,7 +107,7 @@ fun LazyListScope.grabQueueItems(
             
             // 用课程名+老师+时间组合获取状态
             val courseKey = course.completeParams["academic_queue_key"]
-                ?: "${course.name ?: ""}_${course.teacher ?: ""}_${course.time ?: ""}"
+                ?: course.queueStatusKey
             val status = itemStatuses[courseKey] ?: GrabQueueItemStatus.WAITING
             
             // 用 Box 包裹并应用动画
@@ -307,7 +307,8 @@ fun GrabQueueItem(
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.primary.copy(alpha = if (enabled) 1f else 0.38f))
                     }
-                    Text(listOfNotNull(course.teacher?.takeIf { it.isNotBlank() }, course.time?.takeIf { it.isNotBlank() }).joinToString(" | "),
+                    Text(listOfNotNull(course.jxbmc?.takeIf { it.isNotBlank() }, course.teacher?.takeIf { it.isNotBlank() },
+                        course.time?.takeIf { it.isNotBlank() }).joinToString(" | "),
                         style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }

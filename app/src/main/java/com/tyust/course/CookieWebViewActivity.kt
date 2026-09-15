@@ -33,6 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
+import com.tyust.course.login.WebLoginNavigation
+import com.tyust.course.ui.screen.WebLoginAddressBar
 import com.tyust.course.ui.system.GlassPageScaffold
 import com.tyust.course.ui.system.SystemIconButton
 import com.tyust.course.ui.system.SystemDialog
@@ -94,7 +97,12 @@ fun CookieWebViewScreen(
     var canGoBack by remember { mutableStateOf(false) }
     var showCookieDialog by remember { mutableStateOf(false) }
     var extractedCookie by remember { mutableStateOf("") }
-    val searchUrl = "https://www.bing.com/search?q=${initialSearchKeyword}"
+    val searchUrl = remember(initialSearchKeyword) { WebLoginNavigation.searchUrl(initialSearchKeyword) }
+    val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        onDispose { webView?.apply { stopLoading(); destroy() }; webView = null }
+    }
 
     BackHandler {
         if (canGoBack) {
@@ -206,11 +214,19 @@ fun CookieWebViewScreen(
             }
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                WebLoginAddressBar(currentUrl, { input ->
+                    val url = WebLoginNavigation.resolveInput(input)
+                    if (url != null) webView?.loadUrl(url)
+                    else android.widget.Toast.makeText(context, "请输入网址或搜索关键词", android.widget.Toast.LENGTH_SHORT).show()
+                }, { webView?.loadUrl(searchUrl) })
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             // WebView
             AndroidView(
                 factory = { ctx ->
@@ -224,6 +240,7 @@ fun CookieWebViewScreen(
                             com.tyust.course.manager.AppThemeCoordinator.preserveWebContentColors(this)
                             javaScriptEnabled = true
                             domStorageEnabled = true
+                            defaultTextEncodingName = "UTF-8"
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             setSupportZoom(true)
@@ -273,7 +290,7 @@ fun CookieWebViewScreen(
             )
 
             // Loading indicator
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = isLoading,
                 enter = fadeIn(),
                 exit = fadeOut(),
@@ -283,6 +300,7 @@ fun CookieWebViewScreen(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.primary
                 )
+            }
             }
         }
     }

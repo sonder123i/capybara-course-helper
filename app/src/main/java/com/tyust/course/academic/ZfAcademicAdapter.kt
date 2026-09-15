@@ -194,18 +194,33 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         val indexFields = AcademicHtml.hiddenFields(document)
         val categories = Regex("queryCourse\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*,\\s*['\"]([^'\"]+)['\"]\\s*,\\s*['\"]([^'\"]*)['\"]\\s*,\\s*['\"]([^'\"]*)['\"]")
             .findAll(indexResponse.text).map { it.groupValues }.toList()
-        val contexts = if (categories.isEmpty()) listOf(indexFields) else categories.map { m ->
+        // 正方 v5 变体（如河北传媒学院）入口页没有 queryCourse 调用：
+        // 首个选课分类放在 first* 隐藏域，由页面脚本拷贝到 kklxdm/xkkz_id 等字段后发请求。
+        // 不读它们会让分类参数全空，列表接口返回无法识别的内容。
+        val categoryRows = if (categories.isNotEmpty()) categories else {
+            val firstKklxdm = indexFields["firstKklxdm"].orEmpty()
+            val firstXkkzId = indexFields["firstXkkzId"].orEmpty()
+            if (firstKklxdm.isNotBlank() && firstXkkzId.isNotBlank()) listOf(listOf("",
+                firstKklxdm, firstXkkzId,
+                indexFields["firstNjdmId"].orEmpty().ifBlank { indexFields["njdm_id"].orEmpty() },
+                indexFields["firstZyhId"].orEmpty().ifBlank { indexFields["zyh_id"].orEmpty() })) else emptyList()
+        }
+        val contexts = if (categoryRows.isEmpty()) listOf(indexFields) else categoryRows.map { m ->
             val fields = indexFields.toMutableMap()
             fields["kklxdm"] = m[1]; fields["xkkz_id"] = m[2]
             fields["njdm_id"] = m[3]; fields["zyh_id"] = m[4]
             val display = transport.postForm(transport.appUrl("xsxk/zzxkyzb_cxZzxkYzbDisplay.html?gnmkdm=${school.courseGnmkdm}"),
                 listOf("xkkz_id" to m[2], "kklxdm" to m[1], "xszxzt" to "1", "njdm_id" to m[3], "zyh_id" to m[4], "kspage" to "0", "jspage" to "0"), indexResponse.url)
             fields.putAll(AcademicHtml.hiddenFields(Jsoup.parse(display.text, display.url)))
+            // 首分类来自 first* 变体时，入口页的 kklxmc/xkkz_xh 是空值且 Display 响应不含它们；
+            // 放在合并之后补齐，轮次序号 xkkz_xh 是列表请求的必带参数。
+            indexFields["firstXkkzXh"]?.takeIf(String::isNotBlank)?.let { fields["xkkz_xh"] = it }
+            indexFields["firstKklxmc"]?.takeIf(String::isNotBlank)?.let { fields["kklxmc"] = it }
             fields
         }
         val scopes = contexts.mapIndexed { index, fields ->
             val category = fields["kklxdm"].orEmpty().ifBlank { "default" }
-            CourseScope("zf-$index-$category", category, fields["xkxnm"].orEmpty(),
+            CourseScope("zf-$index-$category", fields["kklxmc"].orEmpty().ifBlank { category }, fields["xkxnm"].orEmpty(),
                 transport.appUrl("xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=${school.courseGnmkdm}"),
                 transport.appUrl("xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=${school.courseGnmkdm}"), fields)
         }
@@ -218,10 +233,8 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         check(context)
         val result = mutableListOf<CourseOffer>()
         for (scope in context.scopes.filter { query.scopeId.isBlank() || it.id == query.scopeId }) {
-            val params = scope.params.toMutableMap()
-            params["filter_list[0]"] = query.keyword
-            params["kspage"] = (query.start + 1).toString(); params["jspage"] = (query.start + query.pageSize).toString()
-            params["kch_id"] = ""; params["jxbzb"] = ""
+            val params = zzxkRequestParams(scope.params, query.keyword,
+                kspage = (query.start + 1).toString(), jspage = (query.start + query.pageSize).toString())
             val response = transport.postForm(scope.listUrl.ifBlank { transport.appUrl("xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=${school.courseGnmkdm}") }, params.toList())
             AcademicJson.objects(response.text, "tmpList", "courses", "items").forEach {
                 val course = offer(it, scope.id, arrayOf("kch_id", "kch"))
@@ -231,11 +244,28 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         result.filter { query.teacher.isBlank() || it.teacher.contains(query.teacher, true) }
     }
 
+    /**
+     * 对齐正方 zzxkYzb.js loadCoursesByPaged 的 requestMap：只提交教务期望的约 40 个控制字段。
+     * 整页隐藏域全量提交会被部分学校（如河北传媒学院）判为异常请求并返回通用错误页，
+     * 这是"教务返回了无法识别的列表"的一个来源。
+     */
+    private fun zzxkRequestParams(source: Map<String, String>, keyword: String, kspage: String, jspage: String,
+                                  extra: Map<String, String> = emptyMap()): LinkedHashMap<String, String> {
+        val params = linkedMapOf<String, String>()
+        for (key in ZZXK_REQUEST_FIELDS) source[key]?.let { params[key] = it }
+        // 浏览器脚本用 jg_id_1 的值填 jg_id
+        source["jg_id_1"]?.let { params["jg_id"] = it }
+        if (source["jxbzbkg"] == "1") params["jxbzb"] = source["jxbzb"].orEmpty()
+        if (source["jxbzhkg"] == "1") params["zh"] = source["zh"].orEmpty()
+        if (keyword.isNotBlank()) params["filter_list[0]"] = keyword
+        params["kspage"] = kspage; params["jspage"] = jspage
+        params.putAll(extra)
+        return params
+    }
+
     override suspend fun listSections(course: CourseOffer): List<CourseSection> = serial {
-        val params = course.raw.toMutableMap().apply {
-            put("kch_id", course.stableId); put("kklxdm", course.raw["kklxdm"].orEmpty())
-            put("xkkz_id", course.raw["xkkz_id"].orEmpty()); put("xklc", course.raw["xklc"].orEmpty())
-        }
+        val params = zzxkRequestParams(course.raw, keyword = "", kspage = "1", jspage = "200",
+            extra = mapOf("kch_id" to course.stableId))
         val response = transport.postForm(transport.appUrl("xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=${school.courseGnmkdm}"), params.toList())
         AcademicJson.objects(response.text, "tmpList", "data", "courses", "jxbList").map { section(it, course) }
     }
@@ -257,7 +287,7 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
 
     override suspend fun selected(context: CourseContext): List<SelectedCourse> = serial {
         check(context)
-        val params = context.scopes.firstOrNull()?.params.orEmpty()
+        val params = zzxkRequestParams(context.scopes.firstOrNull()?.params.orEmpty(), keyword = "", kspage = "1", jspage = "1000")
         val response = transport.postForm(transport.appUrl("xsxk/zzxkyzb_cxZzxkYzbChoosedDisplay.html?gnmkdm=${school.courseGnmkdm}"), params.toList())
         AcademicJson.objects(response.text, "tmpList", "courses", "items", "data").map {
             val course = selected(it)
@@ -276,5 +306,14 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
 
     private companion object {
         const val MAX_CAS_RETRIES = 2
+
+        /** 正方 zzxkYzb.js requestMap 的字段清单（浏览器实际提交的控制字段范围）。 */
+        val ZZXK_REQUEST_FIELDS = listOf(
+            "rwlx", "xklc", "xkly", "bklx_id", "sfkkjyxdxnxq", "kzkcgs",
+            "xqh_id", "njdm_id_1", "zyh_id_1", "gnjkxdnj", "zyh_id", "zyfx_id", "njdm_id", "bh_id",
+            "bjgkczxbbjwcx", "xbm", "xslbdm", "mzm", "xz", "ccdm", "xsbj", "sfkknj", "sfkkzy", "kzybkxy",
+            "sfznkx", "zdkxms", "sfkxq", "bhbcyxkjxb", "sfkcfx", "kkbk", "kkbkdj", "bklbkcj", "sfkgbcx",
+            "sfrxtgkcxd", "xkkz_xh", "tykczgxdcs", "xkxnm", "xkxqm", "kklxdm", "bbhzxjxb", "zxgbxkkg",
+            "xkkz_id", "rlkz", "xkzgbj")
     }
 }

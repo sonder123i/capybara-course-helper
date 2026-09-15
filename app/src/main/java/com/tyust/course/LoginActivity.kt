@@ -264,6 +264,7 @@ class LoginActivity : ComponentActivity() {
             val intent = Intent(this, AcademicWebViewActivity::class.java).apply {
                 putExtra(AcademicWebViewActivity.EXTRA_START_URL, AcademicGatewayFactory.loginUrl(currentSchool))
                 putExtra(AcademicWebViewActivity.EXTRA_COOKIE_URL, currentSchool.fullBasePath.trimEnd('/') + "/")
+                putExtra(AcademicWebViewActivity.EXTRA_SEARCH_KEYWORD, "${currentSchool.name} 教务系统 登录")
                 putStringArrayListExtra(AcademicWebViewActivity.EXTRA_ALLOWED_HOSTS, hosts)
             }
             webViewLauncher.launch(intent)

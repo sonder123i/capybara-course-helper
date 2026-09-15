@@ -38,7 +38,11 @@ object CookieWatchdog {
     @JvmStatic
     fun start(ctx: Context, intervalMs: Long = DEFAULT_INTERVAL_MS): Unit = onMain {
         val user = UserManager.getInstance()
-        watchedSchool = user.currentSchool ?: return@onMain
+        watchedSchool = user.currentSchool
+        if (watchedSchool == null) {
+            loop.stop()
+            return@onMain
+        }
         context = ctx.applicationContext
         this.intervalMs = intervalMs
         loop.start(user.sessionState.token, intervalMs)
@@ -69,11 +73,16 @@ object CookieWatchdog {
     }
 
     private fun check(token: SessionToken, complete: (Boolean) -> Unit): () -> Unit {
-        val school = watchedSchool ?: return { }
+        val school = watchedSchool
+        if (school == null || (AcademicGatewayFactory.supports(school) && !AcademicGatewayFactory.hasSelectedAdapter(school))) {
+            // An unresolved/unknown configuration is not evidence of expiry.
+            complete(false)
+            return { }
+        }
         if (AcademicGatewayFactory.supports(school)) {
-            val gateway = AcademicGatewayFactory.create(school, token.accountStorageKey)
             val job = academicScope.launch {
                 val result = try {
+                    val gateway = AcademicGatewayFactory.create(school, token.accountStorageKey)
                     gateway.validateSession().status
                 } catch (e: CancellationException) { throw e }
                 catch (e: AcademicException) { e.status }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.ContentPasteSearch
 import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -86,6 +87,8 @@ fun SettingsScreen(
     wallpaperName: String = "",
     themeName: String = "跟随系统",
     onThemeSelect: () -> Unit = {},
+    startupPageName: String = "课程",
+    onStartupPageSelect: () -> Unit = {},
     glassEffectEnabled: Boolean = true,
     onGlassEffectChange: (Boolean) -> Unit = {},
     usageEnabled: Boolean = true,
@@ -229,6 +232,13 @@ fun SettingsScreen(
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                         }
                     }
+                )
+                SettingsRow(
+                    icon = Icons.Outlined.Home,
+                    iconTint = Color(0xFF5E5CE6),
+                    title = "启动首屏",
+                    subtitle = "$startupPageName · 下次启动时显示",
+                    onClick = onStartupPageSelect
                 )
                 SettingsRow(
                     icon = Icons.Outlined.SystemUpdate,

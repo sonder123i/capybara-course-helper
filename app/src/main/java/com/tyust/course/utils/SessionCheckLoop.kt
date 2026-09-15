@@ -14,6 +14,7 @@ internal class SessionCheckLoop(
         var timer: (() -> Unit)? = null
         var request: (() -> Unit)? = null
         var awaiting = false
+        var checkId = 0L
     }
     private var nextId = 0L
     private var current: Run? = null
@@ -45,12 +46,21 @@ internal class SessionCheckLoop(
         if (!owns(run) || run.awaiting) return
         run.timer = null
         run.awaiting = true
-        val cancel = check(run.token) { expired ->
-            if (owns(run) && run.awaiting) {
+        val checkId = ++run.checkId
+        val complete: (Boolean) -> Unit = { expired ->
+            if (owns(run) && run.awaiting && run.checkId == checkId) {
                 run.awaiting = false
                 run.request = null
                 if (expired) onExpired(run.token, run.id) else arm(run, run.interval)
             }
+        }
+        val cancel = try {
+            check(run.token, complete)
+        } catch (_: Exception) {
+            // Request setup also runs on the main thread. A configuration or
+            // network setup failure must neither crash it nor expire a session.
+            complete(false)
+            return
         }
         if (owns(run) && run.awaiting) run.request = cancel else cancel()
     }

@@ -11,12 +11,14 @@ class SessionCheckLoopTest {
         val replies = mutableListOf<(Boolean) -> Unit>()
         var cancelled = 0
         var expired = 0
+        var setupFailure: Exception? = null
         val loop = SessionCheckLoop(sessions, { _, action ->
             timers.add(action)
             val cancel: () -> Unit = { timers.remove(action) }
             cancel
         }, { _, reply ->
             replies.add(reply)
+            setupFailure?.let { throw it }
             val cancel: () -> Unit = { cancelled++ }
             cancel
         }, { _, _ -> expired++ })
@@ -76,6 +78,35 @@ class SessionCheckLoopTest {
         assertEquals(1, expired)
         assertTrue(timers.isEmpty())
         loop.start(sessions.replace("a"), 300_000)
+        assertEquals(1, timers.size)
+    }
+
+    @Test fun synchronousCheckFailureRetriesWithoutCrashingOrExpiringTheSession() = with(Fixture()) {
+        setupFailure = IllegalArgumentException("School has no selected academic adapter")
+        loop.start(sessions.replace("a"), 300_000)
+        tick()
+        assertEquals(0, expired)
+        assertEquals(1, timers.size)
+
+        setupFailure = null
+        tick()
+        // A callback retained by the failed request cannot expire the next check.
+        replies.first()(true)
+        assertEquals(0, expired)
+        assertTrue(timers.isEmpty())
+        replies.last()(false)
+        assertEquals(1, timers.size)
+    }
+
+    @Test fun completedCheckCannotReplyAgainDuringTheNextCheck() = with(Fixture()) {
+        loop.start(sessions.replace("a"), 300_000)
+        tick()
+        replies.first()(false)
+        tick()
+        replies.first()(true)
+        assertEquals(0, expired)
+        assertTrue(timers.isEmpty())
+        replies.last()(false)
         assertEquals(1, timers.size)
     }
 }

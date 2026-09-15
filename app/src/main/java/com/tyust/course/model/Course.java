@@ -13,6 +13,8 @@ public class Course {
     // 显示信息
     public String teacher = ""; // 教师姓名 (jsxm)
     public String jxbmc = ""; // 教学班名称 (jxbmc) 🔧 新增
+    // 用户手动指定的教学班条件，独立于从课程列表获得的展示名称。
+    public String teachingClassFilter = "";
     public String time = ""; // 上课时间 (sksj)
     public String location = ""; // 上课地点 (jxdd)
     public String credit = ""; // 学分 (xf)
@@ -84,7 +86,8 @@ public class Course {
         Course course = (Course) o;
         return (name != null ? name.equals(course.name) : course.name == null) &&
                 (teacher != null ? teacher.equals(course.teacher) : course.teacher == null) &&
-                (time != null ? time.equals(course.time) : course.time == null);
+                (time != null ? time.equals(course.time) : course.time == null) &&
+                normalizedTeachingClassFilter().equals(course.normalizedTeachingClassFilter());
     }
 
     @Override
@@ -92,7 +95,23 @@ public class Course {
         int result = name != null ? name.hashCode() : 0;
         result = 31 * result + (teacher != null ? teacher.hashCode() : 0);
         result = 31 * result + (time != null ? time.hashCode() : 0);
+        result = 31 * result + normalizedTeachingClassFilter().hashCode();
         return result;
+    }
+
+    private String normalizedTeachingClassFilter() {
+        return teachingClassFilter == null ? "" : teachingClassFilter.trim();
+    }
+
+    public boolean hasTeachingClassFilter() {
+        return !normalizedTeachingClassFilter().isEmpty();
+    }
+
+    /** 手动教学班任务匹配后教师、时间和课程 ID 会变化，状态仍绑定原队列项。 */
+    public String getQueueStatusKey() {
+        if (hasTeachingClassFilter()) return "teaching-class:" + getUuid();
+        return (name == null ? "" : name) + "_" + (teacher == null ? "" : teacher)
+                + "_" + (time == null ? "" : time);
     }
 
     // 🔧 唯一标识符 (用于 UI 动画)
@@ -121,6 +140,7 @@ public class Course {
         copy.doJxbId = this.doJxbId;
         copy.teacher = this.teacher;
         copy.jxbmc = this.jxbmc;
+        copy.teachingClassFilter = this.teachingClassFilter;
         copy.time = this.time;
         copy.location = this.location;
         copy.credit = this.credit;

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,10 +38,13 @@ import com.tyust.course.ui.system.GlassPageScaffold
 import com.tyust.course.ui.system.SystemIconButton
 import com.tyust.course.ui.system.SystemPrimaryButton
 import com.tyust.course.ui.theme.CourseSelectorTheme
+import com.tyust.course.login.WebLoginNavigation
+import com.tyust.course.ui.screen.WebLoginAddressBar
 
 /**
- * WebView fallback for captcha, slider and SSO pages. It deliberately has no
- * JavaScript bridge and only follows explicitly configured school hosts.
+ * Interactive login browser for captcha and SSO pages. Navigation may cross
+ * domains; cookie export remains bound to the configured academic address.
+ * It has no JavaScript bridge and uses a separate WebView storage directory.
  */
 class AcademicWebViewActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: android.content.Context) {
@@ -52,12 +56,15 @@ class AcademicWebViewActivity : ComponentActivity() {
         const val EXTRA_COOKIE_RESULT = CookieWebViewActivity.EXTRA_COOKIE_RESULT
         const val EXTRA_COOKIE_URL = "academic_cookie_url"
         const val EXTRA_PAGE_URL = "academic_page_url"
+        const val EXTRA_SEARCH_KEYWORD = "academic_search_keyword"
         private var suffixConfigured = false
     }
 
     private var webView: WebView? = null
     private var startUrl = ""
     private var cookieUrl = ""
+    private var searchUrl = ""
+    private var currentUrl by mutableStateOf("")
     private var allowedHosts: Set<String> = emptySet()
     private var loadingProgress by mutableFloatStateOf(0f)
     private var pageError by mutableStateOf<String?>(null)
@@ -66,11 +73,15 @@ class AcademicWebViewActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         startUrl = intent.getStringExtra(EXTRA_START_URL).orEmpty()
         cookieUrl = intent.getStringExtra(EXTRA_COOKIE_URL).orEmpty().ifBlank { startUrl }
+        val keyword = intent.getStringExtra(EXTRA_SEARCH_KEYWORD).orEmpty()
+        searchUrl = WebLoginNavigation.searchUrl(keyword.ifBlank { "教务系统 登录" })
+        val initialUrl = if (keyword.isNotBlank()) searchUrl else startUrl
+        currentUrl = initialUrl
         allowedHosts = (intent.getStringArrayListExtra(EXTRA_ALLOWED_HOSTS).orEmpty())
             .map { normalizeHost(it) }
             .filter { it.isNotBlank() }
             .toSet()
-        if (!isAllowed(Uri.parse(startUrl)) || !isAllowed(Uri.parse(cookieUrl))) {
+        if (!WebLoginNavigation.isWebUrl(startUrl) || !isCookieUrlAllowed()) {
             Toast.makeText(this, "教务地址不在允许范围内", Toast.LENGTH_LONG).show()
             setResult(Activity.RESULT_CANCELED)
             finish()
@@ -88,14 +99,17 @@ class AcademicWebViewActivity : ComponentActivity() {
                 BackHandler { navigateBack() }
                 GlassPageScaffold(
                     title = "教务网页登录",
-                    subtitle = Uri.parse(startUrl).host,
+                    subtitle = Uri.parse(currentUrl).host,
                     modifier = Modifier.imePadding(),
                     onBack = ::navigateBack,
                     actions = {
+                        SystemIconButton(Icons.Default.School, "教务入口", { browser.loadUrl(startUrl) })
                         SystemIconButton(Icons.Default.Refresh, "刷新网页", { browser.reload() })
                     }
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
+                        WebLoginAddressBar(currentUrl, ::navigateToInput, { browser.loadUrl(searchUrl) })
+                        Spacer(Modifier.height(8.dp))
                         if (loadingProgress < 1f) {
                             LinearProgressIndicator(progress = { loadingProgress }, modifier = Modifier.fillMaxWidth())
                         }
@@ -116,7 +130,7 @@ class AcademicWebViewActivity : ComponentActivity() {
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            CookieManager.getInstance().removeAllCookies { browser.loadUrl(startUrl) }
+            CookieManager.getInstance().removeAllCookies { browser.loadUrl(initialUrl) }
         } else {
             // Before API 28 WebView has no per-process storage suffix. Clear only
             // the configured school cookies instead of unrelated browser sessions.
@@ -127,7 +141,7 @@ class AcademicWebViewActivity : ComponentActivity() {
                     if (name.isNotEmpty()) CookieManager.getInstance().setCookie(url, name + "=; Max-Age=0; Path=/")
                 }
             }
-            browser.loadUrl(startUrl)
+            browser.loadUrl(initialUrl)
         }
     }
 
@@ -137,12 +151,16 @@ class AcademicWebViewActivity : ComponentActivity() {
         settings.javaScriptEnabled = true
         com.tyust.course.manager.AppThemeCoordinator.preserveWebContentColors(settings)
         settings.domStorageEnabled = true
+        settings.defaultTextEncodingName = "UTF-8"
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.javaScriptCanOpenWindowsAutomatically = true
         settings.allowFileAccess = false
         settings.allowContentAccess = false
-        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            setAcceptThirdPartyCookies(webViewInstance, false)
+            setAcceptThirdPartyCookies(webViewInstance, true)
         }
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -152,10 +170,12 @@ class AcademicWebViewActivity : ComponentActivity() {
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageError = null
+                currentUrl = url
                 loadingProgress = 0f
             }
             override fun onPageFinished(view: WebView, url: String) {
                 loadingProgress = 1f
+                currentUrl = url
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
@@ -163,34 +183,29 @@ class AcademicWebViewActivity : ComponentActivity() {
                     loadingProgress = 1f
                 }
             }
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                if (request.isForMainFrame) pageError = "网页返回 HTTP ${response.statusCode}，可修改网址或搜索学校入口"
+            }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                if (request.url.scheme in setOf("data", "blob", "about") || isAllowed(request.url)) return null
+                if (request.url.scheme in setOf("data", "blob", "about") || WebLoginNavigation.isWebUrl(request.url.toString())) return null
                 return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
             }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (!isAllowed(request.url)) {
-                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名", Toast.LENGTH_SHORT).show()
-                    return true
-                }
-                return false
+                return handleNavigation(request.url.toString(), request.isForMainFrame)
             }
 
             @Deprecated("API 21 compatibility")
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                val uri = Uri.parse(url)
-                if (!isAllowed(uri)) {
-                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名", Toast.LENGTH_SHORT).show()
-                    return true
-                }
-                return false
+                return handleNavigation(url, true)
             }
         }
     }
 
     private fun finishWithCookie() {
+        if (!isCookieUrlAllowed()) return
         val cookie = CookieManager.getInstance().getCookie(cookieUrl).orEmpty().trim()
         if (cookie.isBlank()) {
-            Toast.makeText(this, "请先在网页中登录教务账号", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "请先登录并进入 ${Uri.parse(cookieUrl).host} 的教务主页", Toast.LENGTH_LONG).show()
             return
         }
         CookieManager.getInstance().flush()
@@ -203,8 +218,19 @@ class AcademicWebViewActivity : ComponentActivity() {
         else { setResult(Activity.RESULT_CANCELED); finish() }
     }
 
-    private fun isAllowed(uri: Uri): Boolean {
-        return AcademicUrlPolicy.isAllowed(uri.toString(), Uri.parse(startUrl).scheme.orEmpty(), allowedHosts)
+    private fun isCookieUrlAllowed(): Boolean =
+        AcademicUrlPolicy.isAllowed(cookieUrl, Uri.parse(startUrl).scheme.orEmpty(), allowedHosts)
+
+    private fun navigateToInput(input: String) {
+        val target = WebLoginNavigation.resolveInput(input)
+        if (target == null) Toast.makeText(this, "请输入网址或搜索关键词", Toast.LENGTH_SHORT).show()
+        else webView?.loadUrl(target)
+    }
+
+    private fun handleNavigation(url: String, mainFrame: Boolean): Boolean {
+        if (WebLoginNavigation.isWebUrl(url) || url == "about:blank" || url.startsWith("javascript:", true)) return false
+        if (mainFrame) Toast.makeText(this, "请使用网页方式继续登录", Toast.LENGTH_SHORT).show()
+        return true
     }
 
     private fun normalizeHost(raw: String): String {
