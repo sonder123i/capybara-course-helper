@@ -11,7 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object SchoolSuggestionApi {
-    private const val BASE_URL = "https://school-suggestion-service.822069905.workers.dev"
+    private const val BASE_URL = SchoolServiceEndpoints.BASE_URL
     private val client = OkHttpClient()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 

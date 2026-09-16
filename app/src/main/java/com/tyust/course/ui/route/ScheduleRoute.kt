@@ -339,8 +339,6 @@ fun ScheduleRoute() {
             periodTimes = settingsManager.getPeriodTimes().map {
                 PeriodTimeUi(it.period, it.startTime, it.endTime)
             }
-            val calcWeek = settingsManager.calculateCurrentWeek()
-            if (calcWeek > 0) currentWeek = calcWeek
         }
     }
     
@@ -398,6 +396,7 @@ fun ScheduleRoute() {
         periodTimes = periodTimes,
         periodCount = periodCount,
         firstWeekDate = displayedTimeBase?.firstWeekDate,
+        weekRequestKey = appliedCalendar.orEmpty(),
         onWeekChange = { currentWeek = it },
         onCourseClick = {
             notificationCourseJson = null

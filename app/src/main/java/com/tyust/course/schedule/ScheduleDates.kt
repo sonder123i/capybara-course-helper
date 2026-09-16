@@ -15,16 +15,25 @@ object ScheduleDates {
             set(Calendar.MILLISECOND, 0)
         }
 
-    fun firstMonday(value: String?, zone: TimeZone = TimeZone.getDefault()): Calendar? = runCatching {
+    private fun calendarDate(value: String?, zone: TimeZone): Calendar? = runCatching {
         val parts = requireNotNull(value).split('-').map(String::toInt)
         require(parts.size == 3)
         Calendar.getInstance(zone).apply {
             clear(); isLenient = false
             set(parts[0], parts[1] - 1, parts[2])
             timeInMillis
-            require(get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY)
         }
     }.getOrNull()
+
+    fun firstMonday(value: String?, zone: TimeZone = TimeZone.getDefault()): Calendar? =
+        calendarDate(value, zone)?.takeIf { it.get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY }
+
+    /** Older versions persisted any selected weekday; normalize the civil date without a zone shift. */
+    fun normalizeFirstWeekDate(value: String?): String? {
+        val zone = TimeZone.getTimeZone("UTC")
+        val chosen = calendarDate(value, zone) ?: return null
+        return ScheduleTimeBase.dateFromMillis(mondayOfWeek(chosen.timeInMillis, zone).timeInMillis, zone)
+    }
 
     fun date(value: String?, week: Int, day: Int = 1, zone: TimeZone = TimeZone.getDefault()): Calendar? =
         firstMonday(value, zone)?.apply { add(Calendar.DAY_OF_YEAR, (week - 1) * 7 + day - 1) }

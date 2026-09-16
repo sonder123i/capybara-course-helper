@@ -68,8 +68,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.testTag
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -308,7 +306,8 @@ fun ScheduleScreen(
     onToggleSemester: () -> Unit = {},
     errorMessage: String = "",
     onRetry: () -> Unit = {},
-    firstWeekDate: String? = null
+    firstWeekDate: String? = null,
+    weekRequestKey: String? = null
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val coroutineScope = rememberCoroutineScope()
@@ -344,14 +343,11 @@ fun ScheduleScreen(
         pageCount = { maxWeeks }
     )
 
-    var submittedWeek by remember { mutableIntStateOf(currentWeek) }
     val latestWeekChange by rememberUpdatedState(onWeekChange)
-    LaunchedEffect(pagerState) {
-        snapshotFlow { if (pagerState.isScrollInProgress) null else pagerState.settledPage + 1 }
-            .filterNotNull().distinctUntilChanged().collect { week ->
-                submittedWeek = week
-                latestWeekChange(week)
-            }
+    val latestRequestedWeek by rememberUpdatedState(currentWeek)
+    val latestWeekRequestKey by rememberUpdatedState(weekRequestKey)
+    val weekSync = remember(pagerState) {
+        com.tyust.course.schedule.ScheduleWeekPagerSync(currentWeek, weekRequestKey)
     }
 
     var arrowJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -369,12 +365,18 @@ fun ScheduleScreen(
         }
     }
 
-    LaunchedEffect(currentWeek) {
-        val targetPage = (currentWeek - 1).coerceIn(0, maxWeeks - 1)
-        // Acknowledging our own settled-page callback must not interrupt a new gesture.
-        if (currentWeek != submittedWeek && pagerState.currentPage != targetPage) {
-            arrowJob?.cancel()
-            pagerState.scrollToPage(targetPage)
+    LaunchedEffect(pagerState) {
+        snapshotFlow {
+            Triple(latestRequestedWeek to latestWeekRequestKey, pagerState.isScrollInProgress, pagerState.settledPage)
+        }.collect { (request, scrolling, page) ->
+            val targetPage = weekSync.requestPage(request.first, request.second)
+            if (targetPage != null) {
+                arrowJob?.cancel()
+                pagerState.scrollToPage(targetPage)
+                weekSync.settledWeek(targetPage)
+            } else if (!scrolling) {
+                weekSync.settledWeek(page)?.let(latestWeekChange)
+            }
         }
     }
 

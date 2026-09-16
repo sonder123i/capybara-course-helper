@@ -1,5 +1,6 @@
 package com.tyust.course.survey
 
+import com.tyust.course.network.SchoolServiceEndpoints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -47,5 +48,5 @@ class SurveyApi(private val baseUrl: String = BASE_URL) : SurveyTransport {
         Unit
     }
 
-    companion object { const val BASE_URL = "https://school-suggestion-service.822069905.workers.dev" }
+    companion object { const val BASE_URL = SchoolServiceEndpoints.BASE_URL }
 }
