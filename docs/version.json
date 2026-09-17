@@ -1,0 +1,7 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "releaseNotes": "首个自用版本。\n\n基于上游 v1.0.80 改造：\n· 应用更名为「卡皮巴拉教务助手」，更换图标\n· 应用内更新、公告、反馈、统计全部改为本地处理，不再与上游服务通信\n· 学校适配与问卷后端指向本机可解析失败的地址\n· 版本号重置为 1.0.0",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.0/app-release.apk",
+  "forceUpdate": false
+}

@@ -13,8 +13,11 @@ package com.tyust.course
  */
 object SelfHostConfig {
 
-    /** 应用内更新检查。关闭后不请求作者 Gitee 上的 version.json，也不提示任何更新。 */
-    const val ENABLE_APP_UPDATE_CHECK = false
+    /**
+     * 应用内更新检查。已切换为自己 GitHub Pages 上的 version.json
+     * （见 UpdateManager.VERSION_URL），因此打开——不会再与上游服务通信。
+     */
+    const val ENABLE_APP_UPDATE_CHECK = true
 
     /** 远端公告拉取。关闭后公告列表恒为空。 */
     const val ENABLE_REMOTE_ANNOUNCEMENT = false

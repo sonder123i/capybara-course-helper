@@ -29,8 +29,8 @@ class UpdateManager(private val context: Context) {
     companion object {
         private const val TAG = "UpdateManager"
         
-        // Gitee 仓库配置
-        private const val VERSION_URL = "https://gitee.com/znj12345/zhengfang/raw/main/version.json"
+        // 自用：版本信息挂在自己的 GitHub Pages 上，不再指向上游仓库
+        private const val VERSION_URL = "https://sonder123i.github.io/capybara-course-helper/version.json"
         
         // 下载文件名
         private const val APK_FILE_NAME = "zhengfang_update.apk"

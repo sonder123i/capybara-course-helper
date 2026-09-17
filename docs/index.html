@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>卡皮巴拉教务助手</title>
+<meta name="description" content="Android 教务客户端：选课抢课、课表、成绩，支持新正方、旧正方、新强智、旧强智。开源、免费。">
+<style>
+  :root {
+    --bg: #FDF8F1;
+    --card: #FFFFFF;
+    --brown: #8B5E3C;
+    --brown-deep: #4A3427;
+    --mint: #7FC4A8;
+    --mint-deep: #3E8B6D;
+    --text: #3D2E24;
+    --muted: #8A7A6D;
+    --line: #EFE3D4;
+    --radius: 16px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- hero ---------- */
+  .hero { text-align: center; padding: 72px 0 56px; }
+
+  .hero img {
+    width: 108px;
+    height: 108px;
+    border-radius: 26px;
+    border: 1px solid var(--line);
+  }
+
+  .hero h1 {
+    font-size: 32px;
+    margin: 22px 0 8px;
+    letter-spacing: 0.5px;
+    color: var(--brown-deep);
+  }
+
+  .hero p {
+    margin: 0 auto 28px;
+    max-width: 460px;
+    color: var(--muted);
+    font-size: 15px;
+  }
+
+  .btn {
+    display: inline-block;
+    background: var(--mint-deep);
+    color: #fff;
+    text-decoration: none;
+    padding: 14px 40px;
+    border-radius: 999px;
+    font-size: 16px;
+    font-weight: 500;
+    transition: background 0.2s, transform 0.2s;
+  }
+
+  .btn:hover { background: #33735A; transform: translateY(-1px); }
+
+  .meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 14px;
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 12px 0 44px; }
+
+  h2 {
+    font-size: 19px;
+    color: var(--brown-deep);
+    margin: 0 0 20px;
+    font-weight: 500;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 22px 20px;
+  }
+
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--brown);
+  }
+
+  .card p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+
+  /* ---------- steps ---------- */
+  .steps { counter-reset: step; }
+
+  .step {
+    display: flex;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .step:last-child { border-bottom: none; }
+
+  .step .n {
+    flex: 0 0 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--mint);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step .t { font-size: 14px; color: var(--text); padding-top: 3px; }
+  .step .t strong { font-weight: 500; }
+  .step .t span { color: var(--muted); display: block; font-size: 13px; }
+
+  /* ---------- changelog ---------- */
+  #notes {
+    white-space: pre-wrap;
+    font-size: 14px;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin: 0;
+    font-family: inherit;
+  }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 28px 0 56px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  footer a { color: var(--mint-deep); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer p { margin: 6px 0; }
+
+  @media (max-width: 520px) {
+    .hero { padding: 48px 0 36px; }
+    .hero h1 { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <img src="icon.png" alt="卡皮巴拉教务助手">
+    <h1>卡皮巴拉教务助手</h1>
+    <p>一只情绪稳定的卡皮巴拉，替你盯着余量。选课抢课、课表成绩，全都在一个 App 里。</p>
+    <a class="btn" id="download" href="https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.0/app-release.apk">下载 APK</a>
+    <div class="meta">当前版本 <span id="version">1.0.0</span> · Android 7.0 及以上</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <h2>能做什么</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>选课与抢课</h3>
+        <p>即时执行、定时任务、捡漏盯课三种模式。按关键词搜、按类别筛，余量和教师都显示。</p>
+      </div>
+      <div class="card">
+        <h3>周视图课表</h3>
+        <p>课程自动配色，支持自定义课程与冲突提示，可导出 .ics 到系统日历。</p>
+      </div>
+      <div class="card">
+        <h3>成绩与考试</h3>
+        <p>按学期查询，GPA 自动计算，附带考试安排与 CSV 导出。</p>
+      </div>
+      <div class="card">
+        <h3>液态玻璃界面</h3>
+        <p>折射、色散与高光实时计算，按下去会形变。跑不动的老设备自动降级，不会卡死。</p>
+      </div>
+      <div class="card">
+        <h3>背景随你换</h3>
+        <p>预设渐变、纯色，或直接用相册里的图。模糊和蒙版两根滑条，配色跟着背景自动适配深浅。</p>
+      </div>
+      <div class="card">
+        <h3>多教务支持</h3>
+        <p>新正方、旧正方、新强智、旧强智四类教务系统，学校地址可自行添加。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>怎么装</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="t"><strong>下载 APK</strong><span>点击上方按钮，浏览器会保存安装包</span></div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="t"><strong>允许安装未知来源应用</strong><span>系统会弹提示，按引导打开对应权限</span></div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="t"><strong>添加学校并登录</strong><span>选择教务类型，填写账号密码，需要验证码时按提示输入</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>更新日志</h2>
+    <pre id="notes">首个自用版本。
+
+基于上游 v1.0.80 改造：
+· 应用更名为「卡皮巴拉教务助手」，更换图标
+· 应用内更新、公告、反馈、统计全部改为本地处理，不再与上游服务通信
+· 学校适配与问卷后端指向本机可解析失败的地址
+· 版本号重置为 1.0.0</pre>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>以 <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GPL-3.0</a> 开源 · 免费使用</p>
+    <p>基于 <a href="https://github.com/znjhahaha/zhengfang-apk" target="_blank" rel="noopener">教务助手</a> 二次开发，原始版权归原作者所有</p>
+    <p>仅供学习交流，使用产生的一切后果由使用者自行承担</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    fetch('version.json', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (data) {
+        if (data.versionName) {
+          document.getElementById('version').textContent = data.versionName;
+        }
+        if (data.downloadUrl) {
+          document.getElementById('download').href = data.downloadUrl;
+        }
+        if (data.releaseNotes) {
+          document.getElementById('notes').textContent = data.releaseNotes;
+        }
+      })
+      .catch(function () {
+        document.getElementById('notes').textContent =
+          '（未能读取 version.json，本地直接打开文件时属正常现象）';
+      });
+  })();
+</script>
+
+</body>
+</html>
