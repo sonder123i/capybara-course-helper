@@ -1,7 +1,7 @@
 {
-  "versionCode": 6,
-  "versionName": "1.0.5",
-  "releaseNotes": "修复三处课表问题。\n\n- 上课地点不再被截断：裁掉每门课都重复的「XX校区」前缀，完整显示楼栋与教室\n- 日视图只显示本周课程，单双周不会再同时出现，节数统计也准了\n- 切换周/日视图时回到顶部，日期标题不再被顶栏压住",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.5/app-release.apk",
+  "versionCode": 7,
+  "versionName": "1.0.6",
+  "releaseNotes": "周视图的上课地点不再被截断。\n\n- 地点改为最多两行显示，「至善楼406」能完整看到楼栋和教室\n- 课程名最多 3 行，把空间让给地点\n- 每节总高不增反降，一屏 8 节不受影响",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.6/app-release.apk",
   "forceUpdate": false
 }

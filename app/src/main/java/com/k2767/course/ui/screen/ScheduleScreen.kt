@@ -1143,15 +1143,17 @@ private fun rememberCoursePeriodHeight(courses: List<ScheduleCourseUi>, columnWi
             var rowHeight = minimum.toPx()
             for (course in courses) {
                 val duration = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
+                // 行数分配：课程名最多 3 行、地点最多 2 行。
+                // 七列均分后每列内容宽约 42dp，「至善楼406」一行装不下；与其截成「至善…」，
+                // 不如让它折到第二行完整显示。课程名从 4 行收到 3 行腾出这段高度，配合地点
+                // 行高收紧，每节总高反而略降（3×13 + 2×10.5 = 60 < 4×13 + 1×11 = 63）。
+                // 渲染端 CourseCard 必须用同样的 maxLines，否则测量与布局会脱节。
                 val name = measurer.measure(course.name, courseNameStyle(style, duration),
-                    maxLines = 4, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = contentWidth))
+                    maxLines = 3, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = contentWidth))
                 val hasStatus = course.hasCardStatus()
-                // 地点限一行。校区 + 楼栋 + 教室（如「九龙湖校区 至善楼 406」）在窄列里会折成
-                // 两三行，是把每节高度撑大的主因。渲染端 CourseCard 里的 location Text 必须
-                // 使用同样的 maxLines，否则测量与布局会脱节。
                 val locationHeight = if (course.location.isNotBlank()) measurer.measure(
                     compactLocation(course.location), courseLocationStyle(style, duration),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
                     constraints = Constraints(maxWidth = contentWidth)
                 ).size.height else 0
                 val informationHeight = locationHeight + if (hasStatus) 11.dp.roundToPx() else 0
@@ -1363,7 +1365,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                     text = course.name,
                     style = courseNameStyle(MaterialTheme.typography.labelSmall, duration),
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 4,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
 
@@ -1373,9 +1375,10 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().testTag("schedule-location-${course.id}"),
                         style = courseLocationStyle(MaterialTheme.typography.labelSmall, duration),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        // 与 rememberCoursePeriodHeight 的测量保持一致：单行截断。
-                        // 长地点（「九龙湖校区 至善楼 406」）再也不会把每节高度撑高。
-                        maxLines = 1,
+                        // 与 rememberCoursePeriodHeight 的测量保持一致：最多两行。
+                        // 列宽只有约 42dp，「至善楼406」一行放不下——折到第二行完整显示，
+                        // 比截成「至善…」有用得多。
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
