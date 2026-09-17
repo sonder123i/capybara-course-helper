@@ -127,6 +127,19 @@ public class UserManager {
         return all;
     }
 
+    // 选择学校界面用的列表（自用改造）。
+    // 与 getSupportedSchools() 的区别：默认学校是否展示由 SelfHostConfig 决定，
+    // 而 getSchoolById 等内部查找仍走 getSupportedSchools()——所以隐藏默认学校
+    // 不会影响已保存的学校配置和登录适配，想恢复显示改 SelfHostConfig 的开关即可。
+    public List<SchoolConfig> getSelectableSchools() {
+        List<SchoolConfig> all = new ArrayList<>();
+        if (com.k2767.course.SelfHostConfig.SHOW_BUILT_IN_SCHOOLS) {
+            all.addAll(defaultSchools);
+        }
+        all.addAll(customSchools);
+        return all;
+    }
+
     // 根据ID查找学校
     public SchoolConfig getSchoolById(String schoolId) {
         for (SchoolConfig school : getSupportedSchools()) {

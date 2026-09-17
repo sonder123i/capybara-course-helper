@@ -653,63 +653,25 @@ fun SettingsRoute(
 
     
     if (showSchoolDialog) {
-        var animateTrigger by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) { animateTrigger = true }
-
-        fun dismiss() {
-            animateTrigger = false
-        }
-
-        if (!animateTrigger) {
-            LaunchedEffect(Unit) {
-                kotlinx.coroutines.delay(300)
-                showSchoolDialog = false
+        // 学校选择改为学校库（搜索 + A–Z + 收藏 + 手动添加），与登录页同一套界面
+        com.k2767.course.ui.system.GlassSubpage(onDismiss = { showSchoolDialog = false }) {
+            var schoolFavorites by remember {
+                mutableStateOf(com.k2767.course.model.SchoolCatalogFavorites.load(context))
             }
-        }
-
-        SystemDialog(
-            onDismissRequest = { dismiss() },
-            title = {
-                Text(
-                    text = "选择学校",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            },
-            dismissButton = {
-                SystemSecondaryButton(
-                    text = "取消",
-                    onClick = { dismiss() },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        ) {
-            val schools = remember { UserManager.getInstance().supportedSchools }
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 240.dp) // 限制最大高度，防止学校列表过多时把 Dialog 挤出屏幕外
-            ) {
-                items(schools) { school ->
-                    Text(
-                        text = school.name,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                UserManager.getInstance().clearLoginState()
-                                UserManager.getInstance().currentSchool = school
-                                GlassToaster.show("已切换到：${school.name}")
-                                performLogout()
-                                dismiss()
-                            }
-                            .padding(vertical = 14.dp, horizontal = 12.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-            }
+            com.k2767.course.ui.screen.SchoolPickerScreen(
+                favorites = schoolFavorites,
+                onToggleFavorite = { id ->
+                    schoolFavorites = com.k2767.course.model.SchoolCatalogFavorites.toggle(context, id)
+                },
+                onSelect = { school ->
+                    UserManager.getInstance().clearLoginState()
+                    UserManager.getInstance().currentSchool = school
+                    GlassToaster.show("已切换到：${school.name}")
+                    performLogout()
+                    showSchoolDialog = false
+                },
+                onBack = { showSchoolDialog = false }
+            )
         }
     }
 }

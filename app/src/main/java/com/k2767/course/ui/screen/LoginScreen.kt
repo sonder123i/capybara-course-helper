@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import com.k2767.course.ui.system.isBackdropSupported
 import com.k2767.course.ui.system.rememberGlassAccessibilityMode
 import com.k2767.course.ui.system.DialogHost
@@ -48,7 +50,6 @@ import com.k2767.course.ui.system.SystemPrimaryButton
 import com.k2767.course.ui.system.SystemSecondaryButton
 import com.k2767.course.ui.system.SystemSegmentedControl
 import com.k2767.course.ui.system.SystemDialog
-import com.k2767.course.ui.system.SystemPicker
 import com.k2767.course.ui.system.glass.glassSheet
 import com.k2767.course.ui.theme.*
 
@@ -72,6 +73,7 @@ fun LoginScreen(
     onLoginClick: (cookie: String) -> Unit,
     onOpenWebView: () -> Unit = {},
     onSchoolAdded: () -> Unit = {},
+    onOpenSchoolPicker: () -> Unit = {},
     onDemoMode: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
     onBack: (() -> Unit)? = null,
@@ -253,7 +255,6 @@ fun LoginScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         
                         var selectedSchool by remember { mutableStateOf<SchoolConfig?>(null) }
-                        var showAddSchoolDialog by remember { mutableStateOf(false) }
                         
                         // Keep the user's current choice when the list refreshes after add/edit.
                         LaunchedEffect(schools) {
@@ -269,20 +270,32 @@ fun LoginScreen(
                         val selectedSchoolIndex = schools
                             .indexOfFirst { it.id == selectedSchool?.id }
                             .takeIf { it >= 0 }
-                        SystemPicker(
-                            options = schools.map { it.name },
-                            selectedIndex = selectedSchoolIndex,
-                            onSelect = { index ->
-                                selectedSchool = schools[index]
-                                onSchoolSelected(schools[index])
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = "请选择学校",
-                            actionLabel = "添加学校",
-                            onAction = { showAddSchoolDialog = true },
-                            backdrop = backdrop,
-                            maxLabelLines = 2
-                        )
+                        // 学校选择入口：打开学校库（搜索 + A–Z + 收藏 + 手动添加）
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(com.k2767.course.ui.system.glassSurfaceColor())
+                                .clickable(onClick = onOpenSchoolPicker)
+                                .padding(horizontal = 14.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = selectedSchool?.name ?: "请选择学校",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (selectedSchool == null) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "学校库",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         Text(
                             text = if (selectedSchoolIndex == null) com.k2767.course.academic.AcademicCapabilities.FOUR_SYSTEMS
                                 else com.k2767.course.academic.AcademicCapabilities.name(schools[selectedSchoolIndex].academicSystem),
@@ -290,21 +303,6 @@ fun LoginScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
-                        
-                        // Add School Dialog
-                        if (showAddSchoolDialog) {
-                            AddSchoolDialog(
-                                onDismiss = { showAddSchoolDialog = false },
-                                onConfirm = { draft ->
-                                    val newSchool = draft.toSchoolConfig()
-                                    com.k2767.course.manager.UserManager.getInstance().addCustomSchool(newSchool)
-                                    selectedSchool = newSchool
-                                    onSchoolSelected(newSchool)
-                                    onSchoolAdded()
-                                    showAddSchoolDialog = false
-                                }
-                            )
-                        }
                         
                         // Edit School Config Dialog
                         if (showEditSchoolDialog && selectedSchool != null) {

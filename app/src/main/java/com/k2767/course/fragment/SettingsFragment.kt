@@ -213,7 +213,7 @@ class SettingsFragment : Fragment() {
     }
 
     private fun showSchoolSelector() {
-        val schools = UserManager.getInstance().supportedSchools
+        val schools = UserManager.getInstance().selectableSchools
         val schoolNames = schools.map { it.name }.toTypedArray()
 
         AlertDialog.Builder(context)

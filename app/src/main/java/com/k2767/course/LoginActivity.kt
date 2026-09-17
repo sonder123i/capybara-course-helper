@@ -120,8 +120,12 @@ class LoginActivity : ComponentActivity() {
         setContent {
             CourseSelectorTheme {
                 // Use mutableStateOf for reactive schools list
-                var schools by remember { mutableStateOf(UserManager.getInstance().supportedSchools) }
+                var schools by remember { mutableStateOf(UserManager.getInstance().selectableSchools) }
                 var showSchoolAdaptation by remember { mutableStateOf(false) }
+                var showSchoolPicker by remember { mutableStateOf(false) }
+                var schoolFavorites by remember {
+                    mutableStateOf(com.k2767.course.model.SchoolCatalogFavorites.load(this@LoginActivity))
+                }
                 
                 // 🔧 强化版学校选择记忆逻辑
                 LaunchedEffect(schools) {
@@ -142,6 +146,25 @@ class LoginActivity : ComponentActivity() {
                 if (showSchoolAdaptation) {
                     SchoolAdaptationFlow(
                         onNavigateBack = { showSchoolAdaptation = false }
+                    )
+                } else if (showSchoolPicker) {
+                    com.k2767.course.ui.screen.SchoolPickerScreen(
+                        favorites = schoolFavorites,
+                        onToggleFavorite = { id ->
+                            schoolFavorites = com.k2767.course.model.SchoolCatalogFavorites.toggle(this@LoginActivity, id)
+                        },
+                        onSelect = { school ->
+                            selectedLoginSchool = school
+                            academicValidationGeneration++
+                            validationCall?.cancel()
+                            validationJob?.cancel()
+                            clearValidationSessions()
+                            discardPendingPasswordLogin()
+                            isLoading = false
+                            schools = UserManager.getInstance().selectableSchools
+                            showSchoolPicker = false
+                        },
+                        onBack = { showSchoolPicker = false }
                     )
                 } else {
                     LoginScreen(
@@ -166,8 +189,9 @@ class LoginActivity : ComponentActivity() {
                     },
                     onSchoolAdded = {
                         // Refresh schools list after adding
-                        schools = UserManager.getInstance().supportedSchools
+                        schools = UserManager.getInstance().selectableSchools
                     },
+                    onOpenSchoolPicker = { showSchoolPicker = true },
                     onDemoMode = {
                         handleDemoMode()
                     },
