@@ -69,7 +69,7 @@ if (releaseKeystoreFile != null && isReleaseTask && !hasReleaseSigning) {
 }
 
 android {
-    namespace 'com.tyust.course'
+    namespace 'com.k2767.course'
     compileSdk 37
 
     defaultConfig {

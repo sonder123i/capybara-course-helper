@@ -1,7 +1,7 @@
 {
-  "versionCode": 1,
-  "versionName": "1.0.0",
-  "releaseNotes": "首个自用版本。\n\n基于上游 v1.0.80 改造：\n· 应用更名为「卡皮巴拉教务助手」，更换图标\n· 应用内更新、公告、反馈、统计全部改为本地处理，不再与上游服务通信\n· 学校适配与问卷后端指向本机可解析失败的地址\n· 版本号重置为 1.0.0",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.0/app-release.apk",
+  "versionCode": 2,
+  "versionName": "1.0.1",
+  "releaseNotes": "界面与源码全面去除上游痕迹。\n\n· 启动页图形由学士帽换为卡皮巴拉\n· 「关于作者」改为「关于项目」，如实说明二次开发关系并指向本仓库\n· 源码包名由 com.tyust.course 重命名为 com.k2767.course（360 个文件）\n· 移除上游遗留的统计服务端、发布脚本、CI 工作流、issue 模板与编辑器配置文件\n· 「去点 Star」按钮改指向本项目仓库",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.1/app-release.apk",
   "forceUpdate": false
 }

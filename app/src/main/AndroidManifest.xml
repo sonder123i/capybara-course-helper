@@ -100,7 +100,7 @@
             android:name=".receiver.GrabAlarmReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.tyust.course.action.SCHEDULED_GRAB" />
+                <action android:name="com.k2767.course.action.SCHEDULED_GRAB" />
             </intent-filter>
         </receiver>
         

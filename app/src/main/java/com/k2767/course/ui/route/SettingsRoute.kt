@@ -1,0 +1,1132 @@
+package com.k2767.course.ui.route
+
+import com.k2767.course.ui.system.GlassToaster
+import android.content.Intent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import com.k2767.course.ui.system.SystemDialog
+import com.k2767.course.ui.system.SystemConfirmDialog
+import com.k2767.course.ui.system.SystemSecondaryButton
+import com.k2767.course.ui.system.SystemPrimaryButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import com.k2767.course.LoginActivity
+import com.k2767.course.login.PasswordLoginCallback
+import com.k2767.course.login.PasswordLoginGatewayFactory
+import com.k2767.course.manager.AppearanceSettingsManager
+import com.k2767.course.manager.StartupPagePreferences
+import com.k2767.course.manager.UserManager
+import com.k2767.course.network.CourseApiClient
+import com.k2767.course.ui.screen.SettingsScreen
+import com.k2767.course.ui.screen.SchoolAdaptationFlow
+import com.k2767.course.update.UpdateManager
+import com.k2767.course.update.UpdateDialog
+import com.k2767.course.activation.ActivationManager
+import com.k2767.course.manager.StudentLimitManager
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import android.util.Log
+import java.io.ByteArrayOutputStream
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.LinearProgressIndicator
+import com.k2767.course.ui.system.SystemDivider
+import com.k2767.course.ui.system.SystemStatusBadge
+import com.k2767.course.ui.system.SystemTone
+import com.k2767.course.ui.theme.NeuPrimary
+import com.k2767.course.ui.theme.Neutral500
+import com.k2767.course.ui.theme.SemanticSuccess
+import com.k2767.course.ui.theme.SemanticWarning
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsRoute(
+    onAccountChanged: () -> Unit = {},
+    onSurveyCenter: () -> Unit = {},
+    surveyUnreadCount: Int = 0
+) {
+    val context = LocalContext.current
+    val isDemoMode = remember { UserManager.getInstance().isDemoMode }
+    
+    var studentName by remember { mutableStateOf("") }
+    var deviceId by remember { mutableStateOf("") }
+    var schoolName by remember { mutableStateOf("") }
+    
+    // UI States
+    var showSchoolDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showAcademicSupport by remember { mutableStateOf(false) }
+    var showCreditsDialog by remember { mutableStateOf(false) }
+    var showQuotaDialog by remember { mutableStateOf(false) }
+    var showAccountManagerDialog by remember { mutableStateOf(false) }
+    var pendingPasswordDelete by remember { mutableStateOf<UserManager.AccountRecord?>(null) }
+    var pendingAccountDelete by remember { mutableStateOf<UserManager.AccountRecord?>(null) }
+    var showSchoolAdaptation by remember { mutableStateOf(false) }
+    var showWallpaperDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showStartupPageDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
+    var startupPage by remember(startupPagePreferences) { mutableStateOf(startupPagePreferences.read()) }
+    val currentWallpaperName = com.k2767.course.manager.AppearanceSettingsManager.currentWallpaperName
+    
+    // Quota States
+    var isSuper by remember { mutableStateOf(false) }
+    var quotaInfo by remember { mutableStateOf("") }
+    var quotaUsedCount by remember { mutableIntStateOf(0) }
+    var quotaMaxCount by remember { mutableIntStateOf(0) }
+    var quotaBoundNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    var quotaAccounts by remember { mutableStateOf<List<UserManager.AccountRecord>>(emptyList()) }
+    // 账号管理走全量列表（跨学校）：这里是"管理"，不该被当前学校过滤掉
+    var allAccounts by remember { mutableStateOf<List<UserManager.AccountRecord>>(emptyList()) }
+    var accountsWithPassword by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var currentAccountKey by remember { mutableStateOf("") }
+    var canRefreshCookie by remember { mutableStateOf(false) }
+    val session by UserManager.getInstance().sessionState.state.collectAsState()
+    var cookieUpdateFeedback by remember {
+        mutableStateOf<Pair<com.k2767.course.manager.SessionToken, com.k2767.course.ui.system.SymbolResult>?>(null)
+    }
+    val cookieUpdateResult = cookieUpdateFeedback?.takeIf { it.first == session.token }?.second
+        ?: com.k2767.course.ui.system.SymbolResult.None
+    val recovery by com.k2767.course.utils.SessionRenewer.state.collectAsState()
+    val isRefreshingCookie = recovery.token == session.token &&
+        recovery.phase == com.k2767.course.utils.RecoveryPhase.Restoring
+    val relogin = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+    
+    // Update States
+    val updateManager = remember { UpdateManager.getInstance(context) }
+    var updateInfo by remember { mutableStateOf<UpdateManager.UpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableIntStateOf(0) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    val currentVersion = remember { updateManager.getCurrentVersionName() }
+
+
+    fun refreshAccountUiState() {
+        val userManager = UserManager.getInstance()
+        val name = userManager.studentName
+        val school = userManager.currentSchool
+
+        if (isDemoMode) {
+            studentName = name ?: "演示用户"
+            deviceId = "LOCAL-DEMO"
+            schoolName = school?.name ?: "正方演示大学（演示数据）"
+            isSuper = true
+            quotaUsedCount = 0
+            quotaMaxCount = 0
+            quotaBoundNames = emptyList()
+            quotaAccounts = emptyList()
+            allAccounts = emptyList()
+            accountsWithPassword = emptySet()
+            currentAccountKey = userManager.currentAccountKey
+            canRefreshCookie = false
+            quotaInfo = "本地演示"
+            return
+        }
+
+        studentName = name ?: "同学"
+        deviceId = ActivationManager.getSavedDeviceId(context)
+        schoolName = school?.name ?: "未选择"
+
+        val maxStudents = ActivationManager.getMaxStudents(context)
+        val usedNames = StudentLimitManager.getUsedStudentNames(context)
+        val usedCount = StudentLimitManager.getUsedCount(context)
+        isSuper = maxStudents <= 0
+        quotaUsedCount = usedCount
+        quotaMaxCount = maxStudents
+        quotaBoundNames = usedNames.toList()
+        quotaAccounts = userManager.accountsForCurrentSchool
+        allAccounts = userManager.savedAccounts
+        accountsWithPassword = allAccounts
+            .filter { userManager.hasSavedPassword(it.key) }
+            .map { it.key }
+            .toSet()
+        currentAccountKey = userManager.currentAccountKey
+        canRefreshCookie = userManager.loginMode == "password"
+        quotaInfo = if (isSuper) {
+            "无限制"
+        } else {
+            "$usedCount / $maxStudents"
+        }
+    }
+
+    LaunchedEffect(session.token) {
+        refreshAccountUiState()
+    }
+    
+    fun performLogout() {
+        UserManager.getInstance().clearLoginState()
+        val intent = Intent(context, LoginActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        context.startActivity(intent)
+        // If context is not activity, clean task might need validation but usually safe
+    }
+
+    fun switchAccount(accountKey: String, onSwitched: () -> Unit) {
+        if (accountKey == currentAccountKey) return
+        if (UserManager.getInstance().switchToAccount(accountKey)) {
+            refreshAccountUiState()
+            onSwitched()
+            onAccountChanged()
+            GlassToaster.show("已切换账号")
+        } else {
+            GlassToaster.show("账号切换失败，请重新登录")
+        }
+    }
+
+    /** 只删密码：账号还在，但不再自动续期，下次失效需要手动登录。 */
+    fun deleteAccountPassword(record: UserManager.AccountRecord) {
+        UserManager.getInstance().deletePassword(record.key)
+        refreshAccountUiState()
+        GlassToaster.show("已删除该账号保存的密码")
+    }
+
+    /** 彻底删号：账号记录 + 已存密码 + 运行期 Cookie + 本地课程缓存。 */
+    fun deleteAccountEntirely(record: UserManager.AccountRecord) {
+        val userManager = UserManager.getInstance()
+        val isCurrent = record.key == userManager.currentAccountKey
+        val storageKey = userManager.deleteAccount(record.key)
+        if (storageKey.isNotEmpty()) {
+            com.k2767.course.manager.CourseCacheManager.clearAccountCache(context, storageKey)
+        }
+        refreshAccountUiState()
+        if (isCurrent) {
+            // 当前账号被删掉，会话已经没有依据了，直接回登录页
+            GlassToaster.show("账号已删除，请重新登录")
+            performLogout()
+        } else {
+            GlassToaster.show("账号已删除")
+        }
+    }
+    
+    fun checkForUpdate() {
+        if (isDemoMode) {
+            GlassToaster.show("本地演示模式不执行更新检查")
+            return
+        }
+        isCheckingUpdate = true
+        GlassToaster.show("正在检查更新…")
+        
+        updateManager.checkForUpdate { info ->
+            isCheckingUpdate = false
+            if (info != null) {
+                updateInfo = info
+                showUpdateDialog = true
+            } else {
+                GlassToaster.show("已是最新版本")
+            }
+        }
+    }
+    
+    fun startDownload() {
+        if (isDemoMode) return
+        val info = updateInfo ?: return
+        isDownloading = true
+        downloadProgress = 0
+        
+        updateManager.downloadApk(
+            downloadUrl = info.downloadUrl,
+            onProgress = { progress ->
+                downloadProgress = progress
+            },
+            onComplete = { file ->
+                isDownloading = false
+                if (file != null && file.exists()) {
+                    updateManager.installApk(file)
+                    showUpdateDialog = false
+                } else {
+                    GlassToaster.show("下载失败，请重试")
+                }
+            }
+        )
+    }
+
+    fun refreshCookieManually() {
+        if (isDemoMode || isRefreshingCookie) return
+        cookieUpdateFeedback = null
+        val user = UserManager.getInstance()
+        val expected = user.sessionState.token
+        com.k2767.course.utils.SessionRenewer.request(expected, manual = true) { result ->
+            when (result) {
+                is com.k2767.course.utils.SessionRecoveryResult.Recovered -> {
+                    if (user.sessionState.isCurrent(result.token)) {
+                        cookieUpdateFeedback = result.token to com.k2767.course.ui.system.SymbolResult.Success
+                        refreshAccountUiState()
+                        GlassToaster.show("登录状态已更新")
+                    }
+                }
+                is com.k2767.course.utils.SessionRecoveryResult.NeedsLogin -> {
+                    if (user.sessionState.isCurrent(expected)) {
+                        cookieUpdateFeedback = expected to com.k2767.course.ui.system.SymbolResult.Failure
+                        GlassToaster.show(
+                        when (result.reason) {
+                            com.k2767.course.utils.RecoveryFailure.Network -> "暂时无法连接，请稍后重试"
+                            com.k2767.course.utils.RecoveryFailure.Storage -> "保存失败，请重试"
+                            else -> "需要重新登录以更新登录状态"
+                        }
+                        )
+                    }
+                }
+                com.k2767.course.utils.SessionRecoveryResult.Superseded -> Unit
+            }
+        }
+    }
+    
+    if (showSchoolAdaptation) {
+        com.k2767.course.ui.system.GlassSubpage(onDismiss = { showSchoolAdaptation = false }) { close ->
+            SchoolAdaptationFlow(onNavigateBack = close)
+        }
+    }
+
+    // Update Dialog
+    if (showUpdateDialog && updateInfo != null && !session.expired) {
+        UpdateDialog(
+            updateInfo = updateInfo!!,
+            currentVersion = currentVersion,
+            onDismiss = { 
+                showUpdateDialog = false 
+                updateInfo = null
+            },
+            onUpdate = { startDownload() },
+            downloadProgress = downloadProgress,
+            isDownloading = isDownloading
+        )
+    }
+    
+    val usagePreferences by com.k2767.course.usage.UsageStatsManager.preferences.collectAsState()
+    SettingsScreen(
+        studentName = studentName,
+        studentId = deviceId,
+        schoolName = schoolName,
+        currentVersion = currentVersion,
+        onSchoolSelect = {
+            if (isDemoMode) GlassToaster.show("演示学校固定为本地数据源") else showSchoolDialog = true
+        },
+        onCookieConfig = {
+            relogin.launch(Intent(context, LoginActivity::class.java).apply {
+                putExtra("force_relogin", true)
+                putExtra(LoginActivity.EXTRA_RETURN_TO_CALLER, true)
+            })
+        },
+        onAccountManage = {
+            if (isDemoMode) GlassToaster.show("本地演示模式不读取真实账号") else showAccountManagerDialog = true
+        },
+        savedAccountCount = allAccounts.size,
+        onClearCache = { showClearCacheDialog = true },
+        onCheckUpdate = { checkForUpdate() },
+        onAbout = { showAboutDialog = true },
+        onCredits = { showCreditsDialog = true },
+        onLogout = { showLogoutDialog = true },
+        onQuotaClick = { showQuotaDialog = true },
+        onRefreshCookieClick = { refreshCookieManually() },
+        onLogExport = { com.k2767.course.utils.LogUtils.exportLogs(context) },
+        onSchoolAdaptation = {
+            if (isDemoMode) GlassToaster.show("本地演示模式不连接学校适配服务") else showSchoolAdaptation = true
+        },
+        onSurveyCenter = onSurveyCenter,
+        surveyUnreadCount = surveyUnreadCount,
+        onWallpaperSelect = { showWallpaperDialog = true },
+        wallpaperName = currentWallpaperName,
+        themeName = AppearanceSettingsManager.themeMode.label,
+        onThemeSelect = { showThemeDialog = true },
+        startupPageName = startupPage.label,
+        onStartupPageSelect = { showStartupPageDialog = true },
+        glassEffectEnabled = AppearanceSettingsManager.glassEffectEnabled,
+        onGlassEffectChange = { AppearanceSettingsManager.updateGlassEffect(it) },
+        usageEnabled = usagePreferences.enabled,
+        onUsageEnabledChange = com.k2767.course.usage.UsageStatsManager::setEnabled,
+        isSuper = isSuper,
+        quotaInfo = quotaInfo,
+        canRefreshCookie = canRefreshCookie,
+        isRefreshingCookie = isRefreshingCookie,
+        academicSystemName = com.k2767.course.academic.AcademicCapabilities.name(UserManager.getInstance().currentSchool?.academicSystem),
+        onAcademicSupport = { showAcademicSupport = true }
+    )
+    if (showAcademicSupport) com.k2767.course.ui.screen.AcademicSupportDialog(
+        UserManager.getInstance().currentSchool?.academicSystem, onDismiss = { showAcademicSupport = false })
+    
+    if (showThemeDialog) {
+        com.k2767.course.ui.screen.AppThemeSettingsDialog { showThemeDialog = false }
+    }
+    if (showStartupPageDialog) {
+        com.k2767.course.ui.screen.StartupPageSettingsDialog(
+            page = startupPage,
+            onPageChange = {
+                startupPagePreferences.write(it)
+                startupPage = it
+            },
+            onDismiss = { showStartupPageDialog = false }
+        )
+    }
+    if (showWallpaperDialog) {
+        com.k2767.course.ui.screen.WallpaperSettingsDialog(
+            onDismiss = { showWallpaperDialog = false }
+        )
+    }
+
+    // Dialogs
+    if (showLogoutDialog) {
+        SimpleConfirmDialog(
+            title = "退出登录",
+            text = "确定要退出登录吗？",
+            onConfirm = { 
+                performLogout() 
+                showLogoutDialog = false
+            },
+            onDismiss = { showLogoutDialog = false }
+        )
+    }
+    
+    if (showClearCacheDialog) {
+        SimpleConfirmDialog(
+            title = "清除缓存",
+            text = "确定要清除所有本地缓存数据吗？",
+            onConfirm = { 
+                GlassToaster.show("缓存已清除")
+                showClearCacheDialog = false
+            },
+            onDismiss = { showClearCacheDialog = false }
+        )
+    }
+    
+    if (showAboutDialog) {
+        SystemDialog(
+            onDismissRequest = { showAboutDialog = false },
+            title = {
+                Text(
+                    text = "更新历史",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            confirmButton = {
+                SystemPrimaryButton(
+                    text = "关闭",
+                    onClick = { showAboutDialog = false },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 350.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                val updates = listOf(
+                    "2026-07-14" to "重构 Liquid Glass 视觉与兼容策略：引入 Navigation、Control、Modal、Interactive 角色化材质，静止态使用中性折射并仅在交互时短暂增强流体反馈；移除 vivo、oppo、oneplus、realme 等厂商硬编码，设备默认启用 Backdrop，仅在上一进程发生崩溃、native 崩溃或 ANR 后按当前版本自动降级。",
+                    "2026-07-14" to "完善统一液态控件与 TYUST SSO 登录：优化按钮、开关、分段选择器、锚定 Picker、弹窗和登录面板的层级与可访问性；修复 TYUST SSO 空 form action、首次提交及中间响应处理，并补充自动化测试。",
+                    "2026-07-13" to "稳定液态玻璃导航与控件：收敛 Backdrop 参数和 API 31/32 回退路径，降低 RuntimeShader 与 RenderThread 风险，修复快速切换时的交互状态问题。",
+                    "2026-07-11" to "新增统一登录适配工作流：支持学校适配状态查询、申请入口与 TYUST 专用统一认证流程，同时保持其他学校原有登录方式不变。",
+                    "2026-07-10" to "新增 TYUST SSO 账号密码登录，完善登录协议解析、验证码与错误状态处理，并改进真实环境登录诊断信息。",
+                    "2026-07-10" to "完成 TYUST SSO 协议登录的设计与验证方案，明确首次请求、表单提交、重定向和教务会话建立链路。",
+                    "2026-06-13" to "支持单账号并行抢课：队列、关键词和模糊候选可在当前账号内并行尝试，最多同时处理 2 门课程；并行 worker 使用独立课程上下文，避免课程参数串号，同时保持切换账号前必须停止抢课的单账号边界。",
+                    "2026-06-13" to "修复抢课健康检查误判：区分快速探针失败与真实慢响应，低于 3000ms 的连接失败不再显示为响应超时，也不再跳过抢课尝试；健康检查复用教务请求链路与账号 Cookie，提升不同网络环境下的判定稳定性。",
+                    "2026-06-08" to "修复课程筛选条件无法显示问题：改为按自主选课页面真实运行来源获取动态筛选项，支持年级、学院、专业、开课学院、课程类别、课程性质、课程归属、教学模式、上课星期/节次、教学班、是否重修和有无余量等筛选条件；筛选请求参数与网页端保持一致。",
+                    "2026-06-08" to "完善多账号数据隔离：课程缓存、课表、已选课程、成绩、设置页 Cookie 更新、Cookie 过期广播、抢课队列、抢课服务日志与服务广播均按账号分槽；切换账号后页面状态自动重置，旧账号请求不会写入当前账号界面。",
+                    "2026-06-07" to "修复 vivo/oppo 等设备上抢课、成绩、设置页面闪退问题（Backdrop 液态玻璃 GPU 兼容性）；修复复杂周次格式（如\"1-4周,6-14周(双),15-16周\"）无法正确识别的 Bug；新增缺失的 ProGuard 规则文件，修复 Theme 安全转型。",
+                    "2026-06-05" to "新增全局 Cookie 有效性定期检查（CookieWatchdog），提升后台长效稳定性；优化接口响应拦截，捕获 JSON 响应中的失效状态并自动唤起登录提示，显著增强会话失效处理的鲁棒性。",
+                    "2026-06-04" to "修复平时成绩详情只展示一项的Bug；成绩导出支持导出为 UTF-8 BOM CSV 数据单；优化登录密码输入下的统一认证平台温馨提示；引入防误触式 GitHub Star 引导弹窗，支持最多3次展示不同阶段求赞文案；将原本的关于界面重构为更新历史卡片与开源致谢面板。",
+                    "2026-06-03" to "清理内部文档与更新配置。",
+                    "2026-06-02" to "优化滚动体验，增加页面底部内边距，防止底部导航栏遮挡内容；重构 README 引入 iOS 新拟态玻璃 UI 截图。",
+                    "2026-06-01" to "修复底部导航栏部分情况下点击失效以及液态效果裁切问题，优化过渡动画。",
+                    "2026-05-31" to "引入液态玻璃视觉效果，系统 UI 重构，发布 1.0.54 版本。",
+                    "2026-05-26" to "优化已选列表卡片与切换开关，引入全新五彩新拟态主题与微交互动效；修复退课接口未带加密 ID 导致的问题；修复日历分享配置路径缺失导致的崩溃。",
+                    "2026-05-25" to "升级新拟态玻璃化 UI 设计，优化课程表截断和星期对齐问题，优化数据加载动画。",
+                    "2026-04-18" to "成绩查询 UI 深度优化，增强安全防护（引入限流与安全指纹检测机制）。",
+                    "2026-04-09" to "深度 UI/UX 重构，渲染极简系统工具风，优化性能与细节体验。"
+                )
+
+                updates.forEach { (date, desc) ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(com.k2767.course.ui.theme.NeuPrimary, CircleShape)
+                            )
+                            Text(
+                                text = date,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            text = desc,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp),
+                            lineHeight = 20.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreditsDialog) {
+        SystemDialog(
+            onDismissRequest = { showCreditsDialog = false },
+            title = {
+                Text(
+                    text = "致谢与关于",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            confirmButton = {
+                SystemPrimaryButton(
+                    text = "我知道了",
+                    onClick = { showCreditsDialog = false },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "特别致谢",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "本应用基于多项优秀的开源技术构建，衷心感谢以下开源项目及社区的支持：\n" +
+                            "• Jetpack Compose & Kotlin\n" +
+                            "• OkHttp3 & Gson\n" +
+                            "• Jsoup (HTML 解析库)\n" +
+                            "• Material Design 3\n" +
+                            "• AndroidLiquidGlass 动效库",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp
+                )
+
+                com.k2767.course.ui.system.SystemDivider()
+
+                Text(
+                    text = "关于项目",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "本应用基于开源项目「教务助手」二次开发\n" +
+                            "原作者：znjhahaha · GPL-3.0\n" +
+                            "上游项目：https://github.com/znjhahaha/zhengfang-apk\n" +
+                            "本项目：https://github.com/sonder123i/capybara-course-helper",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp
+                )
+
+                com.k2767.course.ui.system.SystemDivider()
+
+                Text(
+                    text = "本软件为开源免费项目，仅供个人学习与技术交流使用，严禁用于任何商业目的与倒卖。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    lineHeight = 16.sp
+                )
+            }
+        }
+    }
+    
+    if (showQuotaDialog) {
+        QuotaStatusDialog(
+            deviceId = deviceId,
+            isSuper = isSuper,
+            usedCount = quotaUsedCount,
+            maxCount = quotaMaxCount,
+            boundNames = quotaBoundNames,
+            accounts = quotaAccounts,
+            currentAccountKey = currentAccountKey,
+            onSwitchAccount = { accountKey ->
+                switchAccount(accountKey) { showQuotaDialog = false }
+            },
+            onDismiss = { showQuotaDialog = false }
+        )
+    }
+
+    if (showAccountManagerDialog) {
+        AccountManagerDialog(
+            accounts = allAccounts,
+            currentAccountKey = currentAccountKey,
+            accountsWithPassword = accountsWithPassword,
+            onSwitchAccount = { accountKey ->
+                switchAccount(accountKey) { showAccountManagerDialog = false }
+            },
+            onDeletePassword = { pendingPasswordDelete = it },
+            onDeleteAccount = { pendingAccountDelete = it },
+            onDismiss = { showAccountManagerDialog = false }
+        )
+    }
+
+    pendingPasswordDelete?.let { record ->
+        SimpleConfirmDialog(
+            title = "删除已保存的密码",
+            text = "删除后「${record.displayName}」将无法在登录状态失效时自动续期，" +
+                "需要你手动重新登录。账号本身与本地数据不会被删除。",
+            confirmText = "删除密码",
+            onConfirm = {
+                deleteAccountPassword(record)
+                pendingPasswordDelete = null
+            },
+            onDismiss = { pendingPasswordDelete = null }
+        )
+    }
+
+    pendingAccountDelete?.let { record ->
+        SimpleConfirmDialog(
+            title = "删除账号",
+            text = "将删除「${record.displayName}」的账号记录、已保存的密码、登录状态与本地课程缓存，" +
+                "此操作不可恢复。设备绑定名额不会因此释放。",
+            confirmText = "删除账号",
+            onConfirm = {
+                deleteAccountEntirely(record)
+                pendingAccountDelete = null
+                showAccountManagerDialog = false
+            },
+            onDismiss = { pendingAccountDelete = null }
+        )
+    }
+
+
+    
+    if (showSchoolDialog) {
+        var animateTrigger by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { animateTrigger = true }
+
+        fun dismiss() {
+            animateTrigger = false
+        }
+
+        if (!animateTrigger) {
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(300)
+                showSchoolDialog = false
+            }
+        }
+
+        SystemDialog(
+            onDismissRequest = { dismiss() },
+            title = {
+                Text(
+                    text = "选择学校",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            dismissButton = {
+                SystemSecondaryButton(
+                    text = "取消",
+                    onClick = { dismiss() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        ) {
+            val schools = remember { UserManager.getInstance().supportedSchools }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 240.dp) // 限制最大高度，防止学校列表过多时把 Dialog 挤出屏幕外
+            ) {
+                items(schools) { school ->
+                    Text(
+                        text = school.name,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                UserManager.getInstance().clearLoginState()
+                                UserManager.getInstance().currentSchool = school
+                                GlassToaster.show("已切换到：${school.name}")
+                                performLogout()
+                                dismiss()
+                            }
+                            .padding(vertical = 14.dp, horizontal = 12.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuotaStatusDialog(
+    deviceId: String,
+    isSuper: Boolean,
+    usedCount: Int,
+    maxCount: Int,
+    boundNames: List<String>,
+    accounts: List<UserManager.AccountRecord>,
+    currentAccountKey: String,
+    onSwitchAccount: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val safeMax = maxCount.coerceAtLeast(0)
+    val safeUsed = usedCount.coerceAtLeast(0)
+    val usageRatio = if (!isSuper && safeMax > 0) {
+        (safeUsed.toFloat() / safeMax.toFloat()).coerceIn(0f, 1f)
+    } else {
+        1f
+    }
+    val statusText = if (isSuper) "超级用户" else "普通用户"
+    val quotaText = if (isSuper) "无限制" else "$safeUsed / $safeMax"
+
+    SystemDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "当前账号配额",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "设备绑定与名额使用情况",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        },
+        confirmButton = {
+            SystemPrimaryButton(
+                text = "知道了",
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    QuotaInfoRow(label = "身份", value = statusText)
+                    QuotaInfoRow(label = "配额", value = quotaText)
+                    if (!isSuper) {
+                        LinearProgressIndicator(
+                            progress = { usageRatio },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(999.dp)),
+                            color = if (usageRatio >= 1f) SemanticWarning else NeuPrimary,
+                            trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+            }
+
+            SystemDivider(alpha = 0.5f)
+
+            Text("设备 ID：${deviceId.ifBlank { "未获取" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "已绑定账号",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (boundNames.isEmpty()) {
+                    Text(
+                        text = "当前设备尚未绑定账号。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        boundNames.forEachIndexed { index, name ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        modifier = Modifier.size(24.dp),
+                                        color = NeuPrimary.copy(alpha = 0.12f),
+                                        shape = CircleShape
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "${index + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = NeuPrimary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (accounts.isNotEmpty()) {
+                SystemDivider(alpha = 0.5f)
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "切换账号",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    accounts.forEach { account ->
+                        val isCurrent = account.key == currentAccountKey
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isCurrent) { onSwitchAccount(account.key) },
+                            color = if (isCurrent) NeuPrimary.copy(alpha = 0.12f)
+                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = account.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "${account.accountIdText} · ${if (account.loginMode == "password") "密码登录" else "Cookie 登录"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                SystemStatusBadge(
+                                    text = if (isCurrent) "当前" else "切换",
+                                    tone = if (isCurrent) SystemTone.Info else SystemTone.Neutral
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = "说明：同一设备可绑定不同学校的学生账号，所有学校合计最多 3 个；切换账号会同步切换 Cookie 与本地账号上下文。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccountManagerDialog(
+    accounts: List<UserManager.AccountRecord>,
+    currentAccountKey: String,
+    accountsWithPassword: Set<String>,
+    onSwitchAccount: (String) -> Unit,
+    onDeletePassword: (UserManager.AccountRecord) -> Unit,
+    onDeleteAccount: (UserManager.AccountRecord) -> Unit,
+    onDismiss: () -> Unit
+) {
+    SystemDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "账号管理",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "切换账号、管理已保存的密码",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        },
+        confirmButton = {
+            SystemPrimaryButton(
+                text = "完成",
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (accounts.isEmpty()) {
+                Text(
+                    text = "本机还没有保存任何账号。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                accounts.forEach { account ->
+                    val isCurrent = account.key == currentAccountKey
+                    val hasPassword = accountsWithPassword.contains(account.key)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (isCurrent) NeuPrimary.copy(alpha = 0.12f)
+                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = account.displayName,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "${account.accountIdText} · " +
+                                            if (account.loginMode == "password") "密码登录" else "Cookie 登录",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = account.schoolName.ifBlank { "未记录学校" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                SystemStatusBadge(
+                                    text = if (hasPassword) "已存密码" else "未存密码",
+                                    tone = if (hasPassword) SystemTone.Success else SystemTone.Neutral
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isCurrent) {
+                                    SystemStatusBadge(text = "当前账号", tone = SystemTone.Info)
+                                } else {
+                                    AccountActionButton(
+                                        text = "切换",
+                                        onClick = { onSwitchAccount(account.key) }
+                                    )
+                                }
+                                Spacer(modifier = Modifier.weight(1f))
+                                if (hasPassword) {
+                                    AccountActionButton(
+                                        text = "删除密码",
+                                        onClick = { onDeletePassword(account) }
+                                    )
+                                }
+                                AccountActionButton(
+                                    text = "删除账号",
+                                    tint = com.k2767.course.ui.theme.SemanticDanger,
+                                    onClick = { onDeleteAccount(account) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = "密码经系统密钥库加密后仅保存在本机，用于登录状态失效时自动续期；" +
+                    "退出登录不会删除它。删除账号不会释放设备绑定名额。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+/** 账号卡里的小动作按钮：轻量胶囊，避免三个实心按钮在一行里互相抢注意力。 */
+@Composable
+private fun AccountActionButton(
+    text: String,
+    tint: Color = NeuPrimary,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        color = tint.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(999.dp)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = tint
+        )
+    }
+}
+
+@Composable
+private fun QuotaInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+fun SimpleConfirmDialog(
+    title: String, 
+    text: String, 
+    onConfirm: () -> Unit, 
+    onDismiss: () -> Unit,
+    confirmText: String = "确定",
+    showCancel: Boolean = true
+) {
+    SystemConfirmDialog(
+        title = title,
+        text = text,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+        confirmText = confirmText,
+        showCancel = showCancel
+    )
+}
+
+

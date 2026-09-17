@@ -1,0 +1,106 @@
+package com.k2767.course.academic
+
+import com.k2767.course.login.PasswordLoginCallback
+import com.k2767.course.login.PasswordLoginGateway
+import com.k2767.course.model.SchoolConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+
+/** Bridges the new suspend adapter to the existing login screen contract. */
+class AcademicPasswordLoginGateway(private val school: SchoolConfig) : PasswordLoginGateway {
+    @Volatile private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var adapter: AcademicProtocolAdapter? = null
+    var studentName: String = ""
+        private set
+    var studentId: String = ""
+        private set
+
+    override fun login(school: SchoolConfig, username: String, password: String, callback: PasswordLoginCallback) {
+        clearSensitiveState()
+        studentName = ""; studentId = ""
+        // Keep this key identical to UserManager.currentAccountStorageKey's
+        // sanitized school::username representation.
+        val key = AcademicGatewayFactory.accountKey(school, username)
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val requestScope = scope
+        requestScope.launch {
+            val result = loginResult {
+                if (school.academicSystem == AcademicSystem.AUTO.id && AcademicGatewayFactory.detect(school, key) == null)
+                    throw AcademicException(AcademicStatus.PAGE_CHANGED, "无法识别教务系统，请在学校配置中手动选择")
+                val created = AcademicGatewayFactory.create(school, key)
+                currentCoroutineContext().ensureActive()
+                adapter = created
+                created.login(Credentials(username, password))
+            }
+            currentCoroutineContext().ensureActive()
+            if (scope !== requestScope) return@launch
+            val current = adapter
+            if (current != null) deliver(current, result, callback)
+            else callback.onError(result.message.ifBlank { "登录初始化失败，请重新选择教务系统" })
+        }
+    }
+
+    override fun submitCaptcha(captchaCode: String, callback: PasswordLoginCallback) {
+        val current = adapter ?: return callback.onError("登录会话已失效，请重新登录")
+        val captchaLogin = current as? AcademicCaptchaLogin
+            ?: return callback.onError("登录会话已失效，请重新登录")
+        val requestScope = scope
+        requestScope.launch {
+            val result = loginResult { captchaLogin.submitCaptcha(captchaCode.trim()) }
+            currentCoroutineContext().ensureActive()
+            if (scope === requestScope && adapter === current) deliver(current, result, callback, submittingCaptcha = true)
+        }
+    }
+
+    override fun refreshCaptcha(callback: (ByteArray?) -> Unit) {
+        val current = adapter as? AcademicCaptchaLogin ?: return callback(null)
+        val requestScope = scope
+        requestScope.launch {
+            val image = try { current.refreshCaptcha()?.image }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
+            currentCoroutineContext().ensureActive()
+            if (scope === requestScope && adapter === current) callback(image)
+        }
+    }
+
+    private suspend fun loginResult(block: suspend () -> LoginResult): LoginResult = try { block() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: AcademicException) { LoginResult(e.status, message = e.message.orEmpty()) }
+        catch (_: Exception) { LoginResult(AcademicStatus.PAGE_CHANGED, message = "登录失败，请重新登录或使用教务网页登录") }
+
+    private fun deliver(current: AcademicProtocolAdapter, result: LoginResult, callback: PasswordLoginCallback, submittingCaptcha: Boolean = false) {
+        if (result.status != AcademicStatus.CAPTCHA_REQUIRED) (current as? AcademicCaptchaLogin)?.clearLoginState()
+        when (result.status) {
+            AcademicStatus.SUCCESS -> {
+                studentName = result.studentName; studentId = result.studentId
+                callback.onSuccess((current as? SessionBackedAdapter)?.cookieHeader().orEmpty())
+            }
+            AcademicStatus.INVALID_CREDENTIALS -> callback.onInvalidCredentials()
+            AcademicStatus.CAPTCHA_REQUIRED -> {
+                val image = result.captcha?.image
+                if (image != null && image.isNotEmpty()) callback.onCaptchaRequired(image)
+                else if (submittingCaptcha) callback.onCaptchaInvalid()
+                else callback.onError("未能获取验证码图片，请重新登录")
+            }
+            AcademicStatus.HUMAN_VERIFICATION_REQUIRED -> callback.onWebLoginRequired(result.message.ifBlank { "请在教务网页完成验证或统一认证" })
+            else -> callback.onError(result.message.ifBlank { result.status.name })
+        }
+    }
+
+    override fun clearSensitiveState() {
+        scope.cancel()
+        (adapter as? AcademicCaptchaLogin)?.clearLoginState()
+        adapter = null
+    }
+}
+
+/** Optional capability used by the bridge; adapters keep cookie ownership private. */
+internal interface SessionBackedAdapter {
+    fun cookieHeader(): String
+}
