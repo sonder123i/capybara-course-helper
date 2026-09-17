@@ -56,7 +56,11 @@ object UsageStatsManager {
         reporter = UsageReporter(
             store = NoBackupUsageStore(application), transport = HttpUsageTransport(),
             version = BuildConfig.VERSION_NAME,
-            eligibleBuild = !BuildConfig.DEBUG && !BuildConfig.UI_PREVIEW,
+            // 自用改造：是否允许上报匿名统计。判断放在这里（装配层）而不是
+            // UsageReporter.canReport()，是为了让 UsageReporter 的通用逻辑及其
+            // 单测保持原样——上游那 5 个 UsageReporterTest 不因自用开关而变红。
+            eligibleBuild = com.tyust.course.SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS &&
+                !BuildConfig.DEBUG && !BuildConfig.UI_PREVIEW,
             isDemo = { UserManager.getInstance().isDemoMode }, scope = scope
         )
         val resumed = mutableSetOf<Activity>()

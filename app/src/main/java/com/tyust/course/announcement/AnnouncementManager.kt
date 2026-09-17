@@ -58,6 +58,11 @@ object AnnouncementManager {
      * 获取所有公告（包括已读和未读）
      */
     suspend fun fetchAllAnnouncements(): List<Announcement> {
+        // 自用改造：不再拉取作者仓库的公告。fetchUnreadAnnouncements 同样因此返回空。
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT) {
+            android.util.Log.d(TAG, "远端公告已由 SelfHostConfig 关闭")
+            return emptyList()
+        }
         return withContext(Dispatchers.IO) {
             try {
                 val request = Request.Builder()

@@ -73,7 +73,7 @@ android {
     compileSdk 37
 
     defaultConfig {
-        applicationId "com.tyust.course"
+        applicationId "com.k2767.course"
         minSdk 24
         targetSdk 34
         versionCode code

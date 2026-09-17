@@ -306,7 +306,7 @@ fun SettingsScreen(
             }
 
             Text(
-                text = "教务助手 · $currentVersion",
+                text = "卡皮巴拉教务助手 · $currentVersion",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.CenterHorizontally)

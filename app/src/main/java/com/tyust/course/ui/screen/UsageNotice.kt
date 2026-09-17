@@ -43,7 +43,7 @@ internal fun UsageNoticeDialog(onContinue: (Boolean) -> Unit) {
         dismissButton = { SystemSecondaryButton("暂不开启", { onContinue(false) }, Modifier.fillMaxWidth()) }
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("帮助开发者了解有多少设备在使用教务助手。", style = MaterialTheme.typography.bodyLarge)
+            Text("帮助开发者了解有多少设备在使用卡皮巴拉教务助手。", style = MaterialTheme.typography.bodyLarge)
             Text("每日活跃统计仅发送随机安装标识和应用版本，每天前台使用时最多成功上报一次。", style = MaterialTheme.typography.bodyMedium)
             Text("点击“开始填写”时，会发送问卷编号、一次性随机请求编号及用于校验投放范围的教务域名。服务端不保存域名，仅保留匿名点击汇总与去重标记，不接收问卷答案、学号、账号、密码或课程内容。入口点击不代表真实提交。", style = MaterialTheme.typography.bodyMedium)
             InsetGroupedRow(

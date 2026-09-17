@@ -680,7 +680,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 }
 
                 val dialogText = when (dismissCount) {
-                    0 -> "感谢使用教务助手。\n\n如果它帮到了你，欢迎去 GitHub 仓库点一个 Star，支持项目继续维护。"
+                    0 -> "感谢使用卡皮巴拉教务助手。\n\n如果它帮到了你，欢迎去 GitHub 仓库点一个 Star，支持项目继续维护。"
                     1 -> "我们仍在持续优化体验。\n\n如果这个应用对你有用，花几秒钟给仓库点个 Star，就是对作者最好的支持。"
                     else -> "这是最后一次提示。\n\n如果你愿意，欢迎去 GitHub 留下一个 Star；无论如何，都感谢你的使用。"
                 }

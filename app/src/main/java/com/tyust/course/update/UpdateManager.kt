@@ -102,6 +102,12 @@ class UpdateManager(private val context: Context) {
      * 检查更新
      */
     fun checkForUpdate(callback: (UpdateInfo?) -> Unit) {
+        // 自用改造：默认不与作者仓库通信，直接按「已是最新」返回。
+        if (!com.tyust.course.SelfHostConfig.ENABLE_APP_UPDATE_CHECK) {
+            Log.d(TAG, "应用内更新检查已由 SelfHostConfig 关闭")
+            callback(null)
+            return
+        }
         Log.d(TAG, "检查更新: $VERSION_URL")
         
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())

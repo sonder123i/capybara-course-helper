@@ -161,3 +161,6 @@ promo-video
 /screenshot_domain_error.png
 /ui.xml
 output
+
+# 品牌资源暂存目录（AI 生成的图标原图与处理脚本，不进仓库）
+/_brand_icon/

@@ -5,7 +5,12 @@
   <img src="pic/v1.0.68/06-wallpaper-image.jpg" width="170"/>
 </p>
 
-<h1 align="center">教务助手</h1>
+<h1 align="center">卡皮巴拉教务助手</h1>
+
+> **本项目是 [教务助手](https://github.com/znjhahaha/zhengfang-apk) 的二次开发版本（fork）。**
+>
+> 原项目由 [@znjhahaha](https://github.com/znjhahaha) 开发，以 GPL-3.0 开源，原始版权归原作者所有。
+> 本 fork 沿同一许可发布，具体改动见文末「与原项目的关系」。
 
 <p align="center">
   <strong>开源 · 免费 · 安全</strong><br/>
@@ -14,10 +19,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/znjhahaha/zhengfang-apk/releases/latest"><img src="https://img.shields.io/github/v/release/znjhahaha/zhengfang-apk?style=flat-square&color=blueviolet&label=最新版本" alt="Release"/></a>
-  <a href="https://github.com/znjhahaha/zhengfang-apk/actions"><img src="https://img.shields.io/github/actions/workflow/status/znjhahaha/zhengfang-apk/release.yml?style=flat-square&label=CI/CD" alt="CI"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"/></a>
-  <a href="https://github.com/znjhahaha/zhengfang-apk/stargazers"><img src="https://img.shields.io/github/stars/znjhahaha/zhengfang-apk?style=flat-square" alt="Stars"/></a>
+  <a href="https://github.com/znjhahaha/zhengfang-apk"><img src="https://img.shields.io/badge/upstream-znjhahaha%2Fzhengfang--apk-blueviolet?style=flat-square" alt="Upstream"/></a>
 </p>
 
 ---
@@ -180,22 +183,46 @@ Kotlin + Jetpack Compose（Material 3）。玻璃渲染用 Kyant Backdrop 2.0，
 
 ## 二次开发
 
-项目基于 **GPLv3** 开源，二开前先把协议看清楚。
+本 fork 与其上游同样基于 **GPL-3.0** 开源。你可以自由地修改、改名、分发甚至商用，
+只需遵守 GPL-3.0 的三条核心义务：
 
-> **不接受任何形式的私自打包和分发。** 唯一的二开渠道是向本仓库提 PR，CI/CD 会自动构建并发布——这是为了避免外面满天飞的山寨包。
+1. 保留原作者的版权声明与本许可
+2. 衍生作品继续以 GPL-3.0 发布（不能换成更宽松的许可，也不能闭源）
+3. 分发时提供完整对应源码，并显著标注你做了哪些修改
+
+> 上游原作者的表述是「不接受任何形式的私自打包和分发，唯一的二开渠道是向本仓库提 PR」。
+> 该表述与 GPL-3.0 第 10 条（不得对所授予的权利附加进一步限制）存在冲突。
+> 作为遵循 GPL-3.0 的衍生作品，本 fork 按 GPL-3.0 的条款发布与分发。
 
 提 PR 流程：
 
 1. Fork
 2. 改完跑一遍 `./gradlew assembleDebug` 确认能编
 3. 提交：`git commit -m 'feat: xxx'`
-4. 推上去开 PR，CI 会自己跑
+4. 推上去开 PR
 
 UI 类改动记得附真机截图，审起来省事。
 
-更新日志写在 `release-notes/vX.Y.Z.md`，CI 从那儿读，扇到 GitHub Release 和 App 内的更新提示，别到处各写一份。
+更新日志写在 `release-notes/vX.Y.Z.md`。
 
 ---
+
+## 与原项目的关系
+
+本仓库 fork 自 [znjhahaha/zhengfang-apk](https://github.com/znjhahaha/zhengfang-apk)，基线为其 v1.0.80。
+原始版权归原作者及其贡献者所有，本 fork 继续以 GPL-3.0 发布。
+
+相对上游的主要改动：
+
+| 类别 | 内容 |
+|---|---|
+| 品牌 | 应用名改为「卡皮巴拉教务助手」；applicationId 由 `com.tyust.course` 改为 `com.k2767.course`；版本号重置为 1.0.0 |
+| 服务解耦 | 新增 `SelfHostConfig.kt` 集中开关，关闭对上游自建服务的依赖：应用内更新检查、远端公告、用户反馈上报、匿名统计 |
+| 后端地址 | 学校适配与问卷中心的后端地址改指保留域名，不再访问上游服务 |
+| 构建 | 补齐 `local.properties`；Gradle 发行包改用国内镜像获取 |
+
+**未改动**：教务系统适配逻辑（新/旧正方、新/旧强智）、抢课与捡漏实现、课表与成绩、液态玻璃渲染管线。
+源码包名（`namespace`）仍保留 `com.tyust.course` —— 仅改 `applicationId`，避免全量重命名带来的回归风险。
 
 ## 免责声明
 

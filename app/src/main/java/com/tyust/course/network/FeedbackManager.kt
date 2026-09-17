@@ -38,6 +38,11 @@ object FeedbackManager {
         screenshotBase64: String? = null, // 新增图片支持
         includeLogs: Boolean = true // 新增日志开关
     ): Result<String> = withContext(Dispatchers.IO) {
+        // 自用改造：反馈内容（含学号与最近 15KB logcat）不再上报到作者服务。
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_FEEDBACK) {
+            Log.d(TAG, "远端反馈已由 SelfHostConfig 关闭")
+            return@withContext Result.failure(IllegalStateException("自用改造：远端反馈已关闭"))
+        }
         try {
             val deviceId = com.tyust.course.activation.DeviceUtils.getDeviceId(context)
             val studentName = UserManager.getInstance().studentName ?: "未知用户"
@@ -117,6 +122,10 @@ object FeedbackManager {
      * 获取我的反馈历史
      */
     suspend fun getMyFeedbacks(context: Context): Result<List<FeedbackItem>> = withContext(Dispatchers.IO) {
+        // 自用改造：不再从作者服务读取反馈历史，直接返回空列表。
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_FEEDBACK) {
+            return@withContext Result.success(emptyList())
+        }
         try {
             val deviceId = com.tyust.course.activation.DeviceUtils.getDeviceId(context)
             val timestamp = System.currentTimeMillis().toString()
