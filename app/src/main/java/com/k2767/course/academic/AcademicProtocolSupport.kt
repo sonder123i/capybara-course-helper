@@ -44,8 +44,21 @@ internal object AcademicJson {
         val candidates = if (root == null) runCatching { JSONArray(body) }.getOrNull() else {
             val containers = listOfNotNull(root, root.optJSONObject("data"), root.optJSONObject("result"))
             containers.asSequence().flatMap { container -> (keys.toList() + listOf("data", "aaData", "rows", "list")).asSequence().mapNotNull { container.optJSONArray(it) } }.firstOrNull()
-        } ?: throw AcademicException(status(body).takeUnless { it == AcademicStatus.SUCCESS || it == AcademicStatus.VALIDATION_FAILED }
-            ?: AcademicStatus.PAGE_CHANGED, "教务返回了无法识别的列表，请重新进入页面")
+        } ?: run {
+            // 找不到数组时先让状态判定接管：教务的「当前不属于选课阶段」这类业务提示会被识别成
+            // ROUND_CLOSED 等具体状态，此时把教务原文透传给用户，而不是一律报「无法识别的列表」误导。
+            val resolved = status(body).takeUnless { it == AcademicStatus.SUCCESS || it == AcademicStatus.VALIDATION_FAILED }
+                ?: AcademicStatus.PAGE_CHANGED
+            val detail = message(body)
+            throw AcademicException(
+                resolved,
+                if (resolved == AcademicStatus.PAGE_CHANGED || detail.isBlank()) {
+                    "教务返回了无法识别的列表，请重新进入页面"
+                } else {
+                    detail
+                }
+            )
+        }
         val rejected = root != null && ((root.has("success") && !root.optBoolean("success")) ||
             (root.has("code") && root.optString("code") !in setOf("0", "200")) ||
             (root.has("flag") && root.optString("flag") in setOf("false", "0")))
@@ -83,7 +96,7 @@ internal object AcademicJson {
         val conflictId = runCatching { JSONObject(body).optString("yxjx0404id") }.getOrDefault("")
         if (detail.contains("冲突") || conflictId !in setOf("", "null")) return AcademicStatus.CONFLICT
         if (listOf("学分上限", "超过学分", "超出学分", "学分限制").any(detail::contains)) return AcademicStatus.CREDIT_LIMIT
-        if (listOf("未开始", "未开放", "已结束", "选课时间已过", "不在选课时间", "只可退课").any(detail::contains)) return AcademicStatus.ROUND_CLOSED
+        if (listOf("未开始", "未开放", "已结束", "选课时间已过", "不在选课时间", "只可退课", "选课阶段").any(detail::contains)) return AcademicStatus.ROUND_CLOSED
         if (listOf("已选该", "已经选", "重复选课").any(detail::contains)) return AcademicStatus.ALREADY_SELECTED
         if (listOf("已满", "无余量", "名额不足", "容量不足").any(detail::contains)) return AcademicStatus.NO_CAPACITY
         if (code !in 200..299) return AcademicStatus.VALIDATION_FAILED

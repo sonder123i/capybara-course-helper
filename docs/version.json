@@ -1,7 +1,7 @@
 {
-  "versionCode": 2,
-  "versionName": "1.0.1",
-  "releaseNotes": "界面与源码全面去除上游痕迹。\n\n· 启动页图形由学士帽换为卡皮巴拉\n· 「关于作者」改为「关于项目」，如实说明二次开发关系并指向本仓库\n· 源码包名由 com.tyust.course 重命名为 com.k2767.course（360 个文件）\n· 移除上游遗留的统计服务端、发布脚本、CI 工作流、issue 模板与编辑器配置文件\n· 「去点 Star」按钮改指向本项目仓库",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.1/app-release.apk",
+  "versionCode": 3,
+  "versionName": "1.0.2",
+  "releaseNotes": "修复：教务未开放选课时，课程页会误报「教务返回了无法识别的列表」。\n\n现在会如实显示教务的原始提示（例如「当前不属于选课阶段」），不再把这个情况误报成适配问题。\n\n选课功能本身需等学校开放选课轮次后才可用。",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.2/app-release.apk",
   "forceUpdate": false
 }
