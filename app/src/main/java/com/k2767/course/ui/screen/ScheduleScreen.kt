@@ -395,6 +395,9 @@ fun ScheduleScreen(
     // 周视图 / 日视图开关。用 rememberSaveable 跨配置变更（旋转、深浅色切换）保留；
     // 进程重启后回到周视图——它仍是信息密度最高、最常用的那一屏。
     var dayViewEnabled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // 切换视图时回到顶部：两个视图共用同一个 scrollState，若沿用上一视图的滚动位置，
+    // 日视图的日期标题会被顶到顶栏底下（切过去只见半行字）。
+    LaunchedEffect(dayViewEnabled) { gridScrollState.scrollTo(0) }
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerMetrics = rememberScheduleHeaderMetrics(maxWidth)
     // 折叠行程 = 顶栏高度差，于是收缩与滚动 1:1 对消，全程跟手。
@@ -1147,7 +1150,7 @@ private fun rememberCoursePeriodHeight(courses: List<ScheduleCourseUi>, columnWi
                 // 两三行，是把每节高度撑大的主因。渲染端 CourseCard 里的 location Text 必须
                 // 使用同样的 maxLines，否则测量与布局会脱节。
                 val locationHeight = if (course.location.isNotBlank()) measurer.measure(
-                    course.location, courseLocationStyle(style, duration),
+                    compactLocation(course.location), courseLocationStyle(style, duration),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     constraints = Constraints(maxWidth = contentWidth)
                 ).size.height else 0
@@ -1278,7 +1281,8 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
     val borderColor = course.color.copy(alpha = 0.50f)
     val accentColor = course.color.copy(alpha = 0.85f)
 
-    val displayLocation = course.location
+    // 只显示楼栋 + 教室：校区前缀每门课都重复一遍，裁掉后真正的楼栋与教室才放得下。
+    val displayLocation = compactLocation(course.location)
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -1394,6 +1398,19 @@ internal fun isInWeek(weeks: String?, week: Int): Boolean {
 }
 
 /**
+ * 课表卡片上的地点只保留「楼栋 + 教室」，裁掉开头的「XX校区」。
+ *
+ * 校区名几乎每门课都重复一遍，而卡片里最宝贵的就是那一行——裁掉之后
+ * 「至善楼406」这类真正管用的信息才显示得下。校区信息在课程详情里仍然完整。
+ * 只有校区、没有楼栋时不裁剪，避免把地点变成空串。
+ */
+internal fun compactLocation(location: String): String {
+    if (location.isBlank()) return location
+    val stripped = location.replace(Regex("^[^\\s]*校区[\\s·・,，、]*"), "").trim()
+    return stripped.ifBlank { location }
+}
+
+/**
  * 日视图：把当天的课按时序纵向列出来，一屏能装下的信息比网格多（教室、教师都能完整显示）。
  *
  * 与周视图**共用同一个 scrollState**：顶栏折叠行程是由 gridScrollState 推导的
@@ -1414,8 +1431,11 @@ private fun ScheduleDayView(
     scrollState: ScrollState,
     topInset: Dp
 ) {
-    val dayCourses = remember(courses, dayOfWeek) {
-        courses.filter { it.day == dayOfWeek }.sortedBy { it.startPeriod }
+    // 必须按当前周过滤：否则单双周的课会在同一时段一起冒出来，
+    // 「共 N 节」也会把不属于本周的算进去。周视图正是用 isInWeek 决定显示哪些。
+    val dayCourses = remember(courses, dayOfWeek, currentWeek) {
+        courses.filter { it.day == dayOfWeek && isInWeek(it.weeks, currentWeek) }
+            .sortedBy { it.startPeriod }
     }
     val date = remember(firstWeekDate, currentWeek, dayOfWeek) {
         com.k2767.course.schedule.ScheduleDates.date(firstWeekDate, currentWeek, dayOfWeek)
@@ -1584,7 +1604,7 @@ private fun DayCourseRow(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (course.location.isNotBlank()) {
                                 Text(
-                                    text = course.location,
+                                    text = compactLocation(course.location),
                                     modifier = Modifier.weight(1f),
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
