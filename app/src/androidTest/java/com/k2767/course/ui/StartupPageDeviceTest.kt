@@ -68,10 +68,10 @@ class StartupPageDeviceTest {
         }
     }
 
-    @Test fun unknownStartupPreferenceFallsBackToCourses() = withPreferences {
+    @Test fun unknownStartupPreferenceFallsBackToSchedule() = withPreferences {
         InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .edit().putString("startup_page", "removed-page").commit()
-        DemoUiDriver().use { ui -> ui.waitSelected("课程") }
+        DemoUiDriver().use { ui -> ui.waitSelected("课表") }
     }
 
     private fun scrollToStartupPage(ui: DemoUiDriver) {

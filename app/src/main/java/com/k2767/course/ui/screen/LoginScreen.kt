@@ -501,16 +501,19 @@ fun LoginScreen(
                         
                         Spacer(modifier = Modifier.height(24.dp))
                         
-                        TextButton(
-                            onClick = onSchoolAdaptation,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "申请 / 查看统一登录适配",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = NeuPrimary,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        // 自用改造：学校库已覆盖绝大多数学校，隐藏适配申请入口（开关见 SelfHostConfig）
+                        if (com.k2767.course.SelfHostConfig.ENABLE_SCHOOL_ADAPTATION_UI) {
+                            TextButton(
+                                onClick = onSchoolAdaptation,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "申请 / 查看统一登录适配",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = NeuPrimary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))

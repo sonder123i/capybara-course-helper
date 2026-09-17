@@ -255,13 +255,16 @@ fun SettingsScreen(
                     subtitle = "导出本地运行日志",
                     onClick = onLogExport
                 )
-                SettingsRow(
-                    icon = Icons.Outlined.School,
-                    iconTint = Color(0xFF0A84FF),
-                    title = "统一登录适配",
-                    subtitle = "申请学校支持或查看适配进度",
-                    onClick = onSchoolAdaptation
-                )
+                // 自用改造：学校库已覆盖绝大多数学校，隐藏适配入口（开关见 SelfHostConfig）
+                if (SelfHostConfig.ENABLE_SCHOOL_ADAPTATION_UI) {
+                    SettingsRow(
+                        icon = Icons.Outlined.School,
+                        iconTint = Color(0xFF0A84FF),
+                        title = "统一登录适配",
+                        subtitle = "申请学校支持或查看适配进度",
+                        onClick = onSchoolAdaptation
+                    )
+                }
                 SettingsRow(
                     icon = Icons.Outlined.Info,
                     iconTint = Color(0xFF8E8E93),

@@ -1,7 +1,7 @@
 {
-  "versionCode": 9,
-  "versionName": "1.0.8",
-  "releaseNotes": "日视图与周视图之间新增切换动画。\n\n- 分两拍：旧视图 140ms 收起淡出，新视图 220ms 展开淡入，全程不出现空屏\n- 只动画课表内容层，顶栏保持不动\n- 尊重系统「减少动态效果」设置，开启时不做动画\n- 顺带修正：回到顶部改在换视图的瞬间执行，旧视图不会边淡出边跳",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.8/app-release.apk",
+  "versionCode": 10,
+  "versionName": "1.0.9",
+  "releaseNotes": "界面收敛与默认首屏调整。\n\n- 启动首屏默认改为课表（仅影响从未设置过的用户；设置里手动选过仍以你的选择为准）\n- 隐藏「统一登录适配」入口——学校库已覆盖绝大多数学校，适配流程代码保留\n- 更新历史改为本项目自己的记录（按天归纳）\n- 匿名统计的界面入口保持关闭",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.9/app-release.apk",
   "forceUpdate": false
 }

@@ -11,7 +11,8 @@ enum class StartupPage(val route: String, val label: String) {
     Settings("settings", "设置");
 
     companion object {
-        fun decode(value: String?): StartupPage = entries.firstOrNull { it.route == value } ?: Courses
+        /** 未设置或值不可识别时的默认首屏：课表（用户改动，上游默认是「课程」）。 */
+        fun decode(value: String?): StartupPage = entries.firstOrNull { it.route == value } ?: Schedule
     }
 }
 

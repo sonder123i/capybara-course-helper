@@ -39,6 +39,13 @@ object SelfHostConfig {
     const val ENABLE_SCHOOL_SERVICE_BACKEND = false
 
     /**
+     * 「统一登录适配」的用户界面入口：登录页底部入口 + 设置页「统一登录适配」行。
+     * 内置学校库已覆盖绝大多数学校，故隐藏这两个入口；适配流程与后端代码原样保留，
+     * 将来若要恢复，把它和上一项一起改回 true。
+     */
+    const val ENABLE_SCHOOL_ADAPTATION_UI = false
+
+    /**
      * 选择学校列表里的内置默认学校（太原科技大学 / 浙江工业大学 / 河北传媒学院）。
      * 自用：隐藏上游预置的三所学校，列表只显示自己添加的学校。
      * 隐藏而非删除——getSchoolById 等查找仍能命中它们，已保存的选择不会失效。
