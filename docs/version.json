@@ -1,7 +1,7 @@
 {
-  "versionCode": 8,
-  "versionName": "1.0.7",
-  "releaseNotes": "选择学校升级为内置学校库：1777 所高校可搜。\n\n- 支持中文 / 拼音 / 首字母搜索，右侧 A–Z 索引，常用学校可收藏\n- 学校类型自动识别；暂未适配的学校会标注出来（可以选，但导入可能失败）\n- 登录页与设置页共用同一套选择界面，手动添加学校仍然保留\n- 关闭首次启动的匿名统计提示与设置页的统计开关",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.7/app-release.apk",
+  "versionCode": 9,
+  "versionName": "1.0.8",
+  "releaseNotes": "日视图与周视图之间新增切换动画。\n\n- 分两拍：旧视图 140ms 收起淡出，新视图 220ms 展开淡入，全程不出现空屏\n- 只动画课表内容层，顶栏保持不动\n- 尊重系统「减少动态效果」设置，开启时不做动画\n- 顺带修正：回到顶部改在换视图的瞬间执行，旧视图不会边淡出边跳",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.8/app-release.apk",
   "forceUpdate": false
 }

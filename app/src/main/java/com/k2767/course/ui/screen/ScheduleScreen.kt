@@ -395,9 +395,42 @@ fun ScheduleScreen(
     // 周视图 / 日视图开关。用 rememberSaveable 跨配置变更（旋转、深浅色切换）保留；
     // 进程重启后回到周视图——它仍是信息密度最高、最常用的那一屏。
     var dayViewEnabled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    // 切换视图时回到顶部：两个视图共用同一个 scrollState，若沿用上一视图的滚动位置，
-    // 日视图的日期标题会被顶到顶栏底下（切过去只见半行字）。
-    LaunchedEffect(dayViewEnabled) { gridScrollState.scrollTo(0) }
+    // 日 / 周视图切换动画。
+    // 分两拍：旧视图收起 → 换视图并回到顶部 → 新视图展开。之所以不做交叉淡入淡出，
+    // 是因为两个视图同时在场会让顶栏玻璃的捕获层（contentBackdrop）被两个节点同帧写入，
+    // 顶栏会闪；而且周视图是 3 页 pager + 网格，同帧双份布局会掉帧。
+    // 收起/展开都不落到全透明，避免中间出现“整屏空一帧”。
+    val renderedDayView = remember { mutableStateOf(dayViewEnabled) }
+    val viewSwitch = remember { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(dayViewEnabled) {
+        if (dayViewEnabled == renderedDayView.value) return@LaunchedEffect
+        if (reducedMotion) {
+            renderedDayView.value = dayViewEnabled
+            viewSwitch.snapTo(1f)
+            gridScrollState.scrollTo(0)
+            return@LaunchedEffect
+        }
+        // 收起：140ms 加速淡出，向自己那一侧轻移
+        viewSwitch.animateTo(
+            0f,
+            androidx.compose.animation.core.tween(140, easing = com.k2767.course.ui.theme.MotionEasing.Accelerate)
+        )
+        renderedDayView.value = dayViewEnabled
+        // 换视图之后才回顶部：若在切之前回，旧视图会在淡出过程中先跳一下
+        gridScrollState.scrollTo(0)
+        // 展开：220ms 减速淡入，从对侧回位
+        viewSwitch.animateTo(
+            1f,
+            androidx.compose.animation.core.tween(220, easing = com.k2767.course.ui.theme.MotionEasing.FastOutSlowIn)
+        )
+    }
+    // 位移很小（28dp）——传达“换了一屏”，但不做整屏横移，避免与 pager 的左右切周手势混淆。
+    val viewSwitchLayer = Modifier.graphicsLayer {
+        val progress = viewSwitch.value
+        val direction = if (renderedDayView.value) 1f else -1f
+        alpha = 0.25f + 0.75f * progress
+        translationX = (1f - progress) * direction * 28.dp.toPx()
+    }
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerMetrics = rememberScheduleHeaderMetrics(maxWidth)
     // 折叠行程 = 顶栏高度差，于是收缩与滚动 1:1 对消，全程跟手。
@@ -469,7 +502,7 @@ fun ScheduleScreen(
                 }
             }
 
-            dayViewEnabled -> {
+            renderedDayView.value -> {
                 val today = ((Calendar.getInstance().get(Calendar.DAY_OF_WEEK) + 5) % 7) + 1
                 val dayWeekNumber = pagerState.currentPage + 1
                 // 与周视图同一套派生：冲突 / 正在上课的标记来源保持一致，
@@ -489,6 +522,7 @@ fun ScheduleScreen(
                         .then(
                             if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier
                         )
+                        .then(viewSwitchLayer)
                 ) {
                     ScheduleDayView(
                         courses = dayCourses,
@@ -520,7 +554,8 @@ fun ScheduleScreen(
                             } else {
                                 Modifier
                             }
-                        ),
+                        )
+                        .then(viewSwitchLayer),
                     beyondViewportPageCount = 0,
                     pageSpacing = 0.dp
                 ) { page ->
