@@ -54,5 +54,7 @@ object CourseWidgetData {
     /** 让所有已添加的小组件重新渲染。App 侧写完快照后调用。 */
     suspend fun requestUpdate(context: Context) {
         CourseWidget().updateAll(context)
+        TodayTomorrowWidget().updateAll(context)
+        WeekWidget().updateAll(context)
     }
 }

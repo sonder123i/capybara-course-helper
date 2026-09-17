@@ -3,4 +3,5 @@
     <color name="widget_surface">#FF1E242E</color>
     <color name="widget_ink">#FFF6F7FB</color>
     <color name="widget_muted">#FFA7B0BD</color>
+    <color name="widget_divider">#33F6F7FB</color>
 </resources>

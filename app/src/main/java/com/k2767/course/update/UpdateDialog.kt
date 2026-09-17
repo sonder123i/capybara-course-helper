@@ -165,25 +165,42 @@ fun UpdateDialog(
                         .padding(top = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val indeterminate = downloadProgress < 0
                     val animatedProgress by animateFloatAsState(
-                        targetValue = downloadProgress / 100f,
+                        targetValue = (downloadProgress / 100f).coerceIn(0f, 1f),
                         label = "progress"
                     )
 
-                    LinearProgressIndicator(
-                        progress = { animatedProgress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = NeuPrimary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    if (indeterminate) {
+                        // 进度未知（CDN 未给总大小）：显示滚动条，别停在 0%
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = NeuPrimary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = NeuPrimary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = if (downloadProgress >= 100) "下载完成，正在安装..." else "正在下载 $downloadProgress%",
+                        text = when {
+                            downloadProgress >= 100 -> "下载完成，正在安装..."
+                            indeterminate -> "正在下载…"
+                            else -> "正在下载 $downloadProgress%"
+                        },
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -258,7 +275,8 @@ class UpdateState(
                     updateManager.installApk(file)
                     setShowDialog(false)
                 }
-            }
+            },
+            onFailure = { message -> com.k2767.course.ui.system.GlassToaster.show(message) }
         )
     }
     

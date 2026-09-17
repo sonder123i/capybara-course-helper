@@ -144,14 +144,28 @@ object WidgetToday {
         now: Long = System.currentTimeMillis(),
         zone: TimeZone = TimeZone.getDefault(),
         max: Int = Int.MAX_VALUE
+    ): List<WidgetCourseRow> = rowsAt(snapshot, dayOffset = 0, now = now, zone = zone, max = max)
+
+    /** 相对今天偏移 [dayOffset] 天（0=今天，1=明天）的课。偏移用 Calendar 走，跨夏令时不会错位。 */
+    fun rowsAt(
+        snapshot: WidgetSnapshot,
+        dayOffset: Int,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault(),
+        max: Int = Int.MAX_VALUE
     ): List<WidgetCourseRow> {
-        val week = weekAt(snapshot.firstWeekDate, now, zone) ?: return emptyList()
-        val today = dayOfWeek(now, zone)
+        val target = Calendar.getInstance(zone).apply {
+            timeInMillis = now
+            add(Calendar.DAY_OF_YEAR, dayOffset)
+        }.timeInMillis
+        // 明天可能已经跨到下一周，所以周次要按目标日期重新算
+        val week = weekAt(snapshot.firstWeekDate, target, zone) ?: return emptyList()
+        val day = dayOfWeek(target, zone)
         val starts = snapshot.periods.associate { it.period to it.start }
         val ends = snapshot.periods.associate { it.period to it.end }
         val palette = WidgetPalette.colors.size
         return snapshot.courses
-            .filter { it.day == today && visibleInWeek(it, week) }
+            .filter { it.day == day && visibleInWeek(it, week) }
             .sortedWith(compareBy({ it.startPeriod }, { it.name }))
             .map { course ->
                 WidgetCourseRow(
@@ -169,7 +183,43 @@ object WidgetToday {
         !start.isNullOrBlank() -> start
         else -> ""
     }
+
+    /**
+     * 一周网格：返回 (星期, 节次) → 格子。
+     *
+     * 跨多节的课只在起始节次写课名，后续节次画同色的延续块——Glance 没有 rowSpan，
+     * 靠同色把一列拼成连续的竖条。同一格被多门课占用时先到先得（按节次与课名排序）。
+     */
+    fun cellsForWeek(
+        snapshot: WidgetSnapshot,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault(),
+        maxPeriods: Int
+    ): Map<Pair<Int, Int>, WidgetCell> {
+        val week = weekAt(snapshot.firstWeekDate, now, zone) ?: return emptyMap()
+        val cells = HashMap<Pair<Int, Int>, WidgetCell>()
+        val palette = WidgetPalette.colors.size
+        snapshot.courses
+            .filter { it.day in 1..7 && it.startPeriod in 1..maxPeriods && visibleInWeek(it, week) }
+            .sortedWith(compareBy({ it.day }, { it.startPeriod }, { it.name }))
+            .forEach { course ->
+                val colorIndex = (course.id.hashCode().toLong() and 0x7fffffffL).rem(palette.toLong()).toInt()
+                for (period in course.startPeriod..course.endPeriod.coerceAtMost(maxPeriods)) {
+                    val key = course.day to period
+                    if (cells.containsKey(key)) continue
+                    cells[key] = if (period == course.startPeriod) {
+                        WidgetCell(name = course.name, colorIndex = colorIndex, continued = false)
+                    } else {
+                        WidgetCell(name = "", colorIndex = colorIndex, continued = true)
+                    }
+                }
+            }
+        return cells
+    }
 }
+
+/** 周视图网格里的一格：continued 表示它是上一格那门课的延续（不重复写课名）。 */
+data class WidgetCell(val name: String, val colorIndex: Int, val continued: Boolean)
 
 /** 与 App 内课表同一套配色（ScheduleRoute 的 courseColors）。 */
 object WidgetPalette {

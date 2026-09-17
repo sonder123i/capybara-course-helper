@@ -1,7 +1,7 @@
 {
-  "versionCode": 11,
-  "versionName": "1.1.0",
-  "releaseNotes": "新增桌面小组件「今日课程」。\n\n- 桌面直接看今天的课：课名、地点、时间与配色条\n- 三种尺寸自适应，点击组件打开课表\n- 组件自己按日期与周次计算当天课程，不需要应用常驻后台\n- 首次使用需先打开应用同步一次课表\n- 更新历史同步补充这一条",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.0/app-release.apk",
+  "versionCode": 12,
+  "versionName": "1.1.1",
+  "releaseNotes": "三个桌面小组件与两个修复。\n\n- 新增「今日与明日」双栏小组件（今天 / 明天并排）\n- 新增「周课表」网格小组件（周一至周日 × 节次，单双周自动过滤，当天列高亮）\n- 修复：小组件拉大后仍只显示三行——行数改为按真实尺寸计算\n- 修复：检查更新的下载进度一直停在 0%（改滚动进度条；下载迟迟未开始会在 45 秒后明确报错并给出原因）",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.1/app-release.apk",
   "forceUpdate": false
 }

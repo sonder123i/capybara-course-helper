@@ -160,7 +160,8 @@ class UpdateManager(private val context: Context) {
     fun downloadApk(
         downloadUrl: String,
         onProgress: (Int) -> Unit,
-        onComplete: (File?) -> Unit
+        onComplete: (File?) -> Unit,
+        onFailure: (String) -> Unit = {}
     ) {
         Log.d(TAG, "开始下载: $downloadUrl")
         
@@ -185,27 +186,36 @@ class UpdateManager(private val context: Context) {
         
         // 监听下载进度
         Thread {
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            val enqueuedAt = System.currentTimeMillis()
+            // 只有真的拿到过字节数，才认为下载已经开始
+            var started = false
             var downloading = true
             while (downloading) {
                 val query = DownloadManager.Query().setFilterById(downloadId)
                 val cursor = downloadManager.query(query)
-                
+
                 if (cursor.moveToFirst()) {
                     val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
                     val bytesIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
                     val totalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                    
+                    val reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+
                     if (statusIndex >= 0 && bytesIndex >= 0 && totalIndex >= 0) {
                         val status = cursor.getInt(statusIndex)
                         val bytesDownloaded = cursor.getLong(bytesIndex)
                         val bytesTotal = cursor.getLong(totalIndex)
-                        
+
                         if (bytesTotal > 0) {
+                            started = true
                             val progress = ((bytesDownloaded * 100) / bytesTotal).toInt()
-                            onProgress(progress)
+                            mainHandler.post { onProgress(progress) }
+                        } else if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
+                            // 拿不到总大小（CDN 没给 Content-Length，或分流下载刚起步）：
+                            // 报 -1 表示「进度未知」，界面显示“下载中…”而不是卡在 0%
+                            mainHandler.post { onProgress(-1) }
                         }
-                        
-                        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
                         when (status) {
                             DownloadManager.STATUS_SUCCESSFUL -> {
                                 downloading = false
@@ -213,18 +223,43 @@ class UpdateManager(private val context: Context) {
                             }
                             DownloadManager.STATUS_FAILED -> {
                                 downloading = false
-                                mainHandler.post { onComplete(null) }
+                                val code = if (reasonIndex >= 0) cursor.getInt(reasonIndex) else 0
+                                mainHandler.post {
+                                    onFailure(describeFailure(code))
+                                    onComplete(null)
+                                }
                             }
                         }
                     }
                 }
                 cursor.close()
-                
+
+                // 45 秒还没开始下（排队中、网络不通、被系统拦下）就明确报错，别让用户对着 0% 干等
+                if (downloading && !started && System.currentTimeMillis() - enqueuedAt > 45_000) {
+                    downloading = false
+                    mainHandler.post {
+                        onFailure("下载一直没能开始，请检查网络后重试，或到官网手动下载")
+                        onComplete(null)
+                    }
+                }
+
                 if (downloading) {
                     Thread.sleep(500)
                 }
             }
         }.start()
+    }
+
+    /** 把 DownloadManager 的错误码翻译成人话，方便用户判断该怎么办。 */
+    private fun describeFailure(code: Int): String = when (code) {
+        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "存储空间不足，清理后重试"
+        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "找不到存储设备"
+        DownloadManager.ERROR_HTTP_DATA_ERROR -> "下载数据出错，请重试"
+        DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "服务器返回了异常响应（可能链接已失效）"
+        DownloadManager.ERROR_FILE_ERROR -> "写入文件失败，请重试"
+        DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "重定向次数过多，请到官网手动下载"
+        DownloadManager.ERROR_CANNOT_RESUME -> "无法续传，请重试"
+        else -> if (code in 400..599) "服务器返回 $code，可能链接已失效" else "下载失败（错误码 $code）"
     }
     
     /**
