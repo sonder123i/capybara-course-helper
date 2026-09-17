@@ -2,6 +2,6 @@
   "versionCode": 7,
   "versionName": "1.0.6",
   "releaseNotes": "周视图的上课地点不再被截断。\n\n- 地点改为最多两行显示，「至善楼406」能完整看到楼栋和教室\n- 课程名最多 3 行，把空间让给地点\n- 每节总高不增反降，一屏 8 节不受影响",
-  "downloadUrl": "https://gitee.com/capybara-course-helper/releases/download/v1.0.6/app-release.apk",
+  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.0.6/app-release.apk",
   "forceUpdate": false
 }
