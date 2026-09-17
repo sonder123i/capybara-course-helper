@@ -39,6 +39,10 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/week_widget_info" />
         </receiver>
+    <!-- 下课闹钟：到点重画组件（只由本应用的 PendingIntent 触发，不导出） -->
+        <receiver
+            android:name=".WidgetRefreshReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

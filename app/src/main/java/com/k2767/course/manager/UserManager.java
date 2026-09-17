@@ -817,6 +817,11 @@ public class UserManager {
         if (wasDemoMode) {
             currentSchool = null;
             selectedCourses = new ArrayList<>();
+            // 退出演示模式：清掉桌面小组件的演示快照，别让演示课留在桌面上
+            if (appContext != null) {
+                com.k2767.course.widget.CourseWidgetData.INSTANCE.clear(appContext);
+                com.k2767.course.widget.CourseWidgetData.INSTANCE.requestUpdateAsync(appContext);
+            }
             Log.d(TAG, "演示登录状态已清除");
             return;
         }

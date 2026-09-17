@@ -8,6 +8,7 @@
     <string name="widget_week_description">整周课表网格（周一至周日 × 节次），当前周的单双周课程自动过滤</string>
     <string name="widget_no_school">未绑定学校</string>
     <string name="widget_empty_today">今天没有课啦</string>
+    <string name="widget_empty_finished">今天的课都上完啦</string>
     <string name="widget_empty_tomorrow">明天没有课啦</string>
     <string name="widget_no_data">打开应用同步一次课表后即可显示</string>
 </resources>

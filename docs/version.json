@@ -1,7 +1,7 @@
 {
-  "versionCode": 12,
-  "versionName": "1.1.1",
-  "releaseNotes": "三个桌面小组件与两个修复。\n\n- 新增「今日与明日」双栏小组件（今天 / 明天并排）\n- 新增「周课表」网格小组件（周一至周日 × 节次，单双周自动过滤，当天列高亮）\n- 修复：小组件拉大后仍只显示三行——行数改为按真实尺寸计算\n- 修复：检查更新的下载进度一直停在 0%（改滚动进度条；下载迟迟未开始会在 45 秒后明确报错并给出原因）",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.1/app-release.apk",
+  "versionCode": 13,
+  "versionName": "1.1.2",
+  "releaseNotes": "小组件体验改进。\n\n- 教室与时间各占一行，不再被「XX校区」挤掉（校区前缀自动裁掉）\n- 上完的课自动让位给后面的课：下课那一刻组件自动刷新，全上完显示「今天的课都上完啦」\n- 演示模式下也能用小组件（演示课表按本周计算周次）\n- 退出演示模式会自动清掉桌面上的演示课",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.2/app-release.apk",
   "forceUpdate": false
 }

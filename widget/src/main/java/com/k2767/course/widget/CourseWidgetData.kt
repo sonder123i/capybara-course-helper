@@ -2,6 +2,9 @@ package com.k2767.course.widget
 
 import android.content.Context
 import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -56,5 +59,22 @@ object CourseWidgetData {
         CourseWidget().updateAll(context)
         TodayTomorrowWidget().updateAll(context)
         WeekWidget().updateAll(context)
+    }
+
+    /** 非挂起入口：给 Java 侧（UserManager 退出演示模式时）调用。 */
+    fun requestUpdateAsync(context: Context) {
+        val appContext = context.applicationContext
+        CoroutineScope(Dispatchers.Default).launch { requestUpdate(appContext) }
+    }
+
+    /**
+     * 清空快照：退出演示模式时调用，避免演示课留在桌面上。
+     * 清掉之后组件会显示「打开应用同步一次课表后即可显示」。
+     */
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_SNAPSHOT)
+            .apply()
     }
 }

@@ -91,9 +91,14 @@ internal fun WidgetColumnLabel(text: String) {
     )
 }
 
-/** 一行课：左侧配色条 + 课名 + 地点 · 时间。 */
+/**
+ * 一行课：左侧配色条 + 三行文字（课名 / 教室 / 时间）。
+ *
+ * 教室与时间各占一行而不是挤在一行——上课前第一眼要看到的是「去哪个教室」，
+ * 挤在一行时地点会把时间顶掉（也和 WakeUp 课程表的组件一致）。
+ */
 @Composable
-internal fun WidgetCourseRow(row: WidgetCourseRow, barHeight: Int = 30) {
+internal fun WidgetCourseRow(row: WidgetCourseRow, barHeight: Int = 46) {
     val colors = widgetColors()
     val bar = WidgetPalette.colors.getOrElse(row.colorIndex) { WidgetPalette.colors.first() }
     Row(
@@ -114,10 +119,16 @@ internal fun WidgetCourseRow(row: WidgetCourseRow, barHeight: Int = 30) {
                 style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium, color = colors.ink),
                 maxLines = 1
             )
-            val subtitle = listOf(row.location, row.time).filter { it.isNotBlank() }.joinToString(" · ")
-            if (subtitle.isNotBlank()) {
+            if (row.location.isNotBlank()) {
                 Text(
-                    text = subtitle,
+                    text = row.location,
+                    style = TextStyle(fontSize = 11.sp, color = colors.muted),
+                    maxLines = 1
+                )
+            }
+            if (row.time.isNotBlank()) {
+                Text(
+                    text = row.time,
                     style = TextStyle(fontSize = 11.sp, color = colors.muted),
                     maxLines = 1
                 )

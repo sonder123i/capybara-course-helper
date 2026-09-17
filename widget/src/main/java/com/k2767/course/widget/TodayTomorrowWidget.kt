@@ -55,6 +55,8 @@ class TodayTomorrowWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val snapshot = CourseWidgetData.read(context)
+        // 定一个「下课闹钟」：上完的课立刻让位给后面的课
+        WidgetRefreshScheduler.schedule(context, WidgetToday.nextRefreshAt(snapshot))
         provideContent { TodayTomorrowContent(snapshot) }
     }
 }
@@ -67,10 +69,12 @@ class TodayTomorrowWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     val context = LocalContext.current
     val colors = widgetColors()
-    // 每栏行数按真实尺寸算：顶栏 + 「今天/明天」小标题占 76dp，每行约 40dp
-    val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 76.dp, rowHeight = 40.dp, max = 8)
-    val today = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0, max = maxRows) }.orEmpty()
+    // 每栏行数按真实尺寸算：顶栏 + 「今天/明天」小标题占 76dp，每行三行文字约 58dp
+    val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 76.dp, rowHeight = 58.dp, max = 8)
+    // 今天这一栏丢掉已下课的课：位置有限，上完的让位给后面的；明天不受影响
+    val today = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0, max = maxRows, skipEnded = true) }.orEmpty()
     val tomorrow = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 1, max = maxRows) }.orEmpty()
+    val hadToday = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0).isNotEmpty() } == true
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
 
@@ -91,7 +95,9 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
             DayColumn(
                 label = "今天",
                 rows = today,
-                emptyText = context.getString(R.string.widget_empty_today),
+                emptyText = context.getString(
+                    if (hadToday) R.string.widget_empty_finished else R.string.widget_empty_today
+                ),
                 hasData = snapshot != null && snapshot.courses.isNotEmpty(),
                 modifier = GlanceModifier.defaultWeight()
             )
@@ -122,7 +128,7 @@ private fun DayColumn(
             !hasData -> WidgetHint("")
             rows.isEmpty() -> WidgetHint(emptyText)
             else -> rows.forEach { row ->
-                WidgetCourseRow(row, barHeight = 28)
+                WidgetCourseRow(row, barHeight = 42)
                 Spacer(GlanceModifier.height(6.dp))
             }
         }

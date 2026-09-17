@@ -143,16 +143,23 @@ object WidgetToday {
         snapshot: WidgetSnapshot,
         now: Long = System.currentTimeMillis(),
         zone: TimeZone = TimeZone.getDefault(),
-        max: Int = Int.MAX_VALUE
-    ): List<WidgetCourseRow> = rowsAt(snapshot, dayOffset = 0, now = now, zone = zone, max = max)
+        max: Int = Int.MAX_VALUE,
+        skipEnded: Boolean = false
+    ): List<WidgetCourseRow> = rowsAt(snapshot, dayOffset = 0, now = now, zone = zone, max = max, skipEnded = skipEnded)
 
-    /** 相对今天偏移 [dayOffset] 天（0=今天，1=明天）的课。偏移用 Calendar 走，跨夏令时不会错位。 */
+    /**
+     * 相对今天偏移 [dayOffset] 天（0=今天，1=明天）的课。偏移用 Calendar 走，跨夏令时不会错位。
+     *
+     * [skipEnded] 打开时会丢掉今天**已经下课**的课——组件位置有限，上完的课让位给后面的课，
+     * 这样下午打开桌面就能直接看到下午的课（WakeUp 的这个细节）。明天那一栏不受影响。
+     */
     fun rowsAt(
         snapshot: WidgetSnapshot,
         dayOffset: Int,
         now: Long = System.currentTimeMillis(),
         zone: TimeZone = TimeZone.getDefault(),
-        max: Int = Int.MAX_VALUE
+        max: Int = Int.MAX_VALUE,
+        skipEnded: Boolean = false
     ): List<WidgetCourseRow> {
         val target = Calendar.getInstance(zone).apply {
             timeInMillis = now
@@ -166,11 +173,15 @@ object WidgetToday {
         val palette = WidgetPalette.colors.size
         return snapshot.courses
             .filter { it.day == day && visibleInWeek(it, week) }
+            .filter { course ->
+                if (!skipEnded || dayOffset != 0) true
+                else (courseEndMillis(now, zone, ends[course.endPeriod]) ?: Long.MAX_VALUE) > now
+            }
             .sortedWith(compareBy({ it.startPeriod }, { it.name }))
             .map { course ->
                 WidgetCourseRow(
                     name = course.name,
-                    location = course.location,
+                    location = compactLocation(course.location),
                     time = timeText(starts[course.startPeriod], ends[course.endPeriod]),
                     colorIndex = (course.id.hashCode().toLong() and 0x7fffffffL).rem(palette.toLong()).toInt()
                 )
@@ -178,10 +189,67 @@ object WidgetToday {
             .take(max)
     }
 
+    /** 某节课的下课时刻（今天的日期 + 结束时间）。时间缺失时返回 null。 */
+    private fun courseEndMillis(now: Long, zone: TimeZone, end: String?): Long? {
+        val parts = end?.split(':') ?: return null
+        val hour = parts.getOrNull(0)?.toIntOrNull() ?: return null
+        val minute = parts.getOrNull(1)?.toIntOrNull() ?: return null
+        if (hour !in 0..23 || minute !in 0..59) return null
+        return Calendar.getInstance(zone).apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
+    /**
+     * 下一次「值得刷新组件」的时刻 = 今天最近的一次下课时间；今天的课都上完后 = 明天 0 点。
+     *
+     * 系统定时刷新最短 30 分钟，只靠它会让「下课 → 让位」慢半拍，所以组件每次渲染时
+     * 都用这个时刻给自己定一个闹钟（见 WidgetRefreshScheduler）。
+     */
+    fun nextRefreshAt(
+        snapshot: WidgetSnapshot?,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault()
+    ): Long {
+        val midnight = Calendar.getInstance(zone).apply {
+            timeInMillis = now
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val snap = snapshot ?: return midnight
+        val week = weekAt(snap.firstWeekDate, now, zone) ?: return midnight
+        val today = dayOfWeek(now, zone)
+        val ends = snap.periods.associate { it.period to it.end }
+        return snap.courses
+            .filter { it.day == today && visibleInWeek(it, week) }
+            .mapNotNull { course -> courseEndMillis(now, zone, ends[course.endPeriod]) }
+            .filter { it > now }
+            .minOrNull() ?: midnight
+    }
+
     fun timeText(start: String?, end: String?): String = when {
         !start.isNullOrBlank() && !end.isNullOrBlank() -> "$start - $end"
         !start.isNullOrBlank() -> start
         else -> ""
+    }
+
+    /**
+     * 裁掉「XX校区」前缀（与 App 内 ScheduleScreen.compactLocation 同规则）。
+     *
+     * 校区名几乎每门课都一样，而组件那一行最宝贵——裁掉之后「致远楼A519」才显示得下。
+     * 只有校区、没有楼栋时保持原样，避免把地点变成空串。
+     */
+    fun compactLocation(location: String): String {
+        if (location.isBlank()) return location
+        val stripped = location.replace(Regex("^[^\\s]*校区[\\s·・,，、]*"), "").trim()
+        return stripped.ifBlank { location }
     }
 
     /**

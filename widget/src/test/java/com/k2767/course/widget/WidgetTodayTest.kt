@@ -13,10 +13,10 @@ class WidgetTodayTest {
     /** 2026-08-31 是周一 → 第 1 周；2026-09-17 是周四，落在第 3 周。 */
     private val firstWeek = "2026-08-31"
 
-    private fun at(year: Int, month: Int, day: Int, hour: Int = 12): Long =
+    private fun at(year: Int, month: Int, day: Int, hour: Int = 12, minute: Int = 0): Long =
         Calendar.getInstance().apply {
             clear()
-            set(year, month - 1, day, hour, 0, 0)
+            set(year, month - 1, day, hour, minute, 0)
         }.timeInMillis
 
     private fun snapshot(
@@ -137,6 +137,59 @@ class WidgetTodayTest {
         // 再矮也至少给一行，再高也不超过上限
         assertEquals(1, rowsThatFit(30.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
         assertEquals(10, rowsThatFit(2000.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
+    }
+
+    @Test fun stripsCampusPrefixButKeepsLocationReadable() {
+        assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区 致远楼A519"))
+        assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区·致远楼A519"))
+        assertEquals("敏行楼B503-2", WidgetToday.compactLocation("九龙湖校区 敏行楼B503-2"))
+        // 只有校区没有楼栋时保持原样，别把地点裁成空串
+        assertEquals("九龙湖校区", WidgetToday.compactLocation("九龙湖校区"))
+        assertEquals("", WidgetToday.compactLocation(""))
+        // 没有校区前缀的地点原样保留
+        assertEquals("创新楼A-319", WidgetToday.compactLocation("创新楼A-319"))
+    }
+
+    @Test fun skipEndedHandsTheSlotToLaterCourses() {
+        val courses = listOf(
+            WidgetCourse("a", "上午课", "", "致远楼A519", 4, 1, 2, "1-16周"),
+            WidgetCourse("b", "下午课", "", "致远楼C510", 4, 3, 3, "1-16周")
+        )
+        val snap = snapshot(courses)
+
+        // 早上 8:10：两节都还没下课，都能看到
+        assertEquals(
+            listOf("上午课", "下午课"),
+            WidgetToday.rows(snap, now = at(2026, 9, 17, 8, 10), skipEnded = true).map { it.name }
+        )
+        // 10:30：上午课 09:45 就下课了 → 让位，只剩下午课
+        assertEquals(
+            listOf("下午课"),
+            WidgetToday.rows(snap, now = at(2026, 9, 17, 10, 30), skipEnded = true).map { it.name }
+        )
+        // 12:30：全上完了 → 空（界面会显示「今天的课都上完啦」）
+        assertTrue(WidgetToday.rows(snap, now = at(2026, 9, 17, 12, 30), skipEnded = true).isEmpty())
+        // 不带 skipEnded 时仍然是全天课表（用来区分「今天没课」和「都上完了」）
+        assertEquals(2, WidgetToday.rows(snap, now = at(2026, 9, 17, 12, 30)).size)
+        // 明天那一栏不受影响
+        val snapTomorrow = snapshot(courses, firstWeekDate = firstWeek)
+        assertTrue(WidgetToday.rowsAt(snapTomorrow, dayOffset = 1, now = at(2026, 9, 17, 12, 30), skipEnded = true).isEmpty())
+    }
+
+    @Test fun nextRefreshFallsOnTheNearestClassEndOrMidnight() {
+        val courses = listOf(
+            WidgetCourse("a", "上午课", "", "", 4, 1, 2, "1-16周"),
+            WidgetCourse("b", "下午课", "", "", 4, 3, 3, "1-16周")
+        )
+        val snap = snapshot(courses)
+        // 08:10 时，最近的下课时刻是第 2 节 09:45
+        assertEquals(at(2026, 9, 17, 9, 45), WidgetToday.nextRefreshAt(snap, now = at(2026, 9, 17, 8, 10)))
+        // 10:30 时，最近的是第 3 节 12:00
+        assertEquals(at(2026, 9, 17, 12, 0), WidgetToday.nextRefreshAt(snap, now = at(2026, 9, 17, 10, 30)))
+        // 全部上完后，下一次刷新是明天 0 点
+        assertEquals(at(2026, 9, 18, 0, 0), WidgetToday.nextRefreshAt(snap, now = at(2026, 9, 17, 13, 0)))
+        // 没数据也不会崩，退回明天 0 点
+        assertEquals(at(2026, 9, 18, 0, 0), WidgetToday.nextRefreshAt(null, now = at(2026, 9, 17, 13, 0)))
     }
 
     @Test fun parsesSnapshotJsonWithTheSharedSchema() {

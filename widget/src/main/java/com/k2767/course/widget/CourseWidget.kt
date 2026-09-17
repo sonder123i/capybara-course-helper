@@ -34,6 +34,8 @@ class CourseWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // 快照在 provideContent 之外读取：这段跑在 App 进程里，不受 RemoteViews 限制。
         val snapshot = CourseWidgetData.read(context)
+        // 定一个「下课闹钟」：下课那一刻重画，上完的课立刻让位给后面的课
+        WidgetRefreshScheduler.schedule(context, WidgetToday.nextRefreshAt(snapshot))
         provideContent { TodayContent(snapshot) }
     }
 }
@@ -46,9 +48,11 @@ class CourseWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun TodayContent(snapshot: WidgetSnapshot?) {
     val context = LocalContext.current
     val colors = widgetColors()
-    // 行数按真实尺寸算：顶栏 + 内边距占 44dp，每行（课名 + 地点/时间 + 间距）约 46dp
-    val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10)
-    val rows = snapshot?.let { WidgetToday.rows(it, max = maxRows) }.orEmpty()
+    // 行数按真实尺寸算：顶栏 + 内边距占 44dp，每行三行文字（课名/教室/时间 + 间距）约 62dp
+    val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 44.dp, rowHeight = 62.dp, max = 10)
+    val rows = snapshot?.let { WidgetToday.rows(it, max = maxRows, skipEnded = true) }.orEmpty()
+    // 今天本来有课、但都已经上完了 → 用另一句提示，避免说成「今天没有课」
+    val hadCoursesToday = snapshot?.let { WidgetToday.rows(it).isNotEmpty() } == true
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
 
@@ -64,7 +68,8 @@ private fun TodayContent(snapshot: WidgetSnapshot?) {
         Spacer(GlanceModifier.height(8.dp))
         when {
             snapshot == null || snapshot.courses.isEmpty() -> WidgetHint(context.getString(R.string.widget_no_data))
-            rows.isEmpty() -> WidgetHint(context.getString(R.string.widget_empty_today))
+            !hadCoursesToday -> WidgetHint(context.getString(R.string.widget_empty_today))
+            rows.isEmpty() -> WidgetHint(context.getString(R.string.widget_empty_finished))
             else -> rows.forEach { row ->
                 WidgetCourseRow(row)
                 Spacer(GlanceModifier.height(6.dp))
