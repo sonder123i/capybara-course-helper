@@ -206,6 +206,21 @@ fun ScheduleRoute() {
         )
     }
 
+    // 桌面小组件（今日课程）：课表数据变化时同步一份快照，并让组件立即重绘。
+    // 组件自己按日期与周次算「今天上什么」，这里只负责给原始数据。
+    LaunchedEffect(courses, periodTimes, displayedTimeBase?.firstWeekDate, routeAccountKey) {
+        if (courses.isEmpty()) return@LaunchedEffect
+        com.k2767.course.widget.WidgetSnapshotWriter.write(
+            context = context,
+            schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
+            timeBase = displayedTimeBase,
+            periods = periodTimes.map {
+                com.k2767.course.widget.WidgetPeriodTime(it.period, it.startTime, it.endTime)
+            },
+            courses = courses.map { it.record() }
+        )
+    }
+
     fun parseSchedule(json: String): List<ScheduleCourseUi>? = ScheduleJson.parse(json)?.map { entry ->
         val c = entry.course
         ScheduleCourseUi(c.name, c.teacher, c.location, c.day, c.startPeriod, c.endPeriod, c.weeks,

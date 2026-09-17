@@ -1,0 +1,37 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'com.k2767.course.widget'
+    compileSdk 37
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        compose true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    // Glance：用 Compose 风格的 API 写桌面小组件，最终编译成 RemoteViews。
+    implementation 'androidx.glance:glance-appwidget:1.2.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    // JVM 单测里 android.jar 的 org.json 是桩实现，换成真实现才能测快照解析
+    testImplementation 'org.json:json:20231013'
+}

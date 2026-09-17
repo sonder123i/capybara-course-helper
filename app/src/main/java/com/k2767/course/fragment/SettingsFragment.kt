@@ -154,6 +154,7 @@ class SettingsFragment : Fragment() {
     private fun handleAbout() {
         val message = buildString {
             append("更新日志\n\n")
+            append("• 2026-09-17: 新增桌面小组件「今日课程」(1.1.0)\n")
             append("• 2026-09-17: 日/周视图切换动画，顶栏保持不动 (1.0.8)\n")
             append("• 2026-09-17: 内置学校库（1777 所，搜索 + A–Z + 收藏）；隐藏学校适配入口，关闭匿名统计界面入口 (1.0.7)\n")
             append("• 2026-09-17: 新增日视图与日/周切换；地点完整显示、一屏八节；单双周过滤 (1.0.3 – 1.0.6)\n")

@@ -1,7 +1,7 @@
 {
-  "versionCode": 10,
-  "versionName": "1.0.9",
-  "releaseNotes": "界面收敛与默认首屏调整。\n\n- 启动首屏默认改为课表（仅影响从未设置过的用户；设置里手动选过仍以你的选择为准）\n- 隐藏「统一登录适配」入口——学校库已覆盖绝大多数学校，适配流程代码保留\n- 更新历史改为本项目自己的记录（按天归纳）\n- 匿名统计的界面入口保持关闭",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.9/app-release.apk",
+  "versionCode": 11,
+  "versionName": "1.1.0",
+  "releaseNotes": "新增桌面小组件「今日课程」。\n\n- 桌面直接看今天的课：课名、地点、时间与配色条\n- 三种尺寸自适应，点击组件打开课表\n- 组件自己按日期与周次计算当天课程，不需要应用常驻后台\n- 首次使用需先打开应用同步一次课表\n- 更新历史同步补充这一条",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.0/app-release.apk",
   "forceUpdate": false
 }

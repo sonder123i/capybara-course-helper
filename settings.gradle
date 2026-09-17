@@ -24,5 +24,6 @@ dependencyResolutionManagement {
 }
 
 include ':app'
+include ':widget'
 rootProject.name = "CapybaraCourseHelper"
 

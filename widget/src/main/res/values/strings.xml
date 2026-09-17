@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_today_label">今日课程</string>
+    <string name="widget_today_description">显示今天的课程安排，点击可打开课表</string>
+    <string name="widget_no_school">未绑定学校</string>
+    <string name="widget_empty_today">今天没有课啦</string>
+    <string name="widget_no_data">打开应用同步一次课表后即可显示</string>
+</resources>
