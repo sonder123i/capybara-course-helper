@@ -1,5 +1,6 @@
 package com.k2767.course.ui.screen
 
+import com.k2767.course.SelfHostConfig
 import com.k2767.course.ui.theme.moduleEntrance
 
 import androidx.compose.foundation.background
@@ -279,11 +280,14 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "数据与安全") {
-                InsetGroupedRow(
-                    title = "匿名使用统计",
-                    subtitle = "统计每日活跃与问卷入口点击；关闭后停止上报",
-                    trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
-                )
+                // 自用改造：统计后端未部署，这个开关是空转的，先隐藏（开关见 SelfHostConfig）。
+                if (SelfHostConfig.ENABLE_USAGE_STATS_UI) {
+                    InsetGroupedRow(
+                        title = "匿名使用统计",
+                        subtitle = "统计每日活跃与问卷入口点击；关闭后停止上报",
+                        trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
+                    )
+                }
                 SettingsRow(
                     icon = Icons.Outlined.Delete,
                     iconTint = Color(0xFFFF9F0A),

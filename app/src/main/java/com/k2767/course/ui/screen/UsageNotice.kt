@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.k2767.course.BuildConfig
+import com.k2767.course.SelfHostConfig
 import com.k2767.course.manager.UserManager
 import com.k2767.course.ui.system.InsetGroupedRow
 import com.k2767.course.ui.system.LiquidSwitch
@@ -28,7 +29,11 @@ import com.k2767.course.usage.UsageStatsManager
 @Composable
 fun UsageNotice() {
     val preferences by UsageStatsManager.preferences.collectAsState()
-    if (!preferences.noticeSeen && !BuildConfig.UI_PREVIEW && !UserManager.getInstance().isDemoMode) {
+    // 自用改造：统计后端未部署，不再弹知情提示（开关见 SelfHostConfig）。
+    // 弹窗本身与 acknowledgeNotice 链路一字未删，将来改回开关即可恢复。
+    if (SelfHostConfig.ENABLE_USAGE_STATS_UI &&
+        !preferences.noticeSeen && !BuildConfig.UI_PREVIEW && !UserManager.getInstance().isDemoMode
+    ) {
         UsageNoticeDialog(onContinue = UsageStatsManager::acknowledgeNotice)
     }
 }

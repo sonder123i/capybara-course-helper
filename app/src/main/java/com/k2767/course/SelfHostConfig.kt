@@ -28,6 +28,20 @@ object SelfHostConfig {
     /** 匿名使用统计上报。关闭后不产生任何统计请求。 */
     const val ENABLE_ANONYMOUS_USAGE_STATS = false
 
+    /**
+     * 「匿名使用统计」的用户界面入口：首次启动的知情弹窗 + 设置页开关。
+     * 统计后端未部署，故一并隐藏（界面藏起来，逻辑代码保留）。
+     * 将来部署了自己的后端时，与上一项一起改回 true。
+     */
+    const val ENABLE_USAGE_STATS_UI = false
+
     /** 学校适配申请与问卷中心后端。关闭后相关请求止步于本机。 */
     const val ENABLE_SCHOOL_SERVICE_BACKEND = false
+
+    /**
+     * 选择学校列表里的内置默认学校（太原科技大学 / 浙江工业大学 / 河北传媒学院）。
+     * 自用：隐藏上游预置的三所学校，列表只显示自己添加的学校。
+     * 隐藏而非删除——getSchoolById 等查找仍能命中它们，已保存的选择不会失效。
+     */
+    const val SHOW_BUILT_IN_SCHOOLS = false
 }
