@@ -1,7 +1,7 @@
 {
-  "versionCode": 3,
-  "versionName": "1.0.2",
-  "releaseNotes": "修复：教务未开放选课时，课程页会误报「教务返回了无法识别的列表」。\n\n现在会如实显示教务的原始提示（例如「当前不属于选课阶段」），不再把这个情况误报成适配问题。\n\n选课功能本身需等学校开放选课轮次后才可用。",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.2/app-release.apk",
+  "versionCode": 4,
+  "versionName": "1.0.3",
+  "releaseNotes": "课表一屏能看全了。\n\n- 压缩每节课的高度下限（84dp → 72dp），内容多的课仍会按内容自适应撑高\n- 上课地点改为单行显示，长地址不再把卡片撑高\n\n现在当天有 7-8 节课时也能基本一屏看完，不用再下滑。",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.0.3/app-release.apk",
   "forceUpdate": false
 }

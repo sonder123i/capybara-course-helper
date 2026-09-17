@@ -144,7 +144,14 @@ import kotlinx.coroutines.launch
 
 private val ScheduleTimeColumnWidth = 36.dp
 private val ScheduleTimeColumnShadowWidth = 8.dp
-private val SchedulePeriodHeight = 84.dp
+/**
+ * 每节课的高度下限。内容多的课（长课程名、多行地点）会被内容撑高，这里只是下限。
+ *
+ * 从 84 收到 72 是为了「一屏看全 8 节」：8 × 84 = 672dp 会顶穿可视区（顶部展开态还要
+ * 134dp，另计状态栏与底部导航栏），收窄后通常能完整落进一屏。真实高度仍由
+ * rememberCoursePeriodHeight 按内容测量后取 max，所以内容满的课不会被压扁。
+ */
+private val SchedulePeriodHeight = 72.dp
 
 /** 窄屏收窄的时间列与网格左右留白，把省下的宽度全给七个日列。 */
 private val ScheduleTimeColumnWidthTight = 28.dp
@@ -1084,8 +1091,13 @@ private fun rememberCoursePeriodHeight(courses: List<ScheduleCourseUi>, columnWi
                 val name = measurer.measure(course.name, courseNameStyle(style, duration),
                     maxLines = 4, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = contentWidth))
                 val hasStatus = course.hasCardStatus()
+                // 地点限一行。校区 + 楼栋 + 教室（如「九龙湖校区 至善楼 406」）在窄列里会折成
+                // 两三行，是把每节高度撑大的主因。渲染端 CourseCard 里的 location Text 必须
+                // 使用同样的 maxLines，否则测量与布局会脱节。
                 val locationHeight = if (course.location.isNotBlank()) measurer.measure(
-                    course.location, courseLocationStyle(style, duration), constraints = Constraints(maxWidth = contentWidth)
+                    course.location, courseLocationStyle(style, duration),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    constraints = Constraints(maxWidth = contentWidth)
                 ).size.height else 0
                 val informationHeight = locationHeight + if (hasStatus) 11.dp.roundToPx() else 0
                 // Includes card insets, content padding, inter-line gap and rounding slack.
@@ -1305,7 +1317,10 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().testTag("schedule-location-${course.id}"),
                         style = courseLocationStyle(MaterialTheme.typography.labelSmall, duration),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        softWrap = true
+                        // 与 rememberCoursePeriodHeight 的测量保持一致：单行截断。
+                        // 长地点（「九龙湖校区 至善楼 406」）再也不会把每节高度撑高。
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 // A status symbol must not reserve a column beside every line of a long address.
