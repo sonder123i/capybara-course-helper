@@ -60,6 +60,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.ViewDay
+import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
@@ -390,6 +392,9 @@ fun ScheduleScreen(
     // 所有 pager 页共用一个滚动位置：顶栏折叠进度要跟着它推导，
     // 而且左右切周时纵向位置不该跳回顶部。
     val gridScrollState = rememberScrollState()
+    // 周视图 / 日视图开关。用 rememberSaveable 跨配置变更（旋转、深浅色切换）保留；
+    // 进程重启后回到周视图——它仍是信息密度最高、最常用的那一屏。
+    var dayViewEnabled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerMetrics = rememberScheduleHeaderMetrics(maxWidth)
     // 折叠行程 = 顶栏高度差，于是收缩与滚动 1:1 对消，全程跟手。
@@ -432,6 +437,8 @@ fun ScheduleScreen(
                     onExportClick = onExportClick,
                     isNextSemester = isNextSemester,
                     onToggleSemester = onToggleSemester,
+                    dayViewEnabled = dayViewEnabled,
+                    onToggleDayView = { dayViewEnabled = !dayViewEnabled },
                     collapseFraction = headerCollapse,
                     sampleBackdrop = headerSampleBackdrop
                 )
@@ -456,6 +463,40 @@ fun ScheduleScreen(
                     com.k2767.course.ui.system.SystemEmptyState(title = "课表同步失败", message = errorMessage) {
                         com.k2767.course.ui.system.SystemSecondaryButton(text = "重新同步", onClick = onRetry)
                     }
+                }
+            }
+
+            dayViewEnabled -> {
+                val today = ((Calendar.getInstance().get(Calendar.DAY_OF_WEEK) + 5) % 7) + 1
+                val dayWeekNumber = pagerState.currentPage + 1
+                // 与周视图同一套派生：冲突 / 正在上课的标记来源保持一致，
+                // 否则同一门课在两个视图里的状态会不一样。
+                val dayCourses = remember(courses, conflictIds, liveIds, dayWeekNumber, actualWeek, isNextSemester) {
+                    courses.map {
+                        it.copy(
+                            hasConflict = it.id in conflictIds,
+                            isCurrent = !isNextSemester && dayWeekNumber == actualWeek && it.id in liveIds
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .moduleEntrance(1)
+                        .then(
+                            if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier
+                        )
+                ) {
+                    ScheduleDayView(
+                        courses = dayCourses,
+                        dayOfWeek = today,
+                        currentWeek = dayWeekNumber,
+                        periodTimes = periodTimes,
+                        firstWeekDate = firstWeekDate,
+                        onCourseClick = onCourseClick,
+                        scrollState = gridScrollState,
+                        topInset = statusBarHeight + headerMetrics.expanded
+                    )
                 }
             }
 
@@ -520,6 +561,9 @@ fun WeekHeaderCompact(
     onExportClick: () -> Unit = {},
     isNextSemester: Boolean = false,
     onToggleSemester: () -> Unit = {},
+    /** 当前是否处于日视图。只影响工具栏第一个按钮的图标与无障碍文案。 */
+    dayViewEnabled: Boolean = false,
+    onToggleDayView: () -> Unit = {},
     /** 0=未滚动（大标题直接浮在课表上）、1=已上划（收拢成一条悬浮玻璃）。 */
     collapseFraction: Float = 0f,
     /** 「壁纸 + 课表内容」的合成采样源。为空则退回无玻璃顶栏。 */
@@ -678,6 +722,14 @@ fun WeekHeaderCompact(
                         val iconSize = lerpDp(16.dp, 15.dp, collapse)
                         action(
                             index = 0,
+                            icon = if (dayViewEnabled) Icons.Default.ViewWeek else Icons.Default.ViewDay,
+                            contentDescription = if (dayViewEnabled) "切换到周视图" else "切换到日视图",
+                            onClick = onToggleDayView,
+                            buttonSize = buttonSize,
+                            iconSize = iconSize
+                        )
+                        action(
+                            index = 1,
                             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                             contentDescription = "上一周",
                             onClick = onPrevClick,
@@ -686,7 +738,7 @@ fun WeekHeaderCompact(
                             iconSize = iconSize
                         )
                         action(
-                            index = 1,
+                            index = 2,
                             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = "下一周",
                             onClick = onNextClick,
@@ -695,7 +747,7 @@ fun WeekHeaderCompact(
                             iconSize = iconSize
                         )
                         action(
-                            index = 2,
+                            index = 3,
                             icon = Icons.Default.Share,
                             contentDescription = "导出",
                             onClick = onExportClick,
@@ -703,7 +755,7 @@ fun WeekHeaderCompact(
                             iconSize = iconSize
                         )
                         action(
-                            index = 3,
+                            index = 4,
                             icon = Icons.Default.Settings,
                             contentDescription = "设置",
                             onClick = onSettingsClick,
@@ -1339,4 +1391,220 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
 
 internal fun isInWeek(weeks: String?, week: Int): Boolean {
     return com.k2767.course.schedule.ScheduleWeeks.parse(weeks).visibleIn(week)
+}
+
+/**
+ * 日视图：把当天的课按时序纵向列出来，一屏能装下的信息比网格多（教室、教师都能完整显示）。
+ *
+ * 与周视图**共用同一个 scrollState**：顶栏折叠行程是由 gridScrollState 推导的
+ * （见 ScheduleScreen 里的 collapse），共用才能保证切换视图时顶栏不会跳一下。
+ *
+ * [topInset] 同样传「状态栏 + 顶栏展开高」这个常量，而不是
+ * paddingValues.calculateTopPadding()——后者随顶栏收缩而变小，而它作用在
+ * verticalScroll 内部，会让内容被多提一份。
+ */
+@Composable
+private fun ScheduleDayView(
+    courses: List<ScheduleCourseUi>,
+    dayOfWeek: Int,
+    currentWeek: Int,
+    periodTimes: List<PeriodTimeUi>,
+    firstWeekDate: String?,
+    onCourseClick: (ScheduleCourseUi) -> Unit,
+    scrollState: ScrollState,
+    topInset: Dp
+) {
+    val dayCourses = remember(courses, dayOfWeek) {
+        courses.filter { it.day == dayOfWeek }.sortedBy { it.startPeriod }
+    }
+    val date = remember(firstWeekDate, currentWeek, dayOfWeek) {
+        com.k2767.course.schedule.ScheduleDates.date(firstWeekDate, currentWeek, dayOfWeek)
+    }
+    val dayLabel = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+        .getOrElse(dayOfWeek - 1) { "" }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(top = topInset)
+            .padding(horizontal = PagePadding)
+    ) {
+        val title = if (date != null) {
+            "${date.get(Calendar.MONTH) + 1}月${date.get(Calendar.DAY_OF_MONTH)}日 · $dayLabel"
+        } else {
+            dayLabel
+        }
+        Text(
+            text = title,
+            modifier = Modifier.testTag("schedule-day-title").padding(top = 16.dp, bottom = 2.dp),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = if (dayCourses.isEmpty()) "这天没有课" else "共 ${dayCourses.size} 节",
+            modifier = Modifier.padding(bottom = 6.dp),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (dayCourses.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "换一天看看，或切回周视图",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            dayCourses.forEach { course ->
+                DayCourseRow(
+                    course = course,
+                    periodTimes = periodTimes,
+                    onClick = { onCourseClick(course) }
+                )
+            }
+        }
+        Spacer(
+            Modifier.height(
+                com.k2767.course.ui.system.LocalAppOverlayBottomInset.current + 32.dp
+            )
+        )
+    }
+}
+
+/**
+ * 日视图里的一行课：左侧是上课时段（起止时间 + 中间一段连接竖线），右侧是课程卡片。
+ * 卡片配色与网格卡片同一套来源（course.color），切视图时同一门课颜色不变。
+ */
+@Composable
+private fun DayCourseRow(
+    course: ScheduleCourseUi,
+    periodTimes: List<PeriodTimeUi>,
+    onClick: () -> Unit
+) {
+    val startTime = periodTimes.firstOrNull { it.period == course.startPeriod }?.startTime.orEmpty()
+    val endTime = periodTimes.firstOrNull { it.period == course.endPeriod }?.endTime.orEmpty()
+    val unknownWeeks = remember(course.weeks) {
+        !com.k2767.course.schedule.ScheduleWeeks.parse(course.weeks).valid
+    }
+    val containerColor = androidx.compose.ui.graphics.lerp(
+        MaterialTheme.colorScheme.surface,
+        course.color,
+        if (course.isCustom) 0.30f else 0.22f
+    )
+    val hasStatus = course.hasConflict || course.isCurrent || course.isCustom || unknownWeeks
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Column(
+            modifier = Modifier.width(56.dp).padding(top = 10.dp),
+            horizontalAlignment = Alignment.End
+        ) {
+            Text(
+                text = startTime,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 4.dp)
+                    .width(1.dp)
+                    .height(20.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            Text(
+                text = endTime,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .testTag("schedule-day-course-${course.id}")
+                .clickable(onClick = onClick),
+            shape = RoundedCornerShape(14.dp),
+            color = containerColor,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(0.6.dp, course.color.copy(alpha = 0.50f))
+        ) {
+            Row(modifier = Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .fillMaxHeight()
+                        .background(course.color.copy(alpha = 0.85f))
+                )
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = course.name,
+                            modifier = Modifier.weight(1f),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "第${course.startPeriod}-${course.endPeriod}节",
+                            modifier = Modifier.padding(start = 8.dp),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (hasStatus) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                imageVector = when {
+                                    course.hasConflict || unknownWeeks -> Icons.Default.Warning
+                                    course.isCustom -> Icons.Default.Edit
+                                    else -> Icons.Default.PlayArrow
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp),
+                                tint = if (course.hasConflict || unknownWeeks) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    }
+                    if (course.location.isNotBlank() || course.teacher.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (course.location.isNotBlank()) {
+                                Text(
+                                    text = course.location,
+                                    modifier = Modifier.weight(1f),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                            if (course.teacher.isNotBlank()) Text(
+                                text = course.teacher,
+                                modifier = Modifier.padding(start = 8.dp),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
