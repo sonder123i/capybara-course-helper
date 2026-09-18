@@ -10,14 +10,15 @@
 <meta property="og:title" content="卡皮巴拉教务助手">
 <meta property="og:description" content="抢课三模式、桌面小组件、1777 所高校库。开源免费，不采集任何数据。">
 <meta property="og:image" content="assets/icon.png">
-<link rel="icon" href="assets/icon.png">
+<link rel="icon" href="assets/icon-96.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
 <style>
 :root{
   --bg:#06080F;
   --bg-2:#0A0E18;
   --fg:#ECEDEF;
   --muted:rgba(236,237,239,.62);
-  --faint:rgba(236,237,239,.36);
+  --faint:rgba(236,237,239,.50);
   --brand:#5FD3A8;
   --brand-deep:#3E8B6D;
   --warm:#F0C078;
@@ -30,14 +31,28 @@
   --r-sm:14px;
   --maxw:1120px;
   --shadow:0 24px 60px -28px rgba(0,0,0,.85);
+  --specular:rgba(255,255,255,.13);
+
+  /* 动效令牌 · 时长（IBM Carbon 口径） */
+  --dur-fast-01:70ms;        /* 按钮 / 开关类微交互 */
+  --dur-fast-02:110ms;       /* 淡入淡出、hover 反馈 */
+  --dur-moderate-01:150ms;   /* 小展开、短距离位移 */
+  --dur-moderate-02:240ms;   /* 展开、状态切换 */
+  --dur-slow-01:400ms;       /* 大区块展开 */
+  --dur-slow-02:700ms;       /* 首屏编排 */
+  /* 动效令牌 · 缓动 */
+  --ease-standard:cubic-bezier(.2,0,.38,.9);   /* 起止都在屏内 */
+  --ease-entrance:cubic-bezier(0,0,.38,.9);    /* 从屏外进入 */
+  --ease-exit:cubic-bezier(.2,0,1,.9);         /* 离开屏幕 */
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);  /* 按压回弹 */
 }
 html[data-theme="light"]{
   --bg:#EDF0F5;
   --bg-2:#F6F8FB;
   --fg:#0B1016;
   --muted:rgba(11,16,22,.64);
-  --faint:rgba(11,16,22,.42);
-  --brand:#2F8A68;
+  --faint:rgba(11,16,22,.60);
+  --brand:#267354;
   --brand-deep:#1F6B4F;
   --warm:#A8761F;
   --violet:#6A55E0;
@@ -46,9 +61,11 @@ html[data-theme="light"]{
   --glass:rgba(255,255,255,.55);
   --glass-2:rgba(255,255,255,.72);
   --shadow:0 24px 60px -34px rgba(15,25,45,.35);
+  --specular:rgba(255,255,255,.5);
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
+html.lenis{scroll-behavior:auto} /* Lenis 接管时交还控制权，避免两套平滑互相打架 */
 body{
   margin:0;background:var(--bg);color:var(--fg);
   font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",
@@ -81,13 +98,17 @@ html[data-theme="light"] .aurora i{opacity:.34}
   border:1px solid var(--line);
   border-radius:var(--r);
   box-shadow:var(--shadow);
+  --mx:50%; --my:0%;
 }
 .glass::after{
   content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(420px circle at var(--mx) var(--my),
+    var(--specular), transparent 46%);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,.20),
     inset 0 -1px 0 rgba(255,255,255,.04),
     inset 0 0 0 1px rgba(255,255,255,.03);
+  transition:background var(--dur-moderate-01) var(--ease-standard);
 }
 html[data-theme="light"] .glass::after{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(255,255,255,.4);
@@ -106,14 +127,16 @@ html[data-theme="light"] .glass::after{
 
 /* ---------- nav ---------- */
 .nav{position:sticky;top:0;z-index:50;padding:12px 0;
-  transition:backdrop-filter .3s ease,background .3s ease}
+  transition:backdrop-filter var(--dur-moderate-02) var(--ease-standard),
+             background var(--dur-moderate-02) var(--ease-standard)}
 .nav-inner{
   max-width:var(--maxw);margin:0 auto;padding:8px 10px 8px 16px;
   display:flex;align-items:center;gap:16px;border-radius:18px;
   background:var(--glass);border:1px solid transparent;
   -webkit-backdrop-filter:blur(16px) saturate(160%);
   backdrop-filter:blur(16px) saturate(160%);
-  transition:border-color .3s ease,box-shadow .3s ease;
+  transition:border-color var(--dur-moderate-02) var(--ease-standard),
+             box-shadow var(--dur-moderate-02) var(--ease-standard);
 }
 .nav.stuck .nav-inner{border-color:var(--line);box-shadow:var(--shadow)}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;letter-spacing:.01em;text-decoration:none;flex:0 0 auto}
@@ -121,13 +144,16 @@ html[data-theme="light"] .glass::after{
 .nav-links{display:flex;gap:2px;margin-left:auto;align-items:center}
 .nav-links a{
   text-decoration:none;color:var(--muted);font-size:14px;padding:8px 13px;border-radius:10px;
-  transition:color .18s,background .18s;
+  transition:color var(--dur-fast-02) var(--ease-standard),
+             background var(--dur-fast-02) var(--ease-standard);
 }
 .nav-links a:hover{color:var(--fg);background:var(--glass-2)}
 .icon-btn{
   width:36px;height:36px;border-radius:11px;display:grid;place-items:center;cursor:pointer;
   border:1px solid var(--line);background:var(--glass-2);color:var(--muted);
-  transition:color .18s,transform .18s,border-color .18s;
+  transition:color var(--dur-fast-02) var(--ease-standard),
+             transform var(--dur-fast-02) var(--ease-spring),
+             border-color var(--dur-fast-02) var(--ease-standard);
 }
 .icon-btn:hover{color:var(--fg);border-color:var(--line-2);transform:translateY(-1px)}
 .icon-btn svg{width:17px;height:17px}
@@ -141,7 +167,10 @@ html[data-theme="light"] .i-moon{display:block}
   display:inline-flex;align-items:center;gap:9px;justify-content:center;
   text-decoration:none;font-size:15px;font-weight:500;letter-spacing:.01em;
   padding:13px 24px;border-radius:14px;border:1px solid transparent;cursor:pointer;
-  transition:transform .18s cubic-bezier(.2,.9,.3,1.2),box-shadow .22s,background .22s,color .18s;
+  transition:transform var(--dur-fast-02) var(--ease-spring),
+             box-shadow var(--dur-moderate-01) var(--ease-standard),
+             background var(--dur-moderate-01) var(--ease-standard),
+             color var(--dur-fast-02) var(--ease-standard);
   will-change:transform;
 }
 .btn svg{width:17px;height:17px;flex:0 0 auto}
@@ -153,6 +182,7 @@ html[data-theme="light"] .i-moon{display:block}
 .btn-ghost{background:var(--glass-2);border-color:var(--line);color:var(--fg);
   -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .btn-ghost:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.btn:active{transform:translateY(0) scale(.985);transition-duration:var(--dur-fast-01)}
 .btn-sm{padding:9px 16px;font-size:14px;border-radius:12px}
 
 /* ---------- hero ---------- */
@@ -245,16 +275,44 @@ html[data-theme="light"] .frame{
 .shot figcaption{text-align:center;font-size:13px;color:var(--faint);margin-top:11px}
 .shot-note{font-size:13.5px;color:var(--faint);margin-top:8px}
 
-/* widgets */
-.widget-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:48px;align-items:center}
-.wlist{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:12px}
-.wlist li{font-size:15px;color:var(--muted);line-height:1.7;padding-left:18px;position:relative}
-.wlist li::before{content:"";position:absolute;left:0;top:.65em;width:6px;height:6px;border-radius:50%;background:var(--brand)}
-.wlist b{color:var(--fg);font-weight:500}
-.wfoot{margin:20px 0 0;font-size:14px;color:var(--faint)}
-.widget-shot{margin:0;display:flex;flex-direction:column;align-items:center;gap:14px}
-.widget-shot img{width:100%;max-width:330px;border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow)}
-.widget-shot figcaption{font-size:13px;color:var(--faint)}
+/* widgets ── 三张卡并排，截图缩到与页面字号相称的尺度 */
+.widget-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:6px}
+.widget-row .card p{font-size:14px}
+.wshot{width:100%;max-width:360px;margin:0 auto 4px;height:auto;display:block;
+  filter:drop-shadow(0 14px 26px rgba(0,0,0,.45))}
+html[data-theme="light"] .wshot{filter:drop-shadow(0 14px 26px rgba(20,35,60,.20))}
+/* 周课表卡片的迷你示意（CSS 画的，不冒充截图） */
+.wmini{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;align-items:end;height:104px;margin:2px 0 6px}
+.wmini i{display:block;border-radius:4px;background:rgba(255,255,255,.10);height:58%}
+.wmini i:nth-child(1){height:42%}
+.wmini i:nth-child(2){height:82%}
+.wmini i:nth-child(3){height:46%}
+.wmini i:nth-child(4){height:74%}
+.wmini i:nth-child(5){height:100%;background:linear-gradient(180deg,var(--brand),var(--brand-deep))}
+.wmini i:nth-child(6){height:38%}
+.wmini i:nth-child(7){height:54%}
+html[data-theme="light"] .wmini i{background:rgba(11,16,22,.08)}
+.wfoot{margin:26px 0 0;font-size:14px;color:var(--faint);max-width:62em}
+.wfoot b{color:var(--fg);font-weight:500}
+
+/* finale ── 粒子收尾。真实文字仍在 DOM 里（读屏/SEO 可读），canvas 只是视觉层 */
+.finale{padding:8px 0 72px}
+.finale-stage{position:relative;height:clamp(180px,24vw,320px)}
+.finale-text{
+  position:absolute;inset:0;margin:0;display:grid;place-items:center;
+  font-size:clamp(22px,4vw,48px);font-weight:600;letter-spacing:-.02em;
+  line-height:1.28;color:var(--fg);text-align:center;
+  transition:opacity var(--dur-slow-01) var(--ease-standard);
+}
+.finale-text span{      /* 第一行走彩色渐变，第二行保持纯色 */
+  background:linear-gradient(100deg,var(--brand) 5%,#9EE8CB 45%,var(--violet) 95%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.finale-stage.on .finale-text{opacity:0}      /* 用 opacity 而非 visibility，保留在无障碍树里 */
+.finale-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.finale-note{text-align:center;margin:20px 0 0;font-size:14px;color:var(--faint)}
+.finale-note a{color:var(--brand);text-decoration:none;border-bottom:1px solid rgba(95,211,168,.35)}
+.finale-note a:hover{border-bottom-color:var(--brand)}
 
 /* privacy compare */
 .privacy{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -309,13 +367,50 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
 .foot p{margin:0;font-size:13.5px;color:var(--faint);line-height:1.8}
 .foot h4{margin:0 0 12px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:500}
 .foot ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
-.foot a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .18s}
+.foot a{font-size:14px;color:var(--muted);text-decoration:none;transition:color var(--dur-fast-02) var(--ease-standard)}
 .foot a:hover{color:var(--brand)}
 .legal{margin-top:40px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:var(--faint)}
 
-/* reveal */
-.rv{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
-.rv.in{opacity:1;transform:none}
+/* reveal ── 基线保持可见；支持原生滚动驱动就交给 CSS，否则才由 JS 兜底（两条路径互斥） */
+.rv{opacity:1;transform:none}
+@keyframes rv-rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@supports (animation-timeline:scroll()){
+  html{--native-timeline:1}
+  .rv{
+    animation:rv-rise var(--dur-slow-02) linear both;
+    animation-timeline:view();
+    animation-range:entry 0% entry 60%;
+  }
+}
+html.js-reveal .rv{
+  opacity:0;transform:translateY(18px);
+  transition:opacity var(--dur-slow-01) var(--ease-entrance),
+             transform var(--dur-slow-01) var(--ease-entrance);
+}
+html.js-reveal .rv.in{opacity:1;transform:none}
+
+/* 顶部阅读进度条（原生滚动驱动，零 JS） */
+.progress{display:none}
+@keyframes pg-grow{to{transform:scaleX(1)}}
+@supports (animation-timeline:scroll()){
+  .progress{
+    display:block;position:fixed;top:0;left:0;right:0;height:2px;z-index:60;
+    background:linear-gradient(90deg,var(--brand),var(--violet));
+    transform-origin:0 50%;transform:scaleX(0);
+    animation:pg-grow linear both;
+    animation-timeline:scroll(root);
+  }
+}
+
+/* 首屏分级编排：每级 80ms，避免所有元素同时淡入成一坨 */
+@keyframes hero-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes hero-pop{from{opacity:0;transform:translateY(26px) scale(.97)}to{opacity:1;transform:none}}
+.stagger>*{animation:hero-rise var(--dur-slow-02) var(--ease-entrance) both}
+.stagger>*:nth-child(2){animation-delay:80ms}
+.stagger>*:nth-child(3){animation-delay:160ms}
+.stagger>*:nth-child(4){animation-delay:240ms}
+.stagger>*:nth-child(5){animation-delay:320ms}
+.hero-visual{animation:hero-pop var(--dur-slow-02) var(--ease-entrance) both;animation-delay:120ms}
 
 @media (max-width:960px){
   .hero-grid{grid-template-columns:1fr;gap:44px}
@@ -323,7 +418,6 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   .bento{grid-template-columns:repeat(2,1fr)}
   .c-2,.c-3,.c-4,.c-6{grid-column:span 1}
   .c-4{grid-column:span 2}
-  .widget-grid{grid-template-columns:1fr;gap:34px}
   .privacy{grid-template-columns:1fr}
   .steps{grid-template-columns:1fr}
   .foot{grid-template-columns:1fr;gap:26px}
@@ -338,10 +432,27 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   section{padding:8px 0 56px}
 }
 @media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  .rv{opacity:1;transform:none;transition:none}
-  .btn{transition:none}
+  html{scroll-behavior:auto !important}
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+    animation-timeline:auto !important;   /* 不加这条，滚动动画仍然会走 */
+    scroll-behavior:auto !important;
+  }
+  .rv,.stagger>*,.hero-visual{opacity:1 !important;transform:none !important}
+  .progress{display:none !important}
 }
+
+/* ---------- 内联自 assets/lenis.css（v1.3.26）----------
+   只为省掉一次渲染阻塞请求；这些样式在 JS 加上类名之前完全惰性。 */
+html.lenis,html.lenis body{height:auto}
+.lenis:not(.lenis-autoToggle).lenis-stopped{overflow:clip}
+.lenis [data-lenis-prevent],.lenis [data-lenis-prevent-wheel],
+.lenis [data-lenis-prevent-touch],.lenis [data-lenis-prevent-vertical],
+.lenis [data-lenis-prevent-horizontal]{overscroll-behavior:contain}
+.lenis.lenis-smooth iframe{pointer-events:none}
+.lenis.lenis-autoToggle{transition-property:overflow;transition-duration:1ms;transition-behavior:allow-discrete}
 </style>
 </head>
 <body>
@@ -350,9 +461,11 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
 <div class="grain" aria-hidden="true"></div>
 <h2 class="sr-only">卡皮巴拉教务助手：Android 端的教务客户端，提供选课抢课、课表、成绩查询与桌面小组件。</h2>
 
+<div class="progress" aria-hidden="true"></div>
+
 <nav class="nav" id="nav">
   <div class="nav-inner">
-    <a class="brand" href="#top"><img src="assets/icon.png" alt="">卡皮巴拉教务助手</a>
+    <a class="brand" href="#top"><img src="assets/icon-96.png" alt="" width="28" height="28">卡皮巴拉教务助手</a>
     <div class="nav-links">
       <a href="#features">功能</a>
       <a href="#widgets">小组件</a>
@@ -371,7 +484,7 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
 
 <header class="hero" id="top">
   <div class="wrap hero-grid">
-    <div>
+    <div class="stagger">
       <span class="eyebrow"><s></s>Android · 开源 · GPL-3.0</span>
       <h1>一只情绪稳定的卡皮巴拉，<em>替你盯着余量</em>。</h1>
       <p class="lede">选课抢课、课表、成绩，全在一个 App 里。抢课可以定时、可以捡漏、可以按条件自动匹配——把「抢」当成一件正经事来做。</p>
@@ -395,7 +508,7 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
       <div class="phone-glow" aria-hidden="true"></div>
       <div class="phone">
         <div class="phone-notch" aria-hidden="true"></div>
-        <div class="phone-screen"><img src="assets/shots/timetable.jpg" alt="周视图课表界面"></div>
+        <div class="phone-screen"><img src="assets/shots/timetable.webp" width="720" height="1524" alt="周视图课表界面" decoding="async" fetchpriority="high"></div>
       </div>
     </div>
   </div>
@@ -459,22 +572,33 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
 </section>
 
 <section id="widgets">
-  <div class="wrap widget-grid">
-    <div class="rv">
+  <div class="wrap">
+    <div class="sec-head rv">
       <div class="sec-tag">桌面小组件</div>
       <h2>不解锁，也知道今天上什么</h2>
-      <p style="color:var(--muted);margin:0;font-size:16px">三个 Glance 组件，<b style="color:var(--fg);font-weight:500">不依赖应用常驻后台</b>——组件自己按日期与周次算出今天的课，下课那一刻自动刷新，上完的课自动让位给后面的课。</p>
-      <ul class="wlist">
-        <li><b>今日课程</b> —— 课名、地点、时间与配色条；小屏显示下一节，大屏最多六节</li>
-        <li><b>今日与明日</b> —— 两栏并排，提前知道明天要不要带书</li>
-        <li><b>周课表</b> —— 周一至周日 × 节次网格，单双周自动过滤，当天列高亮</li>
-      </ul>
-      <p class="wfoot">教室与时间各占一行，校区前缀自动裁掉；全上完显示「今天的课都上完啦」。演示模式下也能用，退出演示会清掉桌面上的演示课。</p>
+      <p>三个 Glance 组件，<b style="color:var(--fg);font-weight:500">不依赖应用常驻后台</b>——组件自己按日期与周次算出今天的课，下课那一刻自动刷新，上完的课自动让位给后面的课。</p>
     </div>
-    <figure class="widget-shot rv">
-      <img src="assets/shots/widgets.jpg" alt="今日课程与今日明日桌面小组件实机截图">
-      <figcaption>实机主屏 · 演示数据</figcaption>
-    </figure>
+    <div class="widget-row">
+      <article class="glass fringe card rv">
+        <img class="wshot" src="assets/shots/widget-course.webp" width="900" height="552" alt="「今日课程」桌面小组件：课名、地点、时间与配色条" loading="lazy" decoding="async">
+        <h3>今日课程</h3>
+        <p>课名、地点、时间与配色条。小屏显示下一节，大屏最多六节。</p>
+        <div class="tags"><span class="tag">下课自动刷新</span><span class="tag">上完自动让位</span></div>
+      </article>
+      <article class="glass fringe card rv">
+        <img class="wshot" src="assets/shots/widget-today-tomorrow.webp" width="916" height="564" alt="「今日与明日」桌面小组件：两栏并排" loading="lazy" decoding="async">
+        <h3>今日与明日</h3>
+        <p>两栏并排，提前知道明天要不要带书。</p>
+        <div class="tags"><span class="tag">一屏两日</span><span class="tag">明天没课也会说明</span></div>
+      </article>
+      <article class="glass fringe card rv">
+        <div class="wmini" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <h3>周课表网格</h3>
+        <p>周一至周日 × 节次铺成网格，单双周自动过滤，当天那一列高亮。</p>
+        <div class="tags"><span class="tag">7 天 × 8 节</span><span class="tag">当天列高亮</span></div>
+      </article>
+    </div>
+    <p class="wfoot rv">教室与时间各占一行，校区前缀自动裁掉；全上完显示「今天的课都上完啦」。演示模式下也能用，退出演示会清掉桌面上的演示课。</p>
   </div>
 </section>
 
@@ -488,14 +612,14 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   </div>
   <div class="wrap">
     <div class="shots">
-      <figure class="shot"><div class="frame"><img src="assets/shots/timetable.jpg" alt="周视图课表"></div><figcaption>周视图课表</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/courses-optional.jpg" alt="可选课程列表"></div><figcaption>可选课程</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/courses-selected.jpg" alt="已选课程"></div><figcaption>已选课程</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/grab.jpg" alt="抢课工作台"></div><figcaption>抢课工作台</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/grades-term.jpg" alt="成绩按学期"></div><figcaption>成绩 · 按学期</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/grades-overall.jpg" alt="成绩总体与分布"></div><figcaption>成绩 · 总体与分布</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/exams.jpg" alt="考试安排"></div><figcaption>考试安排</figcaption></figure>
-      <figure class="shot"><div class="frame"><img src="assets/shots/settings.jpg" alt="设置页"></div><figcaption>设置</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/timetable.webp" width="720" height="1524" alt="周视图课表" loading="lazy" decoding="async"></div><figcaption>周视图课表</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/courses-optional.webp" width="720" height="1524" alt="可选课程列表" loading="lazy" decoding="async"></div><figcaption>可选课程</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/courses-selected.webp" width="720" height="1527" alt="已选课程" loading="lazy" decoding="async"></div><figcaption>已选课程</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/grab.webp" width="720" height="1515" alt="抢课工作台" loading="lazy" decoding="async"></div><figcaption>抢课工作台</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/grades-term.webp" width="720" height="1507" alt="成绩按学期" loading="lazy" decoding="async"></div><figcaption>成绩 · 按学期</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/grades-overall.webp" width="720" height="1529" alt="成绩总体与分布" loading="lazy" decoding="async"></div><figcaption>成绩 · 总体与分布</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/exams.webp" width="720" height="1523" alt="考试安排" loading="lazy" decoding="async"></div><figcaption>考试安排</figcaption></figure>
+      <figure class="shot"><div class="frame"><img src="assets/shots/settings.webp" width="720" height="1520" alt="设置页" loading="lazy" decoding="async"></div><figcaption>设置</figcaption></figure>
     </div>
     <p class="shot-note">实机截图 · 演示数据（正方演示大学）。图片存放于 <code style="font-family:ui-monospace,monospace;font-size:12.5px">assets/shots/</code>，换图覆盖同名文件即可。</p>
   </div>
@@ -602,13 +726,23 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   </div>
 </section>
 
+  <section class="finale" aria-labelledby="finale-h">
+    <div class="wrap">
+      <div class="finale-stage" id="finaleStage">
+        <h2 class="finale-text" id="finale-h"><span>一只情绪稳定的卡皮巴拉</span><br>替你盯着余量</h2>
+        <canvas id="finaleCanvas" aria-hidden="true"></canvas>
+      </div>
+      <p class="finale-note">卡皮巴拉教务助手 · 开源免费 · 不采集任何数据 · <a href="#install">回到安装步骤</a></p>
+    </div>
+  </section>
+
 </main>
 
 <footer>
   <div class="wrap">
     <div class="foot">
       <div>
-        <a class="brand" href="#top"><img src="assets/icon.png" alt="">卡皮巴拉教务助手</a>
+        <a class="brand" href="#top"><img src="assets/icon-96.png" alt="" width="28" height="28">卡皮巴拉教务助手</a>
         <p>Android 教务客户端，开源免费。仅供学习交流。<br>以 GPL-3.0 发布，原始版权归原作者及其贡献者所有。</p>
       </div>
       <div>
@@ -631,9 +765,12 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   </div>
 </footer>
 
+<script src="assets/lenis.min.js"></script>
 <script>
 (function () {
   var root = document.documentElement;
+  var calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var finaleRebuild = null;                 /* 由粒子模块填充，切换主题时重建颜色 */
 
   /* theme: saved → system → dark */
   try {
@@ -647,6 +784,7 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
     var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
     root.setAttribute('data-theme', next);
     try { localStorage.setItem('cch-theme', next); } catch (e) {}
+    if (finaleRebuild) finaleRebuild();     /* 纯色那行取的是 --fg，主题变了要重建 */
   });
 
   /* nav shadow on scroll */
@@ -655,18 +793,197 @@ footer{border-top:1px solid var(--line);padding:52px 0 68px;margin-top:24px}
   onScroll();
   window.addEventListener('scroll', onScroll, { passive: true });
 
-  /* reveal */
-  var items = document.querySelectorAll('.rv');
-  if ('IntersectionObserver' in window) {
+  /* Lenis 平滑滚动 ── 自托管 1.3.26，不用 CDN 以保持「零外部请求」。
+     默认不劫持滚动条、不破坏 position:sticky，也不干扰 IntersectionObserver；
+     自带 respectReducedMotion，另有 calm 闸门兜底。 */
+  if (window.Lenis && !calm) {
+    new Lenis({
+      autoRaf: true,             /* 内部自带 rAF 循环，不必自己写 */
+      anchors: { offset: -76 }   /* 锚点跳转避开 sticky 导航的高度 */
+    });
+  }
+
+  /* reveal ── 只在浏览器不支持原生滚动驱动时才启用 JS 兜底。
+     两条路径必须互斥：同时跑会在阈值处闪一下（一个写终态、一个每帧重算）。 */
+  /* 直接读 CSS 里 @supports 写入的哨兵值，保证两边判定完全一致。
+     再跑一次特性检测有风险：万一两边不一致，就会两条动画同时跑、阈值处闪一下。 */
+  var nativeTimeline = getComputedStyle(document.documentElement)
+    .getPropertyValue('--native-timeline').trim() === '1';
+  if (!nativeTimeline && 'IntersectionObserver' in window) {
+    root.classList.add('js-reveal');
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) {
         if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
       });
     }, { rootMargin: '0px 0px -8% 0px', threshold: .08 });
-    items.forEach(function (el, i) { el.style.transitionDelay = (Math.min(i, 5) * 55) + 'ms'; io.observe(el); });
-  } else {
-    items.forEach(function (el) { el.classList.add('in'); });
+    document.querySelectorAll('.rv').forEach(function (el, i) {
+      el.style.transitionDelay = (Math.min(i, 5) * 55) + 'ms';
+      io.observe(el);
+    });
   }
+
+  /* 玻璃镜面高光跟随指针 ── 真玻璃的关键特征，只有细指针设备才启用 */
+  var finePointer = window.matchMedia('(hover:hover) and (pointer:fine)').matches;
+  if (finePointer && !calm) {
+    document.querySelectorAll('.glass').forEach(function (el) {
+      el.addEventListener('pointermove', function (e) {
+        var r = el.getBoundingClientRect();
+        el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
+        el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
+      }, { passive: true });
+    });
+  }
+
+  /* 粒子收尾 ── Canvas 2D 手写，约 2KB，不引 Three.js（后者 gzip 就 150KB）。
+     原理：文字画到离屏 canvas → 读像素 → 亮点处放一个粒子 → 粒子飞过去。
+     离开视口或切到后台立刻停帧，避免后台烧电。 */
+  (function particleFinale() {
+    var stage = document.getElementById('finaleStage');
+    var cvs = document.getElementById('finaleCanvas');
+    if (!stage || !cvs || calm) return;          // 降低动效时直接不接管，保留正常文字
+    var ctx = cvs.getContext('2d');
+    if (!ctx) return;
+
+    var LINES = [
+      { t: '一只情绪稳定的卡皮巴拉', solid: false },   /* 第一行：彩色渐变 */
+      { t: '替你盯着余量',           solid: true  }    /* 第二行：纯色 */
+    ];
+    var NB = 8, MAX = 6000, MINFS = 36;   /* 字号低于 MINFS 就不做粒子化 */
+    var SPRING = 0.055, DAMP = 0.86, RR = 110, RF = 5.2;
+    var W = 0, H = 0, parts = [], buckets = [], colors = [];
+    var running = false, raf = 0, inView = false;
+    var mouse = { x: -1e4, y: -1e4, on: false };
+
+    function hx(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+    var STOPS = [hx('#5FD3A8'), hx('#6FD8D0'), hx('#8E7BFF'), hx('#B07BE8'), hx('#F0C078')];
+    function ramp(t) {
+      var x = Math.max(0, Math.min(1, t)) * (STOPS.length - 1);
+      var i = Math.min(STOPS.length - 2, Math.floor(x)), f = x - i, a = STOPS[i], b = STOPS[i + 1];
+      return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * f) + ',' +
+                      Math.round(a[1] + (b[1] - a[1]) * f) + ',' +
+                      Math.round(a[2] + (b[2] - a[2]) * f) + ')';
+    }
+    for (var n0 = 0; n0 < NB; n0++) colors.push(ramp(n0 / (NB - 1)));
+
+    var FF = '600 %dpx Inter,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+
+    function sample(w, h) {
+      var oc = document.createElement('canvas'), o = oc.getContext('2d');
+      o.font = FF.replace('%d', '100');
+      var w100 = 0, i;
+      for (i = 0; i < LINES.length; i++) w100 = Math.max(w100, o.measureText(LINES[i].t).width);
+      var fs = Math.round(Math.min(100 * (w * 0.92) / (w100 + 40),
+                                   (h * 0.72) / (LINES.length * 1.2), 130));
+      if (fs < MINFS) return null;                 // 字太小，粒子化只会糊成一团
+      var lh = fs * 1.2,
+          tw = Math.ceil(w100 * fs / 100) + 40,
+          th = Math.ceil(lh * LINES.length) + 20;
+      oc.width = tw; oc.height = th;
+      o.font = FF.replace('%d', fs);               // 尺寸变了必须重设
+      o.textAlign = 'center'; o.textBaseline = 'middle';
+      o.fillStyle = '#fff';
+      for (i = 0; i < LINES.length; i++) o.fillText(LINES[i].t, tw / 2, 10 + lh * (i + 0.5));
+      var d = o.getImageData(0, 0, tw, th).data;
+      var step = Math.max(2, Math.round(fs / 45)); // 采样粒度跟着字号走，别让粒子爆量
+      var pts = [];
+      for (var y = 0; y < th; y += step) {
+        var li = Math.max(0, Math.min(LINES.length - 1, Math.floor((y - 10) / lh)));
+        var sd = LINES[li].solid ? 1 : 0;
+        for (var x = 0; x < tw; x += step) {
+          if (d[(y * tw + x) * 4 + 3] > 128) pts.push(x - tw / 2, y - th / 2, tw, sd);
+        }
+      }
+      return pts;                                  // 每 4 个一组：[dx, dy, 文字宽, 是否纯色]
+    }
+
+    function build() {
+      var pts = sample(W, H);
+      if (!pts) return 0;
+      var total = pts.length / 4, n = Math.min(MAX, total);
+      parts.length = 0; buckets.length = 0;
+      for (var k = 0; k <= NB; k++) buckets.push([]);            // 最后一桶给纯色行
+      colors[NB] = (getComputedStyle(root).getPropertyValue('--fg') || '#ECEDEF').trim();
+      var pool = new Uint32Array(total);
+      for (var i = 0; i < total; i++) pool[i] = i;
+      for (var j = total - 1; j > 0; j--) { var r = (Math.random() * (j + 1)) | 0, t = pool[j]; pool[j] = pool[r]; pool[r] = t; }
+      for (var q = 0; q < n; q++) {
+        var s = pool[q] * 4, tx = W / 2 + pts[s], ty = H / 2 + pts[s + 1];
+        var bk = pts[s + 3] ? NB
+               : Math.max(0, Math.min(NB - 1, Math.round((pts[s] / pts[s + 2] + 0.5) * (NB - 1))));
+        var ang = Math.random() * 6.283, rad = Math.max(W, H) * (0.55 + Math.random() * 0.7);
+        parts.push({ x: W / 2 + Math.cos(ang) * rad, y: H / 2 + Math.sin(ang) * rad,
+                     vx: 0, vy: 0, tx: tx, ty: ty, sz: 1.2 + Math.random(), ph: Math.random() * 6.283 });
+        buckets[bk].push(parts.length - 1);
+      }
+      return n;
+    }
+
+    function resize() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);   // 不封顶的话高分屏帧率腰斩
+      W = stage.clientWidth; H = stage.clientHeight;
+      if (!W || !H) { stage.classList.remove('on'); return false; }
+      cvs.width = Math.round(W * dpr); cvs.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var ok = build() > 0;
+      stage.classList.toggle('on', ok);   // 建不出粒子就退回真实文字（窗口缩小到字号太小时）
+      stop(); sync();
+      return ok;
+    }
+
+    function frame(t) {
+      if (!running) return;
+      for (var i = 0, L = parts.length; i < L; i++) {
+        var p = parts[i];
+        p.vx += (p.tx - p.x) * SPRING;
+        p.vy += (p.ty + Math.sin(t * 0.0009 + p.ph) * 1.1 - p.y) * SPRING;
+        if (mouse.on) {
+          var dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+          if (d2 < RR * RR && d2 > 0.5) {                 // 平方距离先筛，命中才开方
+            var f = (1 - d2 / (RR * RR)) * RF, dd = Math.sqrt(d2);
+            p.vx += dx / dd * f; p.vy += dy / dd * f;
+          }
+        }
+        p.vx *= DAMP; p.vy *= DAMP; p.x += p.vx; p.y += p.vy;
+      }
+      ctx.clearRect(0, 0, W, H);
+      for (var c = 0; c < colors.length; c++) {           // 按颜色分桶，每桶只设一次 fillStyle
+        var idx = buckets[c];
+        if (!idx.length) continue;
+        ctx.fillStyle = colors[c];
+        for (var m2 = 0, M = idx.length; m2 < M; m2++) {
+          var pp = parts[idx[m2]];
+          ctx.fillRect(pp.x, pp.y, pp.sz, pp.sz);
+        }
+      }
+      raf = requestAnimationFrame(frame);
+    }
+
+    function sync() { (inView && !document.hidden) ? start() : stop(); }
+    function start() { if (running) return; running = true; raf = requestAnimationFrame(frame); }
+    function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
+
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (es) {
+        inView = es[0].isIntersecting;
+        sync();
+      }, { threshold: 0.12 }).observe(stage);
+    } else { inView = true; }
+    document.addEventListener('visibilitychange', sync);
+
+    if (matchMedia('(hover:hover) and (pointer:fine)').matches) {
+      cvs.addEventListener('pointermove', function (e) {
+        var r = cvs.getBoundingClientRect();
+        mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; mouse.on = true;
+      }, { passive: true });
+      cvs.addEventListener('pointerleave', function () { mouse.on = false; });
+    }
+
+    var rt;
+    window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(resize, 180); });
+
+    finaleRebuild = function () { resize(); };   // 主题切换时重建（纯色行取的是 --fg）
+    resize();
+  })();
 
   /* live version from version.json — 发新版不用改页面 */
   fetch('version.json', { cache: 'no-store' })
