@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.outlined.AccessTime
+import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -103,6 +104,7 @@ fun ScheduleSettingsScreen(
     var semesterStartDate by remember { mutableStateOf(semesterStartOverride ?: manager.semesterStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showPeriodCountPicker by remember { mutableStateOf(false) }
+    var showWeekNumberPicker by remember { mutableStateOf(false) }
     var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
 
     val dateFormat = remember { SimpleDateFormat("yyyy年M月d日", Locale.CHINA) }
@@ -228,6 +230,27 @@ fun ScheduleSettingsScreen(
                                     }
                                 }
                             )
+                            // 多数人不记得开学那天，但知道「这周是第几周」。
+                            // 从本周往前推就行，省掉一次翻日历。
+                            InsetGroupedRow(
+                                icon = Icons.Outlined.Today,
+                                iconTint = Color(0xFF30D158),
+                                title = "现在是第几周",
+                                subtitle = "不知道开学那天？填本周是第几周即可反推",
+                                trailing = {
+                                    Text(
+                                        text = if (semesterStartDate > 0) "重新计算" else "去填写",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (semesterStartDate > 0) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            NeuPrimary
+                                        }
+                                    )
+                                },
+                                onClick = { showWeekNumberPicker = true }
+                            )
                             InsetGroupedRow(
                                 icon = Icons.Outlined.AccessTime,
                                 iconTint = Color(0xFFFF9F0A),
@@ -306,6 +329,33 @@ fun ScheduleSettingsScreen(
                         showDatePicker = false
                     },
                     onDismiss = { showDatePicker = false }
+                )
+            }
+
+            if (showWeekNumberPicker) {
+                val scheduleDates = com.k2767.course.schedule.ScheduleDates
+                GlassOptionWheelDialog(
+                    title = "现在是第几周",
+                    options = (1..com.k2767.course.schedule.ScheduleMaxWeeks).map { "第 $it 周" },
+                    // 已有锚点时预选真正的当前周；没有则从「第 1 周」起步
+                    selectedIndex = ((if (semesterStartDate > 0) {
+                        scheduleDates.weekAt(
+                            com.k2767.course.schedule.ScheduleTimeBase.dateFromMillis(semesterStartDate),
+                            System.currentTimeMillis()
+                        )
+                    } else {
+                        null
+                    } ?: 1) - 1).coerceIn(0, com.k2767.course.schedule.ScheduleMaxWeeks - 1),
+                    onConfirm = { index ->
+                        // 本周一往前推 index 周 = 第一周的周一。写回的是与日期选择器同一个入口。
+                        val monday = scheduleDates.mondayOfWeek(System.currentTimeMillis())
+                        monday.add(java.util.Calendar.DAY_OF_YEAR, -index * 7)
+                        val start = monday.timeInMillis
+                        if (onSemesterStartChange != null) onSemesterStartChange(start) else manager.semesterStartDate = start
+                        semesterStartDate = start
+                        showWeekNumberPicker = false
+                    },
+                    onDismiss = { showWeekNumberPicker = false }
                 )
             }
 

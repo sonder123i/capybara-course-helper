@@ -138,6 +138,16 @@ object WidgetToday {
         }.takeIf { it.get(Calendar.DAY_OF_WEEK) == Calendar.MONDAY }
     }.getOrNull()
 
+    /**
+     * 这份快照能不能算出周次。没填开学日期时 [weekAt] 返回 null，所有课都会被过滤掉——
+     * 组件必须把这和「今天真的没课」区分开，否则会对着一张有课的课表说「今天没有课啦」。
+     */
+    fun hasWeekAnchor(
+        snapshot: WidgetSnapshot,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault()
+    ): Boolean = weekAt(snapshot.firstWeekDate, now, zone) != null
+
     /** 当天要展示的课：按起始节次排序，`max` 用于按小组件尺寸截断。 */
     fun rows(
         snapshot: WidgetSnapshot,

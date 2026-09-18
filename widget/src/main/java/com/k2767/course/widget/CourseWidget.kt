@@ -53,6 +53,7 @@ private fun TodayContent(snapshot: WidgetSnapshot?) {
     val rows = snapshot?.let { WidgetToday.rows(it, max = maxRows, skipEnded = true) }.orEmpty()
     // 今天本来有课、但都已经上完了 → 用另一句提示，避免说成「今天没有课」
     val hadCoursesToday = snapshot?.let { WidgetToday.rows(it).isNotEmpty() } == true
+    val hasAnchor = snapshot?.let { WidgetToday.hasWeekAnchor(it) } == true
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
 
@@ -68,6 +69,8 @@ private fun TodayContent(snapshot: WidgetSnapshot?) {
         Spacer(GlanceModifier.height(8.dp))
         when {
             snapshot == null || snapshot.courses.isEmpty() -> WidgetHint(context.getString(R.string.widget_no_data))
+            // 没填开学日期时一节都算不出来，这时说「今天没有课」是在撒谎
+            !hasAnchor -> WidgetHint(context.getString(R.string.widget_no_semester_start))
             !hadCoursesToday -> WidgetHint(context.getString(R.string.widget_empty_today))
             rows.isEmpty() -> WidgetHint(context.getString(R.string.widget_empty_finished))
             else -> rows.forEach { row ->

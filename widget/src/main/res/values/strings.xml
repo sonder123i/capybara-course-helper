@@ -11,4 +11,5 @@
     <string name="widget_empty_finished">今天的课都上完啦</string>
     <string name="widget_empty_tomorrow">明天没有课啦</string>
     <string name="widget_no_data">打开应用同步一次课表后即可显示</string>
+    <string name="widget_no_semester_start">还没设开学日期，算不出这周是第几周</string>
 </resources>

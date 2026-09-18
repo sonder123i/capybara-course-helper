@@ -83,6 +83,9 @@ private fun WeekContent(snapshot: WidgetSnapshot?) {
         when {
             snapshot == null || snapshot.courses.isEmpty() ->
                 WidgetHint(context.getString(R.string.widget_no_data))
+            // 网格没有周次就一格都填不上，得说清是缺开学日期而不是「这周没课」
+            !WidgetToday.hasWeekAnchor(snapshot) ->
+                WidgetHint(context.getString(R.string.widget_no_semester_start))
             else -> {
                 Row(modifier = GlanceModifier.fillMaxWidth()) {
                     Spacer(GlanceModifier.width(14.dp))

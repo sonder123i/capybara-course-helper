@@ -22,6 +22,7 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
         private const val KEY_PERIOD_TIMES = "period_times"
         private const val KEY_CUSTOM_COURSES = "custom_courses"
         private const val KEY_PERIOD_COUNT = "period_count"
+        private const val KEY_SEMESTER_NOTICE_SHOWN = "semester_notice_shown"
         
         @Volatile
         private var instance: ScheduleSettingsManager? = null
@@ -97,6 +98,18 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
             if (semesterStartDate == value) return
             prefs?.edit()?.putLong(scopedKey(KEY_SEMESTER_START), value)?.remove(KEY_SEMESTER_START)?.apply()
             revision++
+        }
+    
+    /**
+     * 「还没设开学日期」的弹窗是否弹过。只影响弹窗——内联提示会一直挂到填好为止，
+     * 所以手滑关掉弹窗的人仍然找得到入口。按账号隔离，换学校会再问一次。
+     */
+    var semesterNoticeShown: Boolean
+        get() = getScopedInt(KEY_SEMESTER_NOTICE_SHOWN, 0) != 0
+        set(value) {
+            prefs?.edit()
+                ?.putInt(scopedKey(KEY_SEMESTER_NOTICE_SHOWN), if (value) 1 else 0)
+                ?.remove(KEY_SEMESTER_NOTICE_SHOWN)?.apply()
         }
     
     /**

@@ -2,6 +2,7 @@ package com.k2767.course.widget
 
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -205,5 +206,19 @@ class WidgetTodayTest {
         assertEquals("模拟电子技术", parsed.courses.single().name)
         assertEquals(4, parsed.courses.single().day)
         assertNull(WidgetSnapshot.parse("not json"))
+    }
+
+    /**
+     * 「没填开学日期」和「今天真的没课」必须能分开：前者 rows 也是空的，
+     * 组件若只看 rows 就会对着一张有课的课表说「今天没有课啦」。
+     */
+    @Test fun 缺锚点时与真的没课区分开() {
+        val courses = listOf(WidgetCourse("c1", "高等数学", "张", "至善楼406", 4, 1, 2, "1-16周"))
+        val now = at(2026, 9, 17)
+        assertTrue(WidgetToday.hasWeekAnchor(snapshot(courses), now))
+        assertFalse(WidgetToday.hasWeekAnchor(snapshot(courses, firstWeekDate = ""), now))
+        // 非周一的锚点算不出周次（与 App 侧同规则），同样得报成缺锚点
+        assertFalse(WidgetToday.hasWeekAnchor(snapshot(courses, firstWeekDate = "2026-09-01"), now))
+        assertTrue(WidgetToday.rows(snapshot(courses, firstWeekDate = ""), now).isEmpty())
     }
 }

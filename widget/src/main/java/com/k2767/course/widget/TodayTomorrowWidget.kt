@@ -75,6 +75,7 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     val today = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0, max = maxRows, skipEnded = true) }.orEmpty()
     val tomorrow = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 1, max = maxRows) }.orEmpty()
     val hadToday = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0).isNotEmpty() } == true
+    val hasAnchor = snapshot?.let { WidgetToday.hasWeekAnchor(it) } == true
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
 
@@ -96,7 +97,12 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
                 label = "今天",
                 rows = today,
                 emptyText = context.getString(
-                    if (hadToday) R.string.widget_empty_finished else R.string.widget_empty_today
+                    when {
+                        // 算不出周次时两栏都是空的，但原因不是「没课」，别报成没课
+                        !hasAnchor -> R.string.widget_no_semester_start
+                        hadToday -> R.string.widget_empty_finished
+                        else -> R.string.widget_empty_today
+                    }
                 ),
                 hasData = snapshot != null && snapshot.courses.isNotEmpty(),
                 modifier = GlanceModifier.defaultWeight()
@@ -105,7 +111,9 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
             DayColumn(
                 label = "明天",
                 rows = tomorrow,
-                emptyText = context.getString(R.string.widget_empty_tomorrow),
+                emptyText = context.getString(
+                    if (hasAnchor) R.string.widget_empty_tomorrow else R.string.widget_no_semester_start
+                ),
                 hasData = snapshot != null && snapshot.courses.isNotEmpty(),
                 modifier = GlanceModifier.defaultWeight()
             )

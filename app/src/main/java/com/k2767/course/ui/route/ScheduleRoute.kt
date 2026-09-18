@@ -53,6 +53,8 @@ import com.k2767.course.ui.screen.ScheduleScreen
 import com.k2767.course.ui.screen.ScheduleSettingsScreen
 import com.k2767.course.ui.system.DisablePlatformDialogDim
 import com.k2767.course.ui.system.SystemDialog
+import com.k2767.course.ui.system.LocalSemesterAnchorNotice
+import com.k2767.course.ui.system.SystemSecondaryButton
 import com.k2767.course.ui.system.SystemPrimaryButton
 import com.k2767.course.ui.theme.MotionDuration
 import com.k2767.course.ui.theme.MotionEasing
@@ -227,6 +229,72 @@ fun ScheduleRoute() {
             },
             courses = courses.map { it.record() }
         )
+    }
+
+    // 「还没设开学日期」的两层提示。弹窗每个账号只弹一次（手滑关掉也不该反复拦人），
+    // 内联条则一直挂到填好为止——它是可右滑划掉的，划掉只压这一把键，换学期还会再来。
+    val semesterNotice = LocalSemesterAnchorNotice.current
+    val semesterKey = "$routeAccountKey|$resolvedTermId"
+    val semesterMissing = !isDemoMode && !isLoading && courses.isNotEmpty() &&
+        displayedTimeBase?.firstWeekDate.isNullOrBlank()
+    fun openScheduleSettings() {
+        settingsTermOverride = null
+        showSettingsDialog = true
+    }
+    LaunchedEffect(semesterKey, semesterMissing) {
+        semesterNotice.report(semesterKey, semesterMissing) { openScheduleSettings() }
+    }
+    DisposableEffect(semesterKey) {
+        // 离开课表页就把提示收掉：通知宿主挂在根节点，不主动清会一路跟着用户跑
+        onDispose { semesterNotice.report(semesterKey, missing = false) {} }
+    }
+    var showSemesterHint by remember(routeAccountKey) { mutableStateOf(false) }
+    LaunchedEffect(semesterMissing, routeAccountKey) {
+        if (semesterMissing && !settingsManager.semesterNoticeShown) showSemesterHint = true
+    }
+    if (showSemesterHint) {
+        SystemDialog(
+            onDismissRequest = {
+                showSemesterHint = false
+                settingsManager.semesterNoticeShown = true
+            },
+            title = {
+                Text(
+                    text = "设一下开学日期",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            dismissButton = {
+                SystemSecondaryButton(
+                    text = "先不用",
+                    onClick = {
+                        showSemesterHint = false
+                        settingsManager.semesterNoticeShown = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                SystemPrimaryButton(
+                    text = "去设置",
+                    onClick = {
+                        showSemesterHint = false
+                        settingsManager.semesterNoticeShown = true
+                        openScheduleSettings()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        ) {
+            Text(
+                text = "不填第一周从哪天开始，课表只会显示第 1 周：双周的课会被当成不属于本周而藏起来，" +
+                    "「今天」的标记和桌面小组件也都算不出来。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 
     fun parseSchedule(json: String): List<ScheduleCourseUi>? = ScheduleJson.parse(json)?.map { entry ->
