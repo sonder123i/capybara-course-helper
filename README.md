@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="pic/v1.0.68/01-courses.jpg" width="170"/>
-  <img src="pic/v1.0.68/03-timetable.jpg" width="170"/>
-  <img src="pic/v1.0.68/05-grades.jpg" width="170"/>
-  <img src="pic/v1.0.68/06-wallpaper-image.jpg" width="170"/>
+  <img src="pic/v1.1.2/01-timetable.jpg" width="170"/>
+  <img src="pic/v1.1.2/02-courses-optional.jpg" width="170"/>
+  <img src="pic/v1.1.2/04-grab-queue.jpg" width="170"/>
+  <img src="pic/v1.1.2/05-grades-term.jpg" width="170"/>
 </p>
 
 <h1 align="center">卡皮巴拉教务助手</h1>
@@ -110,20 +110,20 @@
 
 <table>
   <tr>
-    <td align="center"><img src="pic/v1.0.68/01-courses.jpg" width="170"/><br/><sub>课程列表</sub></td>
-    <td align="center"><img src="pic/v1.0.68/02-navbar-morph.jpg" width="170"/><br/><sub>底栏切换途中</sub></td>
-    <td align="center"><img src="pic/v1.0.68/03-timetable.jpg" width="170"/><br/><sub>周视图课表</sub></td>
-    <td align="center"><img src="pic/v1.0.68/04-grab-scheduled.jpg" width="170"/><br/><sub>抢课工作台</sub></td>
+    <td align="center"><img src="pic/v1.1.2/01-timetable.jpg" width="170"/><br/><sub>周视图课表</sub></td>
+    <td align="center"><img src="pic/v1.1.2/02-courses-optional.jpg" width="170"/><br/><sub>课程 · 可选</sub></td>
+    <td align="center"><img src="pic/v1.1.2/03-courses-selected.jpg" width="170"/><br/><sub>课程 · 已选</sub></td>
+    <td align="center"><img src="pic/v1.1.2/04-grab-queue.jpg" width="170"/><br/><sub>抢课工作台</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="pic/v1.0.68/05-grades.jpg" width="170"/><br/><sub>成绩与考试</sub></td>
-    <td align="center"><img src="pic/v1.0.68/06-wallpaper-image.jpg" width="170"/><br/><sub>图片背景</sub></td>
-    <td align="center"><img src="pic/v1.0.68/07-wallpaper-color.jpg" width="170"/><br/><sub>纯色取色</sub></td>
-    <td align="center"><img src="pic/v1.0.68/08-wallpaper-preset.jpg" width="170"/><br/><sub>预设背景</sub></td>
+    <td align="center"><img src="pic/v1.1.2/05-grades-term.jpg" width="170"/><br/><sub>成绩 · 按学期</sub></td>
+    <td align="center"><img src="pic/v1.1.2/06-grades-overall.jpg" width="170"/><br/><sub>成绩 · 总体与分布</sub></td>
+    <td align="center"><img src="pic/v1.1.2/07-exams.jpg" width="170"/><br/><sub>考试安排</sub></td>
+    <td align="center"><img src="pic/v1.1.2/08-settings.jpg" width="170"/><br/><sub>设置</sub></td>
   </tr>
 </table>
 
-第二张是切 Tab 切到一半截的，图标在路上会被拉长然后并到一块，动起来比截图好看。
+实机截图，跑的是内置演示数据（正方演示大学），浅色主题。换背景那一节的图仍是旧版实拍，因为那里要展示的正是壁纸本身。
 
 ---
 
