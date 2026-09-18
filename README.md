@@ -61,7 +61,7 @@
 杂项：
 
 - 应用内更新，启动检测新版，下载完直接装
-- 公告带时间线，反馈直接发作者邮箱
+- 公告与用户反馈已随上游服务一并关闭（见文末「与原项目的关系」），反馈内容不出本机
 - 可添加不同学校，所有版本跨学校合计最多使用 3 个学生账号
 
 ---
@@ -131,13 +131,13 @@
 
 ### 直接下载（推荐）
 
-去 [Releases 页面](https://github.com/znjhahaha/zhengfang-apk/releases/latest) 下载最新 APK，装上就能用。Android 7.0+，建议 12 以上，玻璃效果最全。
+去 [Releases 页面](https://github.com/sonder123i/capybara-course-helper/releases/latest) 下载最新 APK，也可以从[官网](https://sonder123i.github.io/capybara-course-helper/)下。装上就能用。Android 7.0+，建议 12 以上，玻璃效果最全。
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/znjhahaha/zhengfang-apk.git
-cd zhengfang-apk
+git clone https://github.com/sonder123i/capybara-course-helper.git
+cd capybara-course-helper
 ./gradlew assembleDebug
 ```
 
