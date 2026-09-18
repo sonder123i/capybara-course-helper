@@ -1,7 +1,7 @@
 {
-  "versionCode": 13,
-  "versionName": "1.1.2",
-  "releaseNotes": "小组件体验改进。\n\n- 教室与时间各占一行，不再被「XX校区」挤掉（校区前缀自动裁掉）\n- 上完的课自动让位给后面的课：下课那一刻组件自动刷新，全上完显示「今天的课都上完啦」\n- 演示模式下也能用小组件（演示课表按本周计算周次）\n- 退出演示模式会自动清掉桌面上的演示课",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.2/app-release.apk",
+  "versionCode": 14,
+  "versionName": "1.1.3",
+  "releaseNotes": "小组件排布与更新下载修复。\n\n- 周课表组件拉高后底部不再留一大片空白：显示几节由组件真实高度决定，行高再按行数反推，任何尺寸都正好排满\n- 周课表默认宽度加到 5 格，周一到周日不再挤在一起；最小高度略降，可以放得更矮\n- 演示模式下没填真实开学日期时，组件按本周兜底，不再一节课都不显示\n- 应用内更新：GitHub 分流下载不给总大小时不再被误判成失败；迟迟没开始时最长等 2 分钟，超时后顺手清掉通知栏里不动的下载条目",
+  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.3/app-release.apk",
   "forceUpdate": false
 }

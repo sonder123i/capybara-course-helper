@@ -206,13 +206,16 @@ class UpdateManager(private val context: Context) {
                         val bytesDownloaded = cursor.getLong(bytesIndex)
                         val bytesTotal = cursor.getLong(totalIndex)
 
+                        // 「已经开始」的标志是收到了字节，而不是拿到了总大小——
+                        // GitHub 分流下载常常不给 Content-Length，用它判断会误判成失败。
+                        if (bytesDownloaded > 0) started = true
+
                         if (bytesTotal > 0) {
-                            started = true
                             val progress = ((bytesDownloaded * 100) / bytesTotal).toInt()
                             mainHandler.post { onProgress(progress) }
                         } else if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
-                            // 拿不到总大小（CDN 没给 Content-Length，或分流下载刚起步）：
-                            // 报 -1 表示「进度未知」，界面显示“下载中…”而不是卡在 0%
+                            // 拿不到总大小（CDN 没给 Content-Length）：报 -1 表示「进度未知」，
+                            // 界面显示滚动条 + “正在下载…”，而不是卡在 0%
                             mainHandler.post { onProgress(-1) }
                         }
 
@@ -234,11 +237,16 @@ class UpdateManager(private val context: Context) {
                 }
                 cursor.close()
 
-                // 45 秒还没开始下（排队中、网络不通、被系统拦下）就明确报错，别让用户对着 0% 干等
-                if (downloading && !started && System.currentTimeMillis() - enqueuedAt > 45_000) {
+                // 只在「一直排队、一个字节都没收到」时才算失败，并给足 2 分钟：
+                // 裸连 GitHub 时连接建立本身就可能很慢，网络慢不等于下载坏掉。
+                // 状态是 RUNNING 时一律继续等——系统下载器自己会报成功或失败。
+                val stalled = !started && System.currentTimeMillis() - enqueuedAt > STALL_TIMEOUT_MILLIS
+                if (downloading && stalled && !isRunning(downloadManager)) {
                     downloading = false
+                    // 把系统下载器里的这条任务撤掉，免得通知栏留个永不动弹的条目
+                    runCatching { downloadManager.remove(downloadId) }
                     mainHandler.post {
-                        onFailure("下载一直没能开始，请检查网络后重试，或到官网手动下载")
+                        onFailure("下载一直没能开始，可能网络不通。可稍后重试，或到官网手动下载")
                         onComplete(null)
                     }
                 }
@@ -248,6 +256,12 @@ class UpdateManager(private val context: Context) {
                 }
             }
         }.start()
+    }
+
+    /** 查一次系统下载器的状态，用于判断「卡住的到底是排队还是正在跑」。 */
+    private fun isRunning(downloadManager: DownloadManager): Boolean {
+        val cursor = downloadManager.query(DownloadManager.Query().setFilterById(downloadId))
+        return cursor.use { if (it.moveToFirst()) it.getInt(it.getColumnIndex(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_RUNNING else false }
     }
 
     /** 把 DownloadManager 的错误码翻译成人话，方便用户判断该怎么办。 */
@@ -317,4 +331,7 @@ class UpdateManager(private val context: Context) {
         return getLocalVersionCode().toInt()
     }
 }
+
+/** 一个字节都没收到多久算「卡住」。只对排队（PENDING）状态生效，RUNNING 不设上限。 */
+private const val STALL_TIMEOUT_MILLIS = 120_000L
 

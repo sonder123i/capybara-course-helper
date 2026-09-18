@@ -49,6 +49,39 @@ internal fun rowsThatFit(height: Dp, chromeHeight: Dp, rowHeight: Dp, max: Int =
     return (available / rowHeight).toInt().coerceIn(1, max)
 }
 
+// ---------- 周课表网格的纵向排布 ----------
+
+/** 顶栏 + 间隔 + 星期行占掉的高度。底部露出空白就调大，最后一行被切就调小。 */
+internal val WeekChromeHeight = 44.dp
+
+/** 行高下限：再低课名就看不清了。 */
+internal val WeekMinRowHeight = 15.dp
+
+/** 行高上限：超过这个高度一行就显得空，不如把高度让给更多节次。 */
+internal val WeekIdealRowHeight = 34.dp
+
+/** 一天最多显示 12 节。 */
+internal const val WeekMaxRows = 12
+
+/**
+ * 周课表网格排布：返回「显示几节」到「每节多高」。
+ *
+ * 必须守住两条规则，缺一条就会出现「组件拉高后下面一大片留白」：
+ *
+ * 1. **行数不能封顶在「已用节次」上。** 已用节次回答的是「这个学生有几节课」，
+ *    不是「组件能显示几行」——两者被混成一个变量后，组件变高时行数被压回去，
+ *    多出来的高度只能空着。
+ * 2. **行高必须由最终行数反推**（`available / rows`），而不是先算行高再算行数。
+ *    反推才能保证 `rowHeight × rows` 恰好等于可用高度，任何尺寸都精确填满。
+ */
+internal fun weekGridRows(available: Dp, periodsUsed: Int): Pair<Int, Dp> {
+    if (available <= 0.dp) return 1 to 1.dp
+    val used = periodsUsed.coerceAtLeast(1)
+    val base = (available / used).coerceIn(WeekMinRowHeight, WeekIdealRowHeight)
+    val rows = (available.value / base.value).toInt().coerceIn(1, WeekMaxRows)
+    return rows to (available / rows)
+}
+
 /** 顶栏右侧：`9.17 第3周 周四`。周次算不出来时只显示日期与星期。 */
 internal fun headerText(snapshot: WidgetSnapshot?, now: Long): String {
     val calendar = Calendar.getInstance().apply { timeInMillis = now }

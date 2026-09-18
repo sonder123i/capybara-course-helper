@@ -59,13 +59,12 @@ class WeekWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun WeekContent(snapshot: WidgetSnapshot?) {
     val context = LocalContext.current
     val colors = widgetColors()
-    // 网格按真实尺寸排：先看课表实际用到几节，再把可用高度平摊给这些节次，
-    // 节次行高限制在 16~36dp 之间（太挤看不清、太高浪费空间）。
-    val periodsUsed = snapshot?.courses?.maxOfOrNull { it.endPeriod.coerceAtMost(12) }
+    // 网格按真实尺寸排。行数与行高的分配见 weekGridRows：
+    // 可用高度一定被精确填满，组件拉高时是「多显示几节」而不是「行变高后下面留白」。
+    val periodsUsed = snapshot?.courses?.maxOfOrNull { it.endPeriod.coerceAtMost(WeekMaxRows) }
         ?.coerceAtLeast(1) ?: 9
-    val available = (LocalSize.current.height - 44.dp).coerceAtLeast(40.dp)
-    val rowHeight = (available / periodsUsed).coerceIn(16.dp, 36.dp)
-    val maxPeriods = (available / rowHeight).toInt().coerceIn(1, periodsUsed)
+    val available = (LocalSize.current.height - WeekChromeHeight).coerceAtLeast(40.dp)
+    val (maxPeriods, rowHeight) = weekGridRows(available, periodsUsed)
     val cells = snapshot?.let { WidgetToday.cellsForWeek(it, maxPeriods = maxPeriods) }.orEmpty()
     val today = WidgetToday.dayOfWeek(System.currentTimeMillis())
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)

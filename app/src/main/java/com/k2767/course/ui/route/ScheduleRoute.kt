@@ -210,10 +210,18 @@ fun ScheduleRoute() {
     // 组件自己按日期与周次算「今天上什么」，这里只负责给原始数据。
     LaunchedEffect(courses, periodTimes, displayedTimeBase?.firstWeekDate, routeAccountKey) {
         if (courses.isEmpty()) return@LaunchedEffect
+        // 演示模式没有真实开学日期，用「本周一」兜底——否则组件算不出第几周，会一个课都不显示
+        val widgetTimeBase = displayedTimeBase ?: if (UserManager.getInstance().isDemoMode) {
+            com.k2767.course.schedule.ScheduleTimeBase(
+                firstWeekDate = com.k2767.course.schedule.ScheduleTimeBase.dateFromMillis(
+                    com.k2767.course.schedule.ScheduleDates.mondayOfWeek(System.currentTimeMillis()).timeInMillis
+                )
+            )
+        } else null
         com.k2767.course.widget.WidgetSnapshotWriter.write(
             context = context,
             schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
-            timeBase = displayedTimeBase,
+            timeBase = widgetTimeBase,
             periods = periodTimes.map {
                 com.k2767.course.widget.WidgetPeriodTime(it.period, it.startTime, it.endTime)
             },
