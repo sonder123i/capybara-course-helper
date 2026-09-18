@@ -16,4 +16,4 @@
 
 统计只能涵盖新版接入后成功上报的设备，不能补算旧版本使用人数。设备不等于自然人数，重装或清除数据可能重新计数。
 
-实施与验证结果见 `docs/testing/2026-09-11-ui-fixes-private-usage.md`。
+实施与验证结果见 `internal/testing/2026-09-11-ui-fixes-private-usage.md`。
