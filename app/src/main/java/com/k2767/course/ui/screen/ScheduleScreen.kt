@@ -188,6 +188,7 @@ private class ScheduleHeaderMetrics(
     val topPadExpanded: Dp,
     val titleGap: Dp,
     val weekRowExpanded: Dp,
+    val weekRowCollapsed: Dp,
     val actionRowExpanded: Dp,
     val actionRowCollapsed: Dp,
     val stackedActions: Boolean,
@@ -211,7 +212,17 @@ private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMet
         fun textHeight(text: String, style: TextStyle) = with(density) { textSize(text, style).size.height.toDp() }
         val topPad = screen.tall(HeaderTopPadExpanded, 6.dp)
         val titleGap = screen.tall(HeaderTitleGap, 4.dp)
-        val weekRow = maxOf(screen.tall(HeaderWeekRowExpanded, 30.dp), 30.dp * density.fontScale)
+        // 星期条是「星期 + 日期」两行。定高必须实测，不能写死：Column 逐个测量子项时会把
+        // 剩余高度传给下一个，行高一旦小于两行文字，日期就被测成 0 高、整行什么都不画——
+        // 系统字体放大时必然踩到，因为文字按 fontScale 长，写死的行高不长。
+        val weekdayStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        val weekdayDateStyle = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Medium)
+        val weekdayCompactStyle = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+        val weekdayDateCompactStyle = TextStyle(fontSize = 8.sp, fontWeight = FontWeight.Medium)
+        val weekRow = maxOf(
+            screen.tall(HeaderWeekRowExpanded, 30.dp),
+            textHeight("一", weekdayStyle) + textHeight("18", weekdayDateStyle) + 3.dp
+        )
         val bottomPad = screen.tall(HeaderBottomPadExpanded, 4.dp)
         // Four 48dp targets keep their original row. Fit the text to the actual parent,
         // rather than stacking every device below an arbitrary screen-width breakpoint.
@@ -230,7 +241,10 @@ private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMet
         val titleCollapsed = maxOf(textHeight("第 25 周", collapsedStyle), textHeight("下学期 · ", prefixStyle))
         val actionExpanded = if (stacked) titleExpanded + 6.dp + 48.dp else maxOf(HeaderActionRowExpanded, titleExpanded)
         val actionCollapsed = if (stacked) titleCollapsed + 6.dp + 48.dp else maxOf(HeaderActionRowCollapsed, titleCollapsed)
-        val collapsedWeekRow = maxOf(HeaderWeekRowCollapsed, 26.dp * density.fontScale)
+        val collapsedWeekRow = maxOf(
+            HeaderWeekRowCollapsed,
+            textHeight("一", weekdayCompactStyle) + textHeight("18", weekdayDateCompactStyle) + 2.dp
+        )
         ScheduleHeaderMetrics(
             // 展开态：上留白 + 标题行 + 标题间距 + 周次行 + 下留白
             expanded = topPad + actionExpanded + titleGap + weekRow + bottomPad,
@@ -238,6 +252,7 @@ private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMet
             topPadExpanded = topPad,
             titleGap = titleGap,
             weekRowExpanded = weekRow,
+            weekRowCollapsed = collapsedWeekRow,
             actionRowExpanded = actionExpanded,
             actionRowCollapsed = actionCollapsed,
             stackedActions = stacked,
@@ -805,20 +820,36 @@ fun WeekHeaderCompact(
 
                 Spacer(Modifier.height(lerpDp(headerMetrics.titleGap, 0.dp, collapse)))
 
+                // 左侧时间列那一格里放当周周一的月份。没有开学日期就算不出日期，
+                // 月份也就留空，不硬造一个「本月」。
+                val monthDate = com.k2767.course.schedule.ScheduleDates.date(firstWeekDate, currentWeek, 1)
+                val swipeAlpha = weekSwipeAlpha(weekOffset)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(
                             lerpDp(
                                 headerMetrics.weekRowExpanded,
-                                maxOf(HeaderWeekRowCollapsed, 26.dp * LocalDensity.current.fontScale),
+                                headerMetrics.weekRowCollapsed,
                                 collapse
                             )
                         )
                         .padding(horizontal = scheduleGridPadding()),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Spacer(modifier = Modifier.width(scheduleTimeColumnWidth() + ScheduleTimeColumnShadowWidth))
+                    Box(
+                        modifier = Modifier.width(scheduleTimeColumnWidth() + ScheduleTimeColumnShadowWidth),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (monthDate != null) Text(
+                            text = "${monthDate.get(Calendar.MONTH) + 1}月",
+                            fontSize = lerpSp(9f, 8f, collapse),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = MaterialTheme.colorScheme.onSurfaceVariant.alpha * 0.72f * swipeAlpha
+                            ),
+                            maxLines = 1
+                        )
+                    }
                     weekLabels.forEachIndexed { index, day ->
                         val isToday = index + 1 == currentDayOfWeek && currentWeek == actualWeek
                         val date = com.k2767.course.schedule.ScheduleDates.date(firstWeekDate, currentWeek, index + 1)
@@ -893,6 +924,14 @@ private fun SemesterTitlePrefix(
     }
 }
 
+/**
+ * 切周途中把日期淡出。留一段死区：pager 静止时 `currentPageOffsetFraction` 未必精确归零
+ * （切周动画被别的目标位置打断就会留小数），而 `1 - |offset| × 2` 在偏移 0.5 时就是全透明，
+ * 于是日期整行看不见、只有星期还在——看起来像"这个版本没有日期"。
+ */
+private fun weekSwipeAlpha(offset: Float): Float =
+    (1f - (kotlin.math.abs(offset) - 0.15f).coerceAtLeast(0f) / 0.5f).coerceIn(0f, 1f)
+
 @Composable
 private fun CompactWeekdayLabel(
     modifier: Modifier = Modifier,
@@ -931,7 +970,7 @@ private fun CompactWeekdayLabel(
             maxLines = 1
         )
         if (date != null) Text(date, fontSize = lerpSp(9f, 8f, collapse), color = textColor,
-            modifier = Modifier.graphicsLayer { alpha = (1f - kotlin.math.abs(weekOffset) * 2f).coerceIn(0f, 1f) }, maxLines = 1)
+            modifier = Modifier.graphicsLayer { alpha = weekSwipeAlpha(weekOffset) }, maxLines = 1)
         else Box(
             modifier = Modifier
                 .scale(dotScale)
