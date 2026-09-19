@@ -9,7 +9,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_announcement import Gitee, merge_announcements, publish_release, validate_announcement
+from publish_announcement import (Gitee, merge_announcements, publish_release,
+                                  validate_announcement, version_code)
 
 TAG = "v1.0.74"
 NOTES = "第一条更新\n第二条更新"
@@ -25,7 +26,7 @@ URL = "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.
 class FakeGitee:
     def __init__(self, announcements=None):
         self.announcements = copy.deepcopy(announcements)
-        self.version = {"versionName": "1.0.74", "versionCode": 74, "releaseNotes": NOTES, "downloadUrl": URL}
+        self.version = {"versionName": "1.0.74", "versionCode": 10074, "releaseNotes": NOTES, "downloadUrl": URL}
         self.release = {"assets": [{"name": "app-release.apk", "browser_download_url": URL}]}
         self.writes = []
         self.apply_write = True
@@ -69,6 +70,17 @@ class AnnouncementTests(unittest.TestCase):
             with self.subTest(current=current), self.assertRaises(ValueError):
                 merge_announcements(current, ANNOUNCEMENT)
 
+    def test_version_code_uses_semantic_encoding(self):
+        """v1.1.7 的真实 versionCode 是 10107，不是 tag 末段的 7。
+
+        旧实现按 tag 末段推算，把一次正常发布判成「与版本不符」，
+        公告因此发不出去；这里钉住与 release.sh 一致的编码。
+        """
+        self.assertEqual(version_code("v1.0.74"), 10074)
+        self.assertEqual(version_code("v1.1.7"), 10107)
+        self.assertEqual(version_code("v1.2.0"), 10200)
+        self.assertEqual(version_code("v2.0.0"), 20000)
+
     def test_archive_must_match_tag_and_schema(self):
         self.assertEqual(validate_announcement(ANNOUNCEMENT, TAG), ANNOUNCEMENT)
         for changes in ({"id": "wrong"}, {"content": ""}, {"audience": "web"}, {"showOnce": False}):
@@ -96,7 +108,7 @@ class AnnouncementTests(unittest.TestCase):
         self.assertEqual(client.writes, [])
 
     def test_wrong_version_or_notes_never_publishes(self):
-        for changes in ({"versionCode": 73}, {"versionName": "1.0.73"},
+        for changes in ({"versionCode": 10073}, {"versionName": "1.0.73"},
                         {"releaseNotes": "旧日志"}, {"downloadUrl": "https://example.invalid/wrong.apk"}):
             with self.subTest(changes=changes):
                 client = FakeGitee({"announcements": [OLD]})

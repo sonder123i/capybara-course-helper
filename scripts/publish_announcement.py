@@ -16,6 +16,17 @@ DOWNLOAD_ROOT = "https://gitee.com/sonder123i/capybara-course-helper/releases/do
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def version_code(tag):
+    """把 vX.Y.Z 换算成 versionCode：major*10000 + minor*100 + patch。
+
+    必须与 scripts/release.sh 和 release.yml 的 Resolve Version From Tag 保持一致。
+    不要退回「取 patch 位」的老写法：v1.1.7 的真实 code 是 10107 而非 7，
+    按 patch 位推算会把一次正常发布判成「与版本不符」，卡住公告发布。
+    """
+    major, minor, patch = (int(part) for part in tag[1:].split("."))
+    return major * 10000 + minor * 100 + patch
+
+
 def validate_announcement(announcement, tag):
     if re.fullmatch(r"v\d+\.\d+\.\d+", tag) is None:
         raise ValueError("Release tag must have the form vX.Y.Z")
@@ -99,7 +110,7 @@ def verify_delivery(client, tag, notes):
     expected_url = f"{DOWNLOAD_ROOT}/{tag}/app-release.apk"
     if not isinstance(version, dict) or (
         version.get("versionName") != tag[1:]
-        or version.get("versionCode") != int(tag.rsplit(".", 1)[1])
+        or version.get("versionCode") != version_code(tag)
         or version.get("downloadUrl") != expected_url
         or str(version.get("releaseNotes", "")).strip() != notes.strip()
     ):
