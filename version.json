@@ -1,0 +1,7 @@
+{
+  "versionCode": 6,
+  "versionName": "1.1.6",
+  "releaseNotes": "桌面小组件新增提前预告：今天没课时自动显示下一个有课的日子。\n今日课程组件：今天有课时只显示今天，不预告；今天没课就显示下一个有课日。\n近日课程组件：两栏分别显示最近两个有课的日子，周末打开就能看到周一周二上什么课，方便提前准备。\n预告最多往后找一周，中间没课的日子自动跳过，栏头写真实的星期几。\n原「今日与明日」组件更名为「近日课程」，名字与它的实际行为对上了。\n已放在桌面上的组件需要重新添加一次才会显示新名称。",
+  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.1.6/app-release.apk",
+  "forceUpdate": true
+}
