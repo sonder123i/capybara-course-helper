@@ -131,7 +131,7 @@
 
 ### 直接下载（推荐）
 
-去 [Releases 页面](https://github.com/sonder123i/capybara-course-helper/releases/latest) 下载最新 APK，也可以从[官网](https://sonder123i.github.io/capybara-course-helper/)下。装上就能用。Android 7.0+，建议 12 以上，玻璃效果最全。
+下载最新 APK：[Gitee 发行版](https://gitee.com/sonder123i/capybara-course-helper/releases)（国内直连快得多）或 [GitHub Releases](https://github.com/sonder123i/capybara-course-helper/releases/latest)，两边是同一个签名包（sha256 一致）。也可以从[官网](https://sonder123i.github.io/capybara-course-helper/)下。装上就能用。Android 7.0+，建议 12 以上，玻璃效果最全。
 
 ### 从源码构建
 

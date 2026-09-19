@@ -2,6 +2,6 @@
   "versionCode": 16,
   "versionName": "1.1.5",
   "releaseNotes": "周视图日期修复 + 开学日期引导。\n\n- 修好周视图星期条下面的日期：系统字体放大时它被行高约束压成 0 高度，只剩星期不见日期；切周时的淡出也不再被残留偏移乘成全透明\n- 星期条左侧的时间列顶部新增当周月份（如「9月」）\n- 没设开学日期时会提示：首次进课表弹一次，之后顶栏下方常驻一条可右滑划掉的提示，点一下直达设置\n- 课表设置新增「现在是第几周」：不记得开学哪天，填本周是第几周就能反推第一周日期\n- 桌面小组件不再对没设开学日期的课表说「今天没有课啦」，改为说明缺的是开学日期",
-  "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v1.1.5/app-release.apk",
+  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.1.5/app-release.apk",
   "forceUpdate": false
 }
