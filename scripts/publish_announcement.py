@@ -82,8 +82,12 @@ class Gitee:
 
     def read_json_file(self, name, allow_missing=False):
         metadata = self.request("GET", f"contents/{name}?ref=main", allow_missing=allow_missing)
-        if metadata is None:
-            return None, None
+        # Gitee 与 GitHub 不同：文件不存在时它返回 HTTP 200 + 空数组 []，而不是 404。
+        # 只认 None 会把「首次创建该文件」这一步误判成响应格式错误。
+        if metadata is None or metadata == []:
+            if allow_missing:
+                return None, None
+            raise RuntimeError(f"Gitee file {name} does not exist")
         if not isinstance(metadata, dict) or metadata.get("encoding") != "base64":
             raise RuntimeError(f"Invalid Gitee file response for {name}")
         content = base64.b64decode(metadata["content"]).decode("utf-8-sig")

@@ -1,5 +1,6 @@
 import base64
 import copy
+import io
 import json
 from pathlib import Path
 import sys
@@ -137,6 +138,29 @@ class AnnouncementTests(unittest.TestCase):
         open_url.side_effect = URLError("private-test-token")
         with self.assertRaisesRegex(RuntimeError, "^Gitee request failed$"):
             Gitee("private-test-token").request("GET", "contents/announcement.json")
+
+    @patch("publish_announcement.urlopen")
+    def test_missing_file_returned_as_empty_array_is_treated_as_absent(self, open_url):
+        """Gitee 对不存在的文件返回 200 + []，而不是 404。
+
+        首次创建 announcement.json 时会走到这条路；若只认 404，
+        会把「文件还不存在」误判成响应格式错误，导致发布公告失败。
+        """
+        open_url.return_value.__enter__.return_value = io.StringIO("[]")
+        self.assertEqual(Gitee("token").read_json_file("announcement.json", allow_missing=True), (None, None))
+
+    @patch("publish_announcement.urlopen")
+    def test_missing_file_without_allow_missing_is_an_error(self, open_url):
+        open_url.return_value.__enter__.return_value = io.StringIO("[]")
+        with self.assertRaisesRegex(RuntimeError, "does not exist"):
+            Gitee("token").read_json_file("announcement.json")
+
+    @patch("publish_announcement.urlopen")
+    def test_unknown_response_shape_is_still_rejected(self, open_url):
+        # 真正的格式异常不能被当成「文件不存在」悄悄放过。
+        open_url.return_value.__enter__.return_value = io.StringIO('{"message": "unexpected"}')
+        with self.assertRaisesRegex(RuntimeError, "Invalid Gitee file response"):
+            Gitee("token").read_json_file("announcement.json", allow_missing=True)
 
 
 if __name__ == "__main__":
