@@ -109,10 +109,14 @@ fi
 # 基准取「历史上真实打出过的最大 versionCode」，而不是从上一个 tag 名推算——
 # 旧脚本正是栽在这里：v1.1.5 的 tag 名看起来是 5，实际发出去的 code 是 16。
 # CI 把每次的 code 写进 version.properties，从 tag 里读它才是可信的。
+#
+# 排除本项目要打的这个 tag：虽然第 2 步已确认它不存在，但若有人在打过 tag 之后
+# 重跑脚本做校验，不排除就会「跟自己比」而误判成不增。
 MAX_CODE=0
 MAX_TAG=""
 while IFS= read -r t; do
     [ -z "$t" ] && continue
+    [ "$t" = "$TAG" ] && continue
     c="$(git show "${t}:app/version.properties" 2>/dev/null \
         | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
     case "$c" in

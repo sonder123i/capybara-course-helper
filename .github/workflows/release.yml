@@ -168,10 +168,14 @@ jobs:
           # 单调性检查的基准取「历史上真实打出过的最大 versionCode」，从各 tag 的
           # version.properties 里读，而不是从 tag 名推算——旧实现正是栽在这里：
           # v1.1.5 的 tag 名看着是 5，实际发出去的 code 是 16。
+          #
+          # 必须排除当前 tag：CI 跑在 tag 已推送之后，把它算进来会变成「跟自己比」，
+          # 10107 <= 10107 直接判失败。重跑同一版本时也要靠这个跳过。
           MAX_CODE=0
           MAX_TAG=""
           while IFS= read -r t; do
             [ -z "$t" ] && continue
+            [ "$t" = "$TAG" ] && continue
             c="$(git show "${t}:app/version.properties" 2>/dev/null \
               | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
             case "$c" in
