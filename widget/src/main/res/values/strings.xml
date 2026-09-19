@@ -2,14 +2,15 @@
 <resources>
     <string name="widget_today_label">今日课程</string>
     <string name="widget_today_description">显示今天的课程安排，点击可打开课表</string>
-    <string name="widget_today_tomorrow_label">今日与明日</string>
-    <string name="widget_today_tomorrow_description">左右两栏同时显示今天与明天的课程安排，点击可打开课表</string>
+    <string name="widget_today_tomorrow_label">近日课程</string>
+    <string name="widget_today_tomorrow_description">左右两栏显示最近的上课安排，今天没课时自动预告后面要上的课，点击可打开课表</string>
     <string name="widget_week_label">周课表</string>
     <string name="widget_week_description">整周课表网格（周一至周日 × 节次），当前周的单双周课程自动过滤</string>
     <string name="widget_no_school">未绑定学校</string>
     <string name="widget_empty_today">今天没有课啦</string>
     <string name="widget_empty_finished">今天的课都上完啦</string>
     <string name="widget_empty_tomorrow">明天没有课啦</string>
+    <string name="widget_empty_week_ahead">接下来一周都没课</string>
     <string name="widget_no_data">打开应用同步一次课表后即可显示</string>
     <string name="widget_no_semester_start">还没设开学日期，算不出这周是第几周</string>
 </resources>

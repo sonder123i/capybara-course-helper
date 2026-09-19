@@ -221,4 +221,179 @@ class WidgetTodayTest {
         assertFalse(WidgetToday.hasWeekAnchor(snapshot(courses, firstWeekDate = "2026-09-01"), now))
         assertTrue(WidgetToday.rows(snapshot(courses, firstWeekDate = ""), now).isEmpty())
     }
+
+    // ---------- 往后预告 ----------
+
+    /**
+     * 周末打开是最典型的场景：周六周日都没课，要提前摆出周一的课。
+     * 2026-09-19 是周六（第 3 周），2026-09-21 周一仍在第 3 周。
+     */
+    @Test fun 周末向前预告到下一个有课的日子() {
+        val courses = listOf(
+            WidgetCourse("a", "周一高数", "", "至善楼406", 1, 1, 2, "1-16周"),
+            WidgetCourse("b", "周四物理", "", "创新楼A-319", 4, 3, 3, "1-16周")
+        )
+        val snap = snapshot(courses)
+        val saturday = at(2026, 9, 19)
+
+        assertTrue(WidgetToday.rows(snap, now = saturday).isEmpty())
+
+        val preview = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = saturday)!!
+        // 周日（offset=1）没课被跳过，直接落到周一（offset=2）
+        assertEquals(2, preview.offset)
+        assertEquals(1, preview.day)
+        assertEquals(listOf("周一高数"), preview.rows.map { it.name })
+        // 栏头靠这个写出「周一」
+        assertEquals("周一", DayNames[preview.day - 1])
+    }
+
+    /**
+     * 预告必须跨越周次。2026-09-19 周六属于第 3 周（单周），下周一 9-21 是第 4 周（双周）——
+     * 若沿用「今天」的周次去过滤，双周课会被整片吞掉。这条专门把这个坑钉住。
+     */
+    @Test fun 预告跨周时周次跟着目标日期重算() {
+        val courses = listOf(
+            WidgetCourse("a", "单周周一", "", "", 1, 1, 1, "3-16周(单)"),
+            WidgetCourse("b", "双周周一", "", "", 1, 3, 3, "4-16周(双)")
+        )
+        val snap = snapshot(courses)
+
+        // 第 3 周（单周）的周六 → 下周一 9-21 已进第 4 周（双周）：轮到双周课
+        val preview = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 19))!!
+        assertEquals(2, preview.offset)
+        assertEquals(listOf("双周周一"), preview.rows.map { it.name })
+
+        // 第 4 周（双周）的周六 9-26 → 下周一 9-28 落回第 5 周（单周）：轮到单周课
+        val nextWeek = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 26))!!
+        assertEquals(2, nextWeek.offset)
+        assertEquals(listOf("单周周一"), nextWeek.rows.map { it.name })
+    }
+
+    /** 只显示有课的日子：中间空着的日子不占栏位，offset 就会跳着走。 */
+    @Test fun 跳过没课的日子而不是占位显示() {
+        // 只有周一有课
+        val courses = listOf(WidgetCourse("a", "周一课", "", "", 1, 1, 1, "1-16周"))
+        val snap = snapshot(courses)
+        // 2026-09-17 是周四：周五六日都没课，下一个有课日是下周一 9-21
+        val preview = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 17))!!
+        assertEquals(4, preview.offset)
+        assertEquals(1, preview.day)
+        assertEquals(listOf("周一课"), preview.rows.map { it.name })
+    }
+
+    /** 从第 8 天起才有课 → 超出 7 天上限，必须返回 null 让组件改说「接下来一周都没课」。 */
+    @Test fun 超过一周没有课就返回空让组件换说法() {
+        // 只有 9-23 那天有课（第 4 周周三）
+        val courses = listOf(WidgetCourse("a", "下周三课", "", "", 3, 1, 1, "4-16周"))
+        val snap = snapshot(courses)
+        // 9-17 周四打开 → 最近的 9-23 在 6 天后，仍在上限内
+        val inRange = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 17))!!
+        assertEquals(6, inRange.offset)
+
+        // 超过第 7 天才有课 → 9-16 周三提前 7 天正好是上限之外（窗口是 0..6）
+        assertNull(WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 16)))
+        // 9-18 周五打开 → 9-23 在 5 天后，还是能提前看到
+        assertEquals(5, WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 18))!!.offset)
+    }
+
+    /** 上限窗口是「今天起共 7 天」：正好第 7 天（offset=6）算得到，第 8 天（offset=7）算不到。 */
+    @Test fun 上限窗口含第七天不含第八天() {
+        val courses = listOf(WidgetCourse("a", "周三课", "", "", 3, 1, 1, "4-16周"))
+        val snap = snapshot(courses)
+        // 9-17 周四 → 9-23 周三，offset = 6（第 7 天，认）
+        assertEquals(6, WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 17))!!.offset)
+        // 9-16 周三 → 9-23 周三，offset = 7（第 8 天，不认）
+        assertNull(WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 16)))
+    }
+
+    /**
+     * 两栏要能接上：右栏从「左栏那天的后一天」继续找，不能两栏撞同一天，
+     * 也不能因为中间夹着没课的日子就断掉。
+     */
+    @Test fun 第二栏从左栏之后接着找() {
+        val courses = listOf(
+            WidgetCourse("a", "周一课", "", "", 1, 1, 1, "1-16周"),
+            WidgetCourse("b", "周三课", "", "", 3, 1, 1, "1-16周"),
+            WidgetCourse("c", "周五课", "", "", 5, 1, 1, "1-16周")
+        )
+        val snap = snapshot(courses)
+        val saturday = at(2026, 9, 19)
+
+        // 左栏：周六周日没课 → 周一（offset=2）
+        val left = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = saturday)!!
+        assertEquals(2, left.offset)
+        assertEquals(1, left.day)
+        assertEquals(listOf("周一课"), left.rows.map { it.name })
+
+        // 右栏从 offset=3 起找：周二没课被跳过 → 周三（offset=4）
+        val right = WidgetToday.nextDayWithCourses(snap, fromOffset = left.offset + 1, now = saturday)!!
+        assertEquals(4, right.offset)
+        assertEquals(3, right.day)
+        assertEquals(listOf("周三课"), right.rows.map { it.name })
+        // 两栏不会同一天
+        assertTrue(left.offset < right.offset)
+
+        // 从右栏之后再找：周五在 offset=6，仍在上限内
+        val third = WidgetToday.nextDayWithCourses(snap, fromOffset = right.offset + 1, now = saturday)!!
+        assertEquals(6, third.offset)
+        assertEquals(5, third.day)
+    }
+
+    /** 今天有课时，预告要从明天起算——不能把今天的课又摆一遍。 */
+    @Test fun 今天有课时预告从明天开始() {
+        val courses = listOf(
+            WidgetCourse("a", "周四课", "", "", 4, 1, 1, "1-16周"),
+            WidgetCourse("b", "周五课", "", "", 5, 1, 1, "1-16周")
+        )
+        val snap = snapshot(courses)
+        val thursday = at(2026, 9, 17)
+
+        val preview = WidgetToday.nextDayWithCourses(snap, fromOffset = 1, now = thursday)!!
+        assertEquals(1, preview.offset)
+        assertEquals(listOf("周五课"), preview.rows.map { it.name })
+    }
+
+    /**
+     * 最危险的一条：课上完后 `rows(skipEnded = true)` 是空的，但今天**确实有课**。
+     * 组件若拿 rows.isEmpty() 当「今天没课」用，周三 17:00 打开桌面就会看到明天/周四的课，
+     * 像是今天被凭空跳过了。判断必须走 [WidgetToday.hasCoursesOn]。
+     */
+    @Test fun 课上完了不算今天没课() {
+        val courses = listOf(
+            WidgetCourse("a", "周四上午课", "", "", 4, 1, 2, "1-16周"),
+            WidgetCourse("b", "周四下午课", "", "", 4, 3, 3, "1-16周")
+        )
+        val snap = snapshot(courses)
+        val afterClass = at(2026, 9, 17, 12, 30)
+
+        // 界面用的那一列确实是空的（该显示「今天的课都上完啦」）
+        assertTrue(WidgetToday.rows(snap, now = afterClass, skipEnded = true).isEmpty())
+        // 但「今天有课吗」必须是 true —— 组件就靠这个决定不预告
+        assertTrue(WidgetToday.hasCoursesOn(snap, dayOffset = 0, now = afterClass))
+        // 对照：真的没课的日子
+        assertFalse(WidgetToday.hasCoursesOn(snapshot(listOf(WidgetCourse("c", "周五课", "", "", 5, 1, 1, "1-16周"))), 0, afterClass))
+    }
+
+    /** 预告的那一天永远不是今天，[skipEnded] 不该影响它。 */
+    @Test fun 预告不受跳过已下课影响() {
+        val courses = listOf(WidgetCourse("a", "周一课", "", "", 1, 1, 1, "1-16周"))
+        val snap = snapshot(courses)
+        // 周六晚上打开，周一的课当然还没上
+        val preview = WidgetToday.nextDayWithCourses(snap, fromOffset = 0, now = at(2026, 9, 19, 22, 0))!!
+        assertEquals(listOf("周一课"), preview.rows.map { it.name })
+    }
+
+    /** 上限小于 1 时不该返回东西（防御性：别让循环条件写反变成无限找）。 */
+    @Test fun 上限为零时不返回预告() {
+        val courses = listOf(WidgetCourse("a", "周一课", "", "", 1, 1, 1, "1-16周"))
+        assertNull(WidgetToday.nextDayWithCourses(snapshot(courses), fromOffset = 0, maxAhead = 0, now = at(2026, 9, 19)))
+    }
+
+    /** 栏头：那天就是今天写「今天」，往后跳了就要写真实的星期几。 */
+    @Test fun 栏头按真实那天写星期几() {
+        assertEquals("今天", previewLabel(PreviewDay(0, 4, emptyList())))
+        assertEquals("周一", previewLabel(PreviewDay(2, 1, emptyList())))
+        assertEquals("周三", previewLabel(PreviewDay(4, 3, emptyList())))
+        assertEquals("周日", previewLabel(PreviewDay(8, 7, emptyList())))
+    }
 }

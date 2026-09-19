@@ -9,6 +9,14 @@ import java.util.TimeZone
 /** 与 App 内 ScheduleMaxWeeks 保持一致。 */
 private const val MaxWeeks = 25
 
+/**
+ * 预告最多往后找几天。
+ *
+ * 一周足够覆盖「周末 + 没课的工作日」这类最常见的空档；再长的假期（国庆、寒暑假）本来就
+ * 没什么可预告的，组件会改说「接下来一周都没课」，比翻到两周后翻出孤零零一节课更有用。
+ */
+const val MaxPreviewDays = 7
+
 data class WidgetPeriod(val period: Int, val start: String, val end: String)
 
 data class WidgetCourse(
@@ -76,6 +84,15 @@ data class WidgetSnapshot(
 
 /** 小组件里展示的一行课。 */
 data class WidgetCourseRow(val name: String, val location: String, val time: String, val colorIndex: Int)
+
+/**
+ * 往后预告的某一天。
+ *
+ * [offset] 是相对今天的天数（0=今天），[day] 是 1..7 的星期几，[rows] 是那天要塞进组件的课。
+ * [day] 单独带着是为了让组件能写出正确的栏头——周末打开组件时左边那栏装的是周一的课，
+ * 再写「今天」就是在撒谎，得写「周一」。
+ */
+data class PreviewDay(val offset: Int, val day: Int, val rows: List<WidgetCourseRow>)
 
 /**
  * 「今天有哪些课」的计算。这里刻意与 App 侧的 ScheduleWeeks / ScheduleDates 保持同样的规则，
@@ -198,6 +215,58 @@ object WidgetToday {
             }
             .take(max)
     }
+
+    /**
+     * 往后找「下一个有课的日子」：从 [fromOffset] 天起最多找 [maxAhead] 天。
+     *
+     * 这是「周末也能提前看到周一上什么」的实现。今天/本周没课时，组件不再干巴巴地说
+     * 「今天没有课啦」，而是把后面第一天上什么课摆出来。
+     *
+     * 几条必须守住的规则：
+     *
+     * 1. **只认有课的日子，跳过没课的。** 周六查时周一有课就停下——中间空着的周日不出栏，
+     *    所以返回的 offset 可能跳着走（0 → 2 是常态）。
+     * 2. **周次按目标日期重新算**（走 [rowsAt]），所以预告跨到下一周时单双周不会错。
+     * 3. **[maxAhead] 之外的整段假都找不到。** 国庆这类长假期会超过上限，调用方必须能拿到
+     *    null 并换一句「接下来一周都没课」，而不是退回「今天没有课啦」——那样等于暗示
+     *    只有今天空闲，是在说反话。
+     * 4. **不受 [skipEnded] 影响。** 预告的日子永远不是「今天」，[rowsAt] 内部会忽略它；
+     *    而 [fromOffset] = 0 查今天时调用方已经确认今天没课，跳过已下课不会改变结果。
+     */
+    fun nextDayWithCourses(
+        snapshot: WidgetSnapshot,
+        fromOffset: Int = 0,
+        maxAhead: Int = MaxPreviewDays,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault(),
+        max: Int = Int.MAX_VALUE
+    ): PreviewDay? {
+        if (maxAhead < 1) return null
+        for (offset in fromOffset until fromOffset + maxAhead) {
+            val rows = rowsAt(snapshot, offset, now = now, zone = zone, max = max, skipEnded = false)
+            if (rows.isNotEmpty()) {
+                val target = Calendar.getInstance(zone).apply {
+                    timeInMillis = now
+                    add(Calendar.DAY_OF_YEAR, offset)
+                }.timeInMillis
+                return PreviewDay(offset = offset, day = dayOfWeek(target, zone), rows = rows)
+            }
+        }
+        return null
+    }
+
+    /**
+     * [fromOffset] 那天到底有没有课（不看「上完没上完」）。
+     *
+     * 这是「今天/某天本来有课、只是都上完了」与「那天真的没课」的分界线。组件必须用它来
+     * 决定该预告还是该报空——只看 [rowsAt] 加 `skipEnded` 的结果会分不清两者。
+     */
+    fun hasCoursesOn(
+        snapshot: WidgetSnapshot,
+        dayOffset: Int,
+        now: Long = System.currentTimeMillis(),
+        zone: TimeZone = TimeZone.getDefault()
+    ): Boolean = rowsAt(snapshot, dayOffset, now = now, zone = zone).isNotEmpty()
 
     /** 某节课的下课时刻（今天的日期 + 结束时间）。时间缺失时返回 null。 */
     private fun courseEndMillis(now: Long, zone: TimeZone, end: String?): Long? {

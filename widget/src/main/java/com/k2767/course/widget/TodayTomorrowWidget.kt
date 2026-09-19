@@ -45,10 +45,16 @@ private fun ColumnDivider() {
 }
 
 /**
- * 「今日与明日」小组件：左右两栏，和 WakeUp 课程表那张一致。
+ * 「近日课程」小组件：左右两栏，和 WakeUp 课程表那张一致。
  *
- * 与「今日课程」共用同一份快照与排序规则，只有「明天」这一栏按 +1 天重新算日期与周次
- * （跨周时周次会跟着推进，所以单双周课不会错）。
+ * 两栏都不是写死的「今天/明天」，而是各往后找第一个**有课的日子**（见
+ * [WidgetToday.nextDayWithCourses]），中间没课的日子直接跳过：
+ *
+ * - 今天有课 → 左栏今天，右栏往后第一个有课的日子（通常就是明天）
+ * - 今天没课 → 左栏往后第一个有课的日子，右栏再往后一个（周末就是这样提前看到周一周二）
+ *
+ * 栏头按实际那天写星期几，所以周六打开时左边写的是「周一」而不是「今天」。
+ * 与「今日课程」共用同一份快照与排序规则。
  */
 class TodayTomorrowWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
@@ -69,13 +75,27 @@ class TodayTomorrowWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     val context = LocalContext.current
     val colors = widgetColors()
-    // 每栏行数按真实尺寸算：顶栏 + 「今天/明天」小标题占 76dp，每行三行文字约 58dp
+    // 每栏行数按真实尺寸算：顶栏 + 「今天/周三」小标题占 76dp，每行三行文字约 58dp
     val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 76.dp, rowHeight = 58.dp, max = 8)
-    // 今天这一栏丢掉已下课的课：位置有限，上完的让位给后面的；明天不受影响
-    val today = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0, max = maxRows, skipEnded = true) }.orEmpty()
-    val tomorrow = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 1, max = maxRows) }.orEmpty()
-    val hadToday = snapshot?.let { WidgetToday.rowsAt(it, dayOffset = 0).isNotEmpty() } == true
-    val hasAnchor = snapshot?.let { WidgetToday.hasWeekAnchor(it) } == true
+    // 组件会长时间停在桌面上，每次渲染现取，别缓存
+    val now = System.currentTimeMillis()
+    val hasData = snapshot != null && snapshot.courses.isNotEmpty()
+    val hasAnchor = snapshot?.let { WidgetToday.hasWeekAnchor(it, now) } == true
+
+    // 两栏各自往后找「有课的一天」。左栏从今天找，右栏从左栏那天的后一天接着找，
+    // 所以不会两栏撞在同一天上，也不会因为中间夹着没课的日子就断掉
+    val left = if (snapshot != null && hasAnchor) {
+        WidgetToday.nextDayWithCourses(snapshot, fromOffset = 0, now = now, max = maxRows)
+    } else null
+    val right = if (snapshot != null && hasAnchor && left != null) {
+        WidgetToday.nextDayWithCourses(snapshot, fromOffset = left.offset + 1, now = now, max = maxRows)
+    } else null
+
+    // 左栏那天是不是「今天」——决定空提示该说「今天没有课啦」还是「都上完啦」
+    val leftIsToday = left?.offset == 0
+    // 今天上完了：左栏今天没课但它本来有课。此时不预告，直接说「都上完啦」，
+    // 否则周三 17:00 打开会看到「周四」跳出来，像是今天被跳过了
+    val todayFinished = leftIsToday && !WidgetToday.hasCoursesOn(snapshot!!, dayOffset = 0, now = now)
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
 
@@ -87,34 +107,41 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
             .then(if (openApp != null) GlanceModifier.clickable(openApp) else GlanceModifier)
             .padding(14.dp)
     ) {
-        WidgetHeader(snapshot, System.currentTimeMillis())
+        WidgetHeader(snapshot, now)
         Spacer(GlanceModifier.height(8.dp))
         Row(
             modifier = GlanceModifier.fillMaxSize(),
             verticalAlignment = Alignment.Vertical.Top
         ) {
             DayColumn(
-                label = "今天",
-                rows = today,
+                label = if (left != null) previewLabel(left) else "今天",
+                rows = if (todayFinished) emptyList() else left?.rows.orEmpty(),
                 emptyText = context.getString(
                     when {
                         // 算不出周次时两栏都是空的，但原因不是「没课」，别报成没课
                         !hasAnchor -> R.string.widget_no_semester_start
-                        hadToday -> R.string.widget_empty_finished
+                        todayFinished -> R.string.widget_empty_finished
+                        // 今天没课、往后一周也没课 → 假期，说清是一周
+                        left == null -> R.string.widget_empty_week_ahead
                         else -> R.string.widget_empty_today
                     }
                 ),
-                hasData = snapshot != null && snapshot.courses.isNotEmpty(),
+                hasData = hasData,
                 modifier = GlanceModifier.defaultWeight()
             )
             ColumnDivider()
             DayColumn(
-                label = "明天",
-                rows = tomorrow,
+                label = if (right != null) previewLabel(right) else "明天",
+                rows = right?.rows.orEmpty(),
                 emptyText = context.getString(
-                    if (hasAnchor) R.string.widget_empty_tomorrow else R.string.widget_no_semester_start
+                    when {
+                        !hasAnchor -> R.string.widget_no_semester_start
+                        // 左栏已经是往后找的第一天，右栏还找不到 → 说明一周内只有那一天有课
+                        right == null -> R.string.widget_empty_week_ahead
+                        else -> R.string.widget_empty_tomorrow
+                    }
                 ),
-                hasData = snapshot != null && snapshot.courses.isNotEmpty(),
+                hasData = hasData,
                 modifier = GlanceModifier.defaultWeight()
             )
         }
