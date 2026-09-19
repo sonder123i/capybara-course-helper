@@ -261,7 +261,12 @@ class UpdateManager(private val context: Context) {
     /** 查一次系统下载器的状态，用于判断「卡住的到底是排队还是正在跑」。 */
     private fun isRunning(downloadManager: DownloadManager): Boolean {
         val cursor = downloadManager.query(DownloadManager.Query().setFilterById(downloadId))
-        return cursor.use { if (it.moveToFirst()) it.getInt(it.getColumnIndex(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_RUNNING else false }
+        return cursor.use {
+            if (!it.moveToFirst()) return@use false
+            val statusIndex = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            // 列不存在时 getColumnIndex 返回 -1，直接当下标会抛异常。
+            statusIndex >= 0 && it.getInt(statusIndex) == DownloadManager.STATUS_RUNNING
+        }
     }
 
     /** 把 DownloadManager 的错误码翻译成人话，方便用户判断该怎么办。 */
