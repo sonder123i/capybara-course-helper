@@ -4,6 +4,46 @@
 > 自 1.0.68 起，每个版本的更新日志以 `release-notes/vX.Y.Z.md` 为唯一数据源，由 CI 扇出到本文件、GitHub Release 与应用内更新提示。
 > 1.0.67 未发布：该 tag 的流水线在版本号校验步骤失败，未产出任何 Release，内容顺延至 1.0.68。
 
+## [1.1.7] - 2026-09-19
+
+本版本修复一个发版阻塞级缺陷：v1.1.6 的 `versionCode` 从 16 倒退为 6，导致应用内更新检测失效、且新版无法覆盖安装。
+
+### 根因
+
+`versionCode` 的生成方式与它的实际语义脱节，这次终于断裂。
+
+- 1.0.x 时代 `versionCode` 恰好等于 patch 位（`1.0.74` → `74`），于是 `scripts/release.sh` 与 `release.yml` 都直接从版本号末段推算，看起来能用。
+- 进入 1.1.x 后实际改成了独立递增序号（`1.1.3`→14、`1.1.4`→15、`1.1.5`→16），但两处推算逻辑没跟着改。
+- `v1.1.6` 便算出 `6`，比上一版的 `16` 小 10。脚本原有的单调性检查没能拦住：它从**上一个 tag 名**推算基准值，而 `v1.1.5` 的 tag 名看着是 `5`，真实值却是 `16`，于是 `6 <= 5` 不成立，检查放行。
+
+后果是连锁的：
+
+- 应用内 `serverVersionCode(16) > localVersionCode(16)` 不成立，永远显示「已是最新」。
+- Android 拒绝 `versionCode` 更低的包覆盖安装，用户即使手动下载 APK 也装不上。
+
+### 修复
+
+- **`versionCode` 改为语义化编码**：`major*10000 + minor*100 + patch`。版本号本身决定编号，不存在「忘记递增」的可能。
+  - `1.1.6` → `10106`，`1.1.7` → `10107`，`1.2.0` → `10200`，`2.0.0` → `20000`
+  - 天然单调递增，跨 minor/major 也安全；上界受 Android 的 `MAX_VERSION_CODE` 限制，major 到 2100 才会溢出。
+  - 两个改动点保持一致：`scripts/release.sh`、`.github/workflows/release.yml` 的 `Resolve Version From Tag`。
+- **单调性检查改为读取真实历史值**：基准取「历史上实际打出过的最大 `versionCode`」——从各 tag 的 `app/version.properties` 里读，不再从 tag 名推算。旧实现正是栽在这个假设上。
+- **`docs/version.json` 纳入流水线**（新增 `Sync version.json to Pages` 步骤）：App 的 `UpdateManager` 读的是 GitHub Pages 这份，而 CI 此前只写 Gitee 那份，两份长期手工维护、各自漂移——事故发生时 Pages 还停在 `v1.1.5`。现在两份同源同值，`docs/version.json` 由 CI 提交回 `main`，Pages 自动重新部署。
+  - Pages 那份的 `forceUpdate` 固定为 `false`：它是用户日常检查更新的入口，与 Gitee 那份「引导直连下载」的用途不同，强制弹窗会打断正常使用。
+  - 提交时带 `pull --rebase` 重试（3 次），避免他人并发推送 `main` 时因竞态把整条流水线染红。
+
+### 用户侧影响
+
+- 已安装 v1.1.5（`versionCode` 16）的用户升级到 v1.1.7（`10107`）是正常的递增，可覆盖安装。
+- 已安装 v1.1.6（`versionCode` 6）的用户同样能升到 `10107`。
+- 从 v1.0.x 及更早版本升级的路径不受影响——`10074` 等旧值仍小于 `10107`。
+
+### 验证
+
+- 新编码算法本地实测：`1.0.74`→`10074`、`1.1.5`→`10105`、`1.1.6`→`10106`、`1.1.7`→`10107`、`1.2.0`→`10200`、`2.0.0`→`20000`，序列严格单调。
+- `bash -n scripts/release.sh` 通过；`release.yml` 经 YAML 解析校验通过，新增步骤就位。
+- 端到端以本版本发版本身作为验证：CI 全绿后核对 GitHub Release、Gitee Release、Gitee `version.json`、Pages `docs/version.json` 四处版本号一致。
+
 ## [1.1.6] - 2026-09-19
 
 本版本为桌面小组件加入「提前预告」，并修好发版流水线中残留的上游仓库地址。
