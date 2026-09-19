@@ -146,34 +146,51 @@ jobs:
           set -euo pipefail
 
           VN="${TAG#v}"
-          REST="${VN#*.}"
-          PATCH="${REST#*.}"
 
-          # versionCode = patch 位。1.0.x 这 68 个版本一直这么编，沿用它对用户端无感。
-          VC="$PATCH"
+          # ── versionCode 编码：major*10000 + minor*100 + patch ──────────
+          # 曾经的实现是「patch 位」= versionCode（1.0.74 -> 74），进了 1.1.x
+          # 之后实际改成独立递增序号（1.1.3->14 … 1.1.5->16），但算法没跟着改，
+          # 于是 v1.1.6 算出 6，比上一版倒退 10。后果：应用内 16 > 6 不成立，
+          # 永远显示「已是最新」；Android 也拒绝低 code 覆盖安装。
+          # 语义化编码让版本号本身决定 code，不留「忘了递增」的空间。
+          IFS=. read -r V_MAJOR V_MINOR V_PATCH <<< "$VN"
+          for part in "$V_MAJOR" "$V_MINOR" "$V_PATCH"; do
+            case "$part" in
+              ''|*[!0-9]*) echo "ERROR: 版本号 ${VN} 含非数字段: '$part'"; exit 1 ;;
+            esac
+          done
+          if [ "$V_MINOR" -ge 100 ] || [ "$V_PATCH" -ge 100 ]; then
+            echo "ERROR: ${VN} 的 minor/patch 超过 99，语义化编码放不下。"
+            exit 1
+          fi
+          VC=$(( V_MAJOR * 10000 + V_MINOR * 100 + V_PATCH ))
 
-          case "$VC" in
-            ''|*[!0-9]*) echo "ERROR: 从 ${TAG} 解析出的 patch 位不是数字: '${VC}'"; exit 1 ;;
-          esac
+          # 单调性检查的基准取「历史上真实打出过的最大 versionCode」，从各 tag 的
+          # version.properties 里读，而不是从 tag 名推算——旧实现正是栽在这里：
+          # v1.1.5 的 tag 名看着是 5，实际发出去的 code 是 16。
+          MAX_CODE=0
+          MAX_TAG=""
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            c="$(git show "${t}:app/version.properties" 2>/dev/null \
+              | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
+            case "$c" in
+              ''|*[!0-9]*) continue ;;
+            esac
+            if [ "$c" -gt "$MAX_CODE" ]; then
+              MAX_CODE="$c"
+              MAX_TAG="$t"
+            fi
+          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
 
-          # 应用内比较的是 versionCode。它一旦不增，用户就会收到一个永远
-          # "更新不掉"的提示。拿除自己以外最高的那个 tag 做基准，这样重跑
-          # 同一版本（补发、上次 Gitee 上传失败）不会被自己挡住。
-          PREV=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-            | grep -vFx "$TAG" \
-            | sed 's/^v//' \
-            | sort -t. -k1,1n -k2,2n -k3,3n \
-            | tail -1 || true)
-
-          if [ -n "${PREV:-}" ]; then
-            PREV_CODE="${PREV##*.}"
-            if [ "$VC" -le "$PREV_CODE" ]; then
-              echo "ERROR: versionCode 不增：${TAG} 算出 ${VC}，上一个 tag v${PREV} 是 ${PREV_CODE}。"
-              echo "       versionCode = patch 位这个方案在这里失效了（跨 minor/major 时 patch 归零）。"
-              echo "       改成 major*10000+minor*100+patch，并同步修改 scripts/release.sh。"
+          if [ "$MAX_CODE" -gt 0 ]; then
+            if [ "$VC" -le "$MAX_CODE" ]; then
+              echo "ERROR: versionCode 不增：${TAG} 算出 ${VC}，而历史上最大的 ${MAX_TAG} 是 ${MAX_CODE}。"
+              echo "       语义化编码是 major*10000+minor*100+patch，正常不会倒退。"
+              echo "       请检查版本号是否写错。"
               exit 1
             fi
-            echo "上一个版本 v${PREV}（code ${PREV_CODE}）-> ${TAG}（code ${VC}）"
+            echo "历史最大 ${MAX_TAG}（code ${MAX_CODE}）-> ${TAG}（code ${VC}）"
           fi
 
           # 仓库里的文件与 tag 不一致不再是错误，只是信息：手动打 tag 时它会落后，
@@ -303,6 +320,10 @@ jobs:
     steps:
       - name: Checkout Code (for version.properties)
         uses: actions/checkout@v4
+        with:
+          # 这一步只用来读 version.properties。给分支名是为了下面还要往 main 提交
+          # docs/version.json —— 明确检出 main 分支，就不用处理 detached HEAD。
+          ref: main
 
       - name: Download APK
         uses: actions/download-artifact@v4
@@ -468,6 +489,75 @@ jobs:
 
           echo ""
           echo "=== Gitee sync complete ==="
+
+      # App 的 UpdateManager 读的是 GitHub Pages 上那份 version.json（docs/version.json），
+      # 不是 Gitee 这份。两份曾经各自手工维护，结果长期漂移：Pages 停在 v1.1.5 而
+      # Gitee 已经是 v1.1.6，用户点「检查更新」看到的其实是旧数据。
+      # 现在把 Pages 那份也纳入流水线，与 Gitee 同源同值，消除人工同步。
+      - name: Sync version.json to Pages
+        env:
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -e
+
+          VERSION_CODE=$(sed -n 's/^VERSION_CODE=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "ERROR: 无法从产物解析版本号（VC='${VERSION_CODE}' VN='${VERSION_NAME}'）"
+            exit 1
+          fi
+          if [ -z "${RELEASE_NOTES:-}" ]; then
+            echo "ERROR: 更新日志为空，中止写入（不拿空文案覆盖线上 version.json）"
+            exit 1
+          fi
+
+          DOWNLOAD_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+
+          # 与 Gitee 那份用同一个 jq 表达式，保证两个源内容完全一致。
+          # forceUpdate 在 Pages 这份留 false：Gitee 那份是给直连下载用的强提示，
+          # Pages 这份是用户日常检查更新的入口，强制弹窗会打断正常使用。
+          jq -n \
+            --argjson vc "$VERSION_CODE" \
+            --arg vn "$VERSION_NAME" \
+            --arg rn "${RELEASE_NOTES}" \
+            --arg du "$DOWNLOAD_URL" \
+            '{
+              versionCode: ($vc | tonumber),
+              versionName: $vn,
+              releaseNotes: $rn,
+              downloadUrl: $du,
+              forceUpdate: false
+            }' > docs/version.json
+
+          echo "docs/version.json:"
+          cat docs/version.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/version.json
+
+          if git diff --cached --quiet; then
+            echo "docs/version.json 无变化，跳过提交"
+            exit 0
+          fi
+
+          git commit -m "release: 同步 version.json 到 ${VERSION_NAME} (${VERSION_CODE})"
+
+          # 这一步是往共享分支写。若期间有人推了 main，直接 push 会被拒；
+          # 自动 rebase 后重试，避免整条发版流水线因为这种竞态变红。
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "已推送，Pages 将自动重新部署"
+              exit 0
+            fi
+            echo "push 被拒（第 ${attempt} 次），rebase 后重试..."
+            git pull --rebase origin main
+          done
+
+          echo "ERROR: 连续 3 次推送失败，请检查 main 分支状态"
+          exit 1
 
       - name: Verify Delivery and Publish Announcement
         env:
