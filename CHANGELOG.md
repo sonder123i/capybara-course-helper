@@ -4,6 +4,53 @@
 > 自 1.0.68 起，每个版本的更新日志以 `release-notes/vX.Y.Z.md` 为唯一数据源，由 CI 扇出到本文件、GitHub Release 与应用内更新提示。
 > 1.0.67 未发布：该 tag 的流水线在版本号校验步骤失败，未产出任何 Release，内容顺延至 1.0.68。
 
+## [1.1.8] - 2026-09-20
+
+本版本三处改动：教务登录的跨协议跳转、周视图星期条的日期行、桌面小组件改为可滚动。
+
+### 教务登录：同域 http 跳转升级回 https
+
+部分学校的教务挂在反向代理后面，生成绝对 `Location` 时一律写 `http://`（实测九江学院 `zhjw1.jju.edu.cn` 的每个 302 都是如此，加 `X-Forwarded-Proto: https` 也不改）。学校配置的协议是 `https` 时，`AcademicUrlPolicy.isAllowed` 会在协议判定处直接拒绝这一跳，而 `AcademicHttpTransport.ensureAllowed` 先判白名单、后判降级，于是降级被报成「跳到了未配置的域名」——那句专门写的降级提示是不可达的死代码。
+
+- `AcademicUrlPolicy` 新增 `HostMatch` 与 `hostMatch()`，只看域名与端口、忽略协议；`isAllowed()` 改为委托它，判定口径逐条保持原样（含「条目未写端口时按请求协议补默认端口」这一既有行为），所以 WebView 的 Cookie 导出边界不变。
+- 新增 `httpsUpgrade()`：同域名、默认端口的 http 跳升级成 https 再跟随。带显式端口的地址不做猜测，避免把 `http://host:8080` 猜成没人监听的 `https://host:8080`。
+- `AcademicHttpTransport` 的重定向分支接入升级，且**一条链只升级一次**，防止与坚持写 http 的服务器互相 302。
+- `ensureAllowed` 按「未配置域名 / 未配置端口 / HTTP 明文降级」分别报错并带上目标 host；`SSLHandshakeException` 单独成错（`UNTRUSTED_URL`）并跳过无意义的读重试。
+- `AcademicStatus.UNTRUSTED_URL` 的中文映射改宽，覆盖上述四种分叉。
+
+未改动：`school.allowedAcademicHosts` 在 transport 构造时快照的问题（登录中途补加的域名本轮仍不生效），以及把 `UNTRUSTED_URL` 改走 WebView 引导的控制流。前者对本案学校无影响（它不走 CAS），后者会连带把 `detect()` 中途改过的配置落盘固化。
+
+### 周视图：日期行从未显示
+
+`CompactWeekdayLabel` 的两个 `Text` 只传 `fontSize`，M3 的实现是把它盖到 `style`（默认 `bodyLarge`）上，`lineHeight` 仍继承主题的 24sp；而 `rememberScheduleHeaderMetrics` 用只写 `fontSize` 的裸 `TextStyle` 测量，量到的是字体自然行高。两行实需约 51dp，测量只算出 29dp，于是星期条定高 34dp。`Column` 把剩余高度传给下一个子项，日期那一行只剩 7dp 的纯行距，画了却没有一个像素。
+
+- 抽出 `weekdayStyle(collapse)` / `weekdayDateStyle(collapse)`，`fontSize` 与 `lineHeight` 成对出现，**测量与渲染共用同一份**，从结构上消除再次脱节的可能。
+- 两行实需 30dp（折叠态 26dp），仍落进原有行高，表头高度不变，不会把课表往下挤。
+- 左侧月份格同样补上 `lineHeight`。
+- `ScheduleAdaptationDeviceTest` 补两条断言：每个星期格必须有「星期 + 日期」两个语义子节点（否则 `onFirst`/`onLast` 同一个、比例恒为 1 会静默通过），且日期行高度不低于星期行的一半。这条以前无人看守，所以 `e6e5963` 那次「改实测行高」方向对了却没修上。
+
+### 小组件：改为可滚动
+
+原来按真实高度算行数再截断（`rowsAt` 末尾的 `.take(max)`），下午的课根本没进视图树。
+
+- 「今日课程」「今日与明日」的列表改为 `LazyColumn`，两栏各一份。依据是 Glance 把集合按 `(appWidgetId, viewId, sizeInfo)` 缓存、`GlanceRemoteViewsService` 按 `EXTRA_VIEW_ID` 取数据，一个组件内多个滚动区有支撑。
+- `WidgetCourseRow` 增加 `modifier` 参数：ListView 条目是独立的 `RemoteViews`，不继承根容器的点击，每行必须自己挂打开 App 的动作；行距也并进同一个 modifier，因为一个条目只能放一个可组合项。
+- `skipEnded` 保留，已下课的课仍然隐藏，滑动看到的是接下来要上的课。
+- 删除 `rowsThatFit()` 及其测试（周课表用的是 `weekGridRows`，不受影响）。
+
+### 演示模式：开学日期兜底改为课表与小组件共用
+
+`ScheduleRoute` 里「本周一」的兜底原先只喂给小组件快照，课表自己拿到的仍是 `null`。于是演示模式下桌面组件算得出周次，应用内的星期条却算不出日期与月份——这个不一致让日期行在预览包里根本无从验证。
+
+- 抽出 `effectiveTimeBase`，小组件快照、当前周次推导、`ScheduleScreen(firstWeekDate = …)` 三处共用。
+- 顺带修掉演示模式停在第 1 周、与真实周次对不上导致「今天」不高亮的问题。
+
+### 验证
+
+- 教务跳转：`:app:testDebugUnitTest` 417 通过；新增两条纯逻辑用例钉住 `zhjw1` 的真实跳转形状；另以临时探针跑通真实链路（`https://zhjw1.jju.edu.cn/jwglxt/` → 302 http → 升级 → 200 且含 `csrftoken`），探针文件未入库。
+- 周视图日期行：**真机确认已显示**（vivo V2403A / Android 16 / OriginOS 6，演示包）。
+- 小组件：`:widget:testDebugUnitTest` 28 通过，`:widget:compileDebugKotlin` 通过。桌面内可竖滑、「今日与明日」两栏各滑各的互不影响，均**已真机确认**（OriginOS 6）——一个组件内两个 `LazyColumn` 成立。仍未确认：点单行能否打开 App。
+
 ## [1.1.7] - 2026-09-19
 
 本版本修复一个发版阻塞级缺陷：v1.1.6 的 `versionCode` 从 16 倒退为 6，导致应用内更新检测失效、且新版无法覆盖安装。
