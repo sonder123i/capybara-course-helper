@@ -129,17 +129,6 @@ class WidgetTodayTest {
         assertEquals("模拟电子技术", evenWeek[4 to 2]!!.name)
     }
 
-    @Test fun rowsThatFitUsesRealHeightInsteadOfSizeBuckets() {
-        // 顶栏占 44dp、每行 46dp：4 行需要 228dp，给到 230dp 就该出 4 行
-        assertEquals(4, rowsThatFit(230.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
-        // 拉大到 300dp → 5 行（这正是「拉大了还是三行」要修掉的行为）
-        assertEquals(5, rowsThatFit(300.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
-        assertEquals(2, rowsThatFit(150.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
-        // 再矮也至少给一行，再高也不超过上限
-        assertEquals(1, rowsThatFit(30.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
-        assertEquals(10, rowsThatFit(2000.dp, chromeHeight = 44.dp, rowHeight = 46.dp, max = 10))
-    }
-
     @Test fun stripsCampusPrefixButKeepsLocationReadable() {
         assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区 致远楼A519"))
         assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区·致远楼A519"))

@@ -7,13 +7,14 @@ import androidx.compose.ui.unit.dp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.LocalContext
-import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.lazy.LazyColumn
+import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -75,8 +76,6 @@ class TodayTomorrowWidgetReceiver : GlanceAppWidgetReceiver() {
 private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     val context = LocalContext.current
     val colors = widgetColors()
-    // 每栏行数按真实尺寸算：顶栏 + 「今天/周三」小标题占 76dp，每行三行文字约 58dp
-    val maxRows = rowsThatFit(LocalSize.current.height, chromeHeight = 76.dp, rowHeight = 58.dp, max = 8)
     // 组件会长时间停在桌面上，每次渲染现取，别缓存
     val now = System.currentTimeMillis()
     val hasData = snapshot != null && snapshot.courses.isNotEmpty()
@@ -85,10 +84,10 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     // 两栏各自往后找「有课的一天」。左栏从今天找，右栏从左栏那天的后一天接着找，
     // 所以不会两栏撞在同一天上，也不会因为中间夹着没课的日子就断掉
     val left = if (snapshot != null && hasAnchor) {
-        WidgetToday.nextDayWithCourses(snapshot, fromOffset = 0, now = now, max = maxRows)
+        WidgetToday.nextDayWithCourses(snapshot, fromOffset = 0, now = now)
     } else null
     val right = if (snapshot != null && hasAnchor && left != null) {
-        WidgetToday.nextDayWithCourses(snapshot, fromOffset = left.offset + 1, now = now, max = maxRows)
+        WidgetToday.nextDayWithCourses(snapshot, fromOffset = left.offset + 1, now = now)
     } else null
 
     // 左栏那天是不是「今天」——决定空提示该说「今天没有课啦」还是「都上完啦」
@@ -98,6 +97,10 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
     val todayFinished = leftIsToday && !WidgetToday.hasCoursesOn(snapshot!!, dayOffset = 0, now = now)
     val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)
         ?.let { actionStartActivity(it) }
+    // 列表条目是独立的 RemoteViews，不继承根容器的点击，所以每行自己挂一次；行距也并进来，
+    // 一个条目只能放一个可组合项，再塞 Spacer 会多出一行。
+    val rowSpacing = GlanceModifier.padding(bottom = 6.dp)
+    val rowModifier = openApp?.let { rowSpacing.then(GlanceModifier.clickable(it)) } ?: rowSpacing
 
     Column(
         modifier = GlanceModifier
@@ -127,6 +130,7 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
                     }
                 ),
                 hasData = hasData,
+                rowModifier = rowModifier,
                 modifier = GlanceModifier.defaultWeight()
             )
             ColumnDivider()
@@ -142,6 +146,7 @@ private fun TodayTomorrowContent(snapshot: WidgetSnapshot?) {
                     }
                 ),
                 hasData = hasData,
+                rowModifier = rowModifier,
                 modifier = GlanceModifier.defaultWeight()
             )
         }
@@ -154,6 +159,7 @@ private fun DayColumn(
     rows: List<WidgetCourseRow>,
     emptyText: String,
     hasData: Boolean,
+    rowModifier: GlanceModifier,
     modifier: GlanceModifier
 ) {
     Column(modifier = modifier.fillMaxHeight()) {
@@ -162,9 +168,9 @@ private fun DayColumn(
         when {
             !hasData -> WidgetHint("")
             rows.isEmpty() -> WidgetHint(emptyText)
-            else -> rows.forEach { row ->
-                WidgetCourseRow(row, barHeight = 42)
-                Spacer(GlanceModifier.height(6.dp))
+            // defaultWeight 让列表吃掉栏头之外的剩余高度，两栏各自滚动互不相干
+            else -> LazyColumn(GlanceModifier.defaultWeight()) {
+                items(rows) { row -> WidgetCourseRow(row, barHeight = 42, modifier = rowModifier) }
             }
         }
     }

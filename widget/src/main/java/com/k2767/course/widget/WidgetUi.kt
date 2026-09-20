@@ -36,19 +36,6 @@ internal fun widgetColors() = WidgetColors(
 
 internal val DayNames = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
-/**
- * 按实际高度算「塞得下几行」。
- *
- * 不要用固定档位猜容量：响应式档位会挑「最接近」的那一档，`LocalSize` 拿到的是被挑中的
- * 档位尺寸而不是真实尺寸——组件拉大后仍只显示三行就是这么来的。所以这里一律用
- * [SizeMode.Exact] 拿真实高度，再按 `可用高度 ÷ 行高` 算行数。
- */
-internal fun rowsThatFit(height: Dp, chromeHeight: Dp, rowHeight: Dp, max: Int = 12): Int {
-    val available = height - chromeHeight
-    if (available <= 0.dp) return 1
-    return (available / rowHeight).toInt().coerceIn(1, max)
-}
-
 // ---------- 周课表网格的纵向排布 ----------
 
 /** 顶栏 + 间隔 + 星期行占掉的高度。底部露出空白就调大，最后一行被切就调小。 */
@@ -141,11 +128,11 @@ internal fun previewLabel(day: PreviewDay): String =
  * 挤在一行时地点会把时间顶掉（也和 WakeUp 课程表的组件一致）。
  */
 @Composable
-internal fun WidgetCourseRow(row: WidgetCourseRow, barHeight: Int = 46) {
+internal fun WidgetCourseRow(row: WidgetCourseRow, barHeight: Int = 46, modifier: GlanceModifier = GlanceModifier) {
     val colors = widgetColors()
     val bar = WidgetPalette.colors.getOrElse(row.colorIndex) { WidgetPalette.colors.first() }
     Row(
-        modifier = GlanceModifier.fillMaxWidth(),
+        modifier = GlanceModifier.fillMaxWidth().then(modifier),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
         Box(
