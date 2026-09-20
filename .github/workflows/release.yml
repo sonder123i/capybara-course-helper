@@ -222,8 +222,16 @@ jobs:
         env:
           TAG: ${{ steps.target.outputs.tag }}
         run: |
+          # 单测守住的是投递与合并逻辑，这些代码真的会跑，失败就该停。
           python3 -m unittest discover -s scripts/tests -p 'test_publish_announcement.py'
-          python3 scripts/publish_announcement.py --tag "$TAG" --validate-only
+          # 公告本身只报 warning：客户端还没接这条通道
+          # （SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT=false，announcement 包无调用点），
+          # 一份没人读的产物不该挡住发版。要与 release.sh 第 4b 步保持同一口径。
+          if [ ! -f "release-notes/${TAG}-announcement.json" ]; then
+            echo "::warning::缺少 release-notes/${TAG}-announcement.json，跳过公告校验"
+          elif ! python3 scripts/publish_announcement.py --tag "$TAG" --validate-only; then
+            echo "::warning::${TAG} 的公告不合规，本次不发布它（不影响发版）"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -563,7 +571,20 @@ jobs:
           echo "ERROR: 连续 3 次推送失败，请检查 main 分支状态"
           exit 1
 
-      - name: Verify Delivery and Publish Announcement
+      # 投递校验是硬门禁：线上 version.json 与 Gitee 附件必须对本次 tag 真实可用。
+      - name: Verify Gitee Delivery
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: >-
+          python3 -c 'import os, sys; sys.path.insert(0, "scripts");
+          import publish_announcement as p;
+          p.verify_delivery(p.Gitee(os.environ["GITEE_TOKEN"]), os.environ["TAG"], os.environ["RELEASE_NOTES"])'
+
+      # 公告发布是尽力而为：客户端还没接这条通道，失败只标黄，不把发版判死。
+      - name: Publish Release Announcement
+        continue-on-error: true
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}

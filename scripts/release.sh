@@ -207,31 +207,16 @@ fi
 
 note "更新日志 $(printf '%s\n' "$NOTES" | wc -l | tr -d ' ') 行，来自 ${NOTES_FILE}"
 
-# ── 4b. 应用内公告必须存在且合规 ─────────────────────────────────────
-# CI 的 Validate Release Announcement 走的是 publish_announcement.py，缺文件
-# 直接失败。这个检查原先只存在于 CI，而它排在 assembleRelease 之后——漏写公告
-# 要白编译一整轮才暴露。这里用同一个脚本提前拦下。
+# ── 4b. 应用内公告：有就顺手校验，没有就跳过 ─────────────────────────
+# 2026-09-20 从「缺就 die」降级为提示。原因是客户端根本读不到它：
+# SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT 为 false，且 announcement 包里的
+# AnnouncementDialog / AnnouncementHistoryScreen 在全仓库没有任何调用点。
+# 一道没人消费的产物不该反过来挡住发布（v1.1.7 就为它白跑过一整轮流水线）。
+# 真要做公告界面时，把这里的 note 换回 die 就行。
 #
-# 用 python 调库而不是在 bash 里手写校验，是为了只有一份规则：CI 与本地跑的是
-# 同一段 validate_announcement，不会各写各的然后悄悄分叉。
+# 校验仍然走 python 调库而不是在 bash 里重写规则：CI 与本地共用同一个
+# validate_announcement，不会各写各的然后悄悄分叉。
 ANNOUNCEMENT_FILE="release-notes/${TAG}-announcement.json"
-if [ ! -f "$ANNOUNCEMENT_FILE" ]; then
-    mkdir -p release-notes
-    cat > "$ANNOUNCEMENT_FILE" <<TEMPLATE
-{
-  "id": "$(date +%Y%m%d)_$(printf '%s' "$TAG" | sed 's/\./_/g')_release",
-  "title": "${TAG} 更新：",
-  "content": "这里写应用内公告的正文，支持 Markdown。\\n\\n用 \\\\n 表示换行。",
-  "type": "info",
-  "audience": "app",
-  "contentType": "markdown",
-  "showOnce": true,
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "created_by": "admin"
-}
-TEMPLATE
-    die "已生成 ${ANNOUNCEMENT_FILE}，请填好 title 与 content 后重新运行本脚本。"
-fi
 
 PYTHON_BIN=""
 for candidate in python3 python py; do
@@ -241,8 +226,12 @@ for candidate in python3 python py; do
     fi
 done
 
-if [ -n "$PYTHON_BIN" ]; then
-    "$PYTHON_BIN" - "$TAG" "$ANNOUNCEMENT_FILE" <<'PYCHECK' || die "应用内公告校验未通过，见上方报错。"
+if [ ! -f "$ANNOUNCEMENT_FILE" ]; then
+    note "提示：没有 ${ANNOUNCEMENT_FILE}，跳过公告校验"
+elif [ -z "$PYTHON_BIN" ]; then
+    note "警告：未找到 python，跳过公告校验（CI 仍会检查）"
+else
+    "$PYTHON_BIN" - "$TAG" "$ANNOUNCEMENT_FILE" <<'PYCHECK' || note "警告：${ANNOUNCEMENT_FILE} 不合规，本版公告不会发布"
 import json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path("scripts").resolve()))
@@ -251,12 +240,10 @@ tag, path = sys.argv[1], sys.argv[2]
 try:
     validate_announcement(json.loads(Path(path).read_text(encoding="utf-8")), tag)
 except (ValueError, json.JSONDecodeError) as exc:
-    print(f"ERROR: {path} 不合规: {exc}", file=sys.stderr)
+    print(f"WARNING: {path} 不合规: {exc}", file=sys.stderr)
     sys.exit(1)
 print(f"  公告 {Path(path).name} 校验通过")
 PYCHECK
-else
-    note "警告：未找到 python，跳过公告校验（CI 仍会检查）"
 fi
 
 # ── 5. 写 version.properties ─────────────────────────────────────────
@@ -296,9 +283,12 @@ else
 fi
 
 # ── 7. 提交并打 tag ──────────────────────────────────────────────────
-# 公告文件是第 4b 步校验的那个，必须一起进提交：CI 在 tag 指向的 tree 里找它。
-git add "$VERSION_FILE" "$NOTES_FILE" "$ANNOUNCEMENT_FILE" "$CHANGELOG" 2>/dev/null \
-    || git add "$VERSION_FILE" "$NOTES_FILE" "$ANNOUNCEMENT_FILE"
+# 公告文件按第 4b 步的口径处理：存在才纳入提交，缺了不算错。
+ADD_PATHS=("$VERSION_FILE" "$NOTES_FILE")
+if [ -f "$ANNOUNCEMENT_FILE" ]; then
+    ADD_PATHS+=("$ANNOUNCEMENT_FILE")
+fi
+git add "${ADD_PATHS[@]}" "$CHANGELOG" 2>/dev/null || git add "${ADD_PATHS[@]}"
 git commit -q -m "release: ${VERSION}" -m "$(printf '%s\n' "$NOTES")"
 git tag -a "$TAG" -m "Release ${TAG}"
 note "已提交并打好 tag ${TAG}"
