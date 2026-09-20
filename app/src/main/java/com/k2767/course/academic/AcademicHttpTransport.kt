@@ -17,6 +17,7 @@ import java.io.IOException
 import java.net.URI
 import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -73,6 +74,7 @@ class AcademicHttpTransport(
         var url = initialUrl
         var currentMethod = method
         var redirects = 0
+        var upgradedFromHttp = false
         var readRetries = 0
         while (true) {
             session.requireActive()
@@ -100,10 +102,15 @@ class AcademicHttpTransport(
                         currentMethod = "GET"
                     }
                     if (++redirects > 5) throw AcademicException(AcademicStatus.PAGE_CHANGED, "Too many redirects")
-                    val next = parsed.resolve(location)?.toString()
+                    val resolved = parsed.resolve(location)
                         ?: throw AcademicException(AcademicStatus.UNTRUSTED_URL, "Invalid redirect")
-                    ensureAllowed(next.toHttpUrlOrNull() ?: throw AcademicException(AcademicStatus.UNTRUSTED_URL, "Invalid redirect"))
-                    url = next
+                    // 一条链只升级一次：服务器若坚持对 https 也回 http，宁可快速失败也不互相 302。
+                    val upgraded = if (upgradedFromHttp) null
+                        else AcademicUrlPolicy.httpsUpgrade(resolved.toString(), school.protocol, allowedHosts)
+                    if (upgraded != null) upgradedFromHttp = true
+                    val next = upgraded ?: resolved
+                    ensureAllowed(next)
+                    url = next.toString()
                     continue
                 }
                 val source = it.body?.source()
@@ -117,6 +124,9 @@ class AcademicHttpTransport(
                 }
             } catch (e: IOException) {
                 currentCoroutineContext().ensureActive()
+                // 证书问题重试无用，也不能混进「网络不可用」里，否则教务换证书那阵只会看到网络提示。
+                if (e is SSLHandshakeException) throw AcademicException(
+                    AcademicStatus.UNTRUSTED_URL, "教务系统的 HTTPS 证书校验失败：${parsed.host}，请改用网页登录", e)
                 if (!write && readRetries++ < 1) {
                     delay(250)
                     continue
@@ -128,10 +138,16 @@ class AcademicHttpTransport(
     }
 
     private fun ensureAllowed(url: HttpUrl) {
-        val allowed = AcademicUrlPolicy.isAllowed(url.toString(), school.protocol, allowedHosts)
-        if (!allowed) throw AcademicException(AcademicStatus.UNTRUSTED_URL, "Academic redirect is outside the configured school hosts")
-        if (school.protocol.equals("https", true) && url.isHttps.not()) {
-            throw AcademicException(AcademicStatus.UNTRUSTED_URL, "HTTPS academic configuration cannot downgrade to HTTP")
+        val value = url.toString()
+        if (AcademicUrlPolicy.isAllowed(value, school.protocol, allowedHosts)) return
+        // 三种拒绝原因分开报：以前降级也报成「跳到了别的域名」，把排查方向带偏。
+        throw when (AcademicUrlPolicy.hostMatch(value, allowedHosts)) {
+            HostMatch.ALLOWED -> AcademicException(
+                AcademicStatus.UNTRUSTED_URL, "教务页面跳转到了 HTTP 明文地址：${url.host}，未跟随降级")
+            HostMatch.PORT_MISMATCH -> AcademicException(
+                AcademicStatus.UNTRUSTED_URL, "教务页面跳转到了未配置的端口：${url.host}:${url.port}")
+            HostMatch.FOREIGN_HOST -> AcademicException(
+                AcademicStatus.UNTRUSTED_URL, "教务页面跳转到了未配置的域名：${url.host}")
         }
     }
 

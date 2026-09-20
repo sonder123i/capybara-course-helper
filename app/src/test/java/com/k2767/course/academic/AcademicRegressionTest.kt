@@ -105,6 +105,28 @@ class AcademicRegressionTest {
         assertEquals("https://jw.example.edu.cn/custom_jsxsd/", AcademicGatewayFactory.loginUrl(oldQz))
     }
 
+    @Test fun whitelistRejectionsNameHostPortAndDowngradeApart() {
+        val hosts = listOf("jw.example.edu.cn")
+        assertEquals(HostMatch.ALLOWED, AcademicUrlPolicy.hostMatch("https://jw.example.edu.cn/", hosts))
+        assertEquals(HostMatch.ALLOWED, AcademicUrlPolicy.hostMatch("http://jw.example.edu.cn/", hosts))
+        assertEquals(HostMatch.PORT_MISMATCH, AcademicUrlPolicy.hostMatch("https://jw.example.edu.cn:8443/", hosts))
+        assertEquals(HostMatch.FOREIGN_HOST, AcademicUrlPolicy.hostMatch("https://sso.example.edu.cn/cas/login", hosts))
+        assertEquals(HostMatch.FOREIGN_HOST, AcademicUrlPolicy.hostMatch("https://user@jw.example.edu.cn/", hosts))
+        // hostMatch 只回答域名与端口；是否放行仍由 isAllowed 按学校协议决定。
+        assertFalse(AcademicUrlPolicy.isAllowed("http://jw.example.edu.cn/", "https", hosts))
+    }
+
+    @Test fun sameHostHttpRedirectsAreUpgradedInsteadOfRejected() {
+        val hosts = listOf("zhjw1.jju.edu.cn")
+        // 实测形状：https://zhjw1.jju.edu.cn/jwglxt/ 的 302 把 Location 写成了 http。
+        assertEquals("https://zhjw1.jju.edu.cn/jwglxt/xtgl/login_slogin.html",
+            AcademicUrlPolicy.httpsUpgrade("http://zhjw1.jju.edu.cn/jwglxt/xtgl/login_slogin.html", "https", hosts)?.toString())
+        assertNull(AcademicUrlPolicy.httpsUpgrade("http://zhjw1.jju.edu.cn:8080/jwglxt/", "https", hosts))
+        assertNull(AcademicUrlPolicy.httpsUpgrade("http://cas.example.edu.cn/cas/login", "https", hosts))
+        assertNull(AcademicUrlPolicy.httpsUpgrade("https://zhjw1.jju.edu.cn/jwglxt/", "https", hosts))
+        assertNull(AcademicUrlPolicy.httpsUpgrade("http://zhjw1.jju.edu.cn/jwglxt/", "http", hosts))
+    }
+
     @Test fun quotedDataTablesSourceKeepsFiltersAndTheOperationQuery() {
         val config = QzScriptParser.parse(AcademicCoreTest.fixture("qz-category.html"), "https://jw.example.edu.cn/jsxsd/xsxkkc/getGgxxk", CourseQuery("大学语文"))!!
         assertTrue(config.listUrl.contains("sfym=false&sfct=true"))

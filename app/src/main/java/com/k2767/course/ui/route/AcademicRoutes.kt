@@ -542,6 +542,6 @@ private fun AcademicStatus.displayName(): String = when (this) {
     AcademicStatus.UNSUPPORTED -> "此项操作请在学校网页完成"
     AcademicStatus.INVALID_CREDENTIALS -> "账号或密码不正确"
     AcademicStatus.NETWORK_RETRYABLE -> "网络暂不可用，请稍后重试"
-    AcademicStatus.UNTRUSTED_URL -> "学校页面跳转到了未配置的域名"
+    AcademicStatus.UNTRUSTED_URL -> "教务页面跳转到了不受信任的地址"
     AcademicStatus.VALIDATION_FAILED -> "学校未接受此次操作"
 }
