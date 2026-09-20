@@ -71,6 +71,16 @@ class ScheduleAdaptationDeviceTest {
                     val label = compose.onNodeWithTag("schedule-weekday-$day", true).fetchSemanticsNode().boundsInRoot
                     val card = compose.onNodeWithTag("schedule-course-day-$day", true).fetchSemanticsNode().boundsInRoot
                     assertTrue("Weekday $day is shifted at $w/$f/$p", abs(label.center.x - card.center.x) <= 2f)
+                    // 日期那一行必须画出与星期行相称的高度。测量样式与渲染样式的 lineHeight 一旦
+                    // 脱节，Column 会把剩余高度压给第二个子项，日期就变成一段没有像素的行距空白
+                    // （v1.1.7 就是这样：行高 34dp、两行实需 51dp，日期只剩 7dp 的纯行距）。
+                    val cell = compose.onNodeWithTag("schedule-weekday-$day", useUnmergedTree = true)
+                    // 只剩一个子节点时 onFirst 与 onLast 相同，比例恒为 1，断言会静默通过
+                    assertEquals("Weekday $day lost a line at $w/$f/$p", 2, cell.onChildren().fetchSemanticsNodes().size)
+                    val weekdayHeight = cell.onChildren().onFirst().fetchSemanticsNode().boundsInRoot.height
+                    val dateHeight = cell.onChildren().onLast().fetchSemanticsNode().boundsInRoot.height
+                    assertTrue("Date line squeezed to ${dateHeight}px under weekday ${weekdayHeight}px at $w/$f/$p",
+                        dateHeight >= weekdayHeight * 0.5f)
                 }
                 val results = mutableListOf<TextLayoutResult>()
                 compose.onNodeWithText("第 24 周", useUnmergedTree = true)

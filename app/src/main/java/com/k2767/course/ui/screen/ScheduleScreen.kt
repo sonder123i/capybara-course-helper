@@ -199,6 +199,26 @@ private class ScheduleHeaderMetrics(
     val travel: Dp get() = expanded - collapsed
 }
 
+/**
+ * 星期条两行文字的样式。**测量与渲染必须共用这两个函数**：M3 的 `Text(fontSize = …)` 只把
+ * 字号盖到 `style` 上，`lineHeight` 仍继承 `bodyLarge` 的 24sp。测量若用裸 `TextStyle`
+ * （只有 fontSize），量到的是字体自然行高，两行少算约 20dp，行高就被定小了——
+ * Column 把剩余高度传给下一个子项，日期那一行会被压成一段纯行距空白，画了却没有一个像素。
+ *
+ * 参数是折叠进度（0=展开、1=收起），行高取字号的约 1.2 倍，两行加起来仍落进行高内。
+ */
+private fun weekdayStyle(collapse: Float) = TextStyle(
+    fontSize = lerpSp(13f, 11.5f, collapse),
+    lineHeight = lerpSp(16f, 14f, collapse),
+    fontWeight = FontWeight.SemiBold
+)
+
+private fun weekdayDateStyle(collapse: Float) = TextStyle(
+    fontSize = lerpSp(9f, 8f, collapse),
+    lineHeight = lerpSp(11f, 10f, collapse),
+    fontWeight = FontWeight.Medium
+)
+
 @Composable
 private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMetrics {
     val screen = rememberScreenMetrics()
@@ -213,15 +233,11 @@ private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMet
         val topPad = screen.tall(HeaderTopPadExpanded, 6.dp)
         val titleGap = screen.tall(HeaderTitleGap, 4.dp)
         // 星期条是「星期 + 日期」两行。定高必须实测，不能写死：Column 逐个测量子项时会把
-        // 剩余高度传给下一个，行高一旦小于两行文字，日期就被测成 0 高、整行什么都不画——
-        // 系统字体放大时必然踩到，因为文字按 fontScale 长，写死的行高不长。
-        val weekdayStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        val weekdayDateStyle = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Medium)
-        val weekdayCompactStyle = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-        val weekdayDateCompactStyle = TextStyle(fontSize = 8.sp, fontWeight = FontWeight.Medium)
+        // 剩余高度传给下一个，行高一旦小于两行文字，日期就被测成 0 高、整行什么都不画。
+        // 测量与渲染共用 weekdayStyle / weekdayDateStyle，行高才不会再对不上。
         val weekRow = maxOf(
             screen.tall(HeaderWeekRowExpanded, 30.dp),
-            textHeight("一", weekdayStyle) + textHeight("18", weekdayDateStyle) + 3.dp
+            textHeight("一", weekdayStyle(0f)) + textHeight("18", weekdayDateStyle(0f)) + 3.dp
         )
         val bottomPad = screen.tall(HeaderBottomPadExpanded, 4.dp)
         // Four 48dp targets keep their original row. Fit the text to the actual parent,
@@ -243,7 +259,7 @@ private fun rememberScheduleHeaderMetrics(availableWidth: Dp): ScheduleHeaderMet
         val actionCollapsed = if (stacked) titleCollapsed + 6.dp + 48.dp else maxOf(HeaderActionRowCollapsed, titleCollapsed)
         val collapsedWeekRow = maxOf(
             HeaderWeekRowCollapsed,
-            textHeight("一", weekdayCompactStyle) + textHeight("18", weekdayDateCompactStyle) + 2.dp
+            textHeight("一", weekdayStyle(1f)) + textHeight("18", weekdayDateStyle(1f)) + 2.dp
         )
         ScheduleHeaderMetrics(
             // 展开态：上留白 + 标题行 + 标题间距 + 周次行 + 下留白
@@ -844,6 +860,7 @@ fun WeekHeaderCompact(
                         if (monthDate != null) Text(
                             text = "${monthDate.get(Calendar.MONTH) + 1}月",
                             fontSize = lerpSp(9f, 8f, collapse),
+                            lineHeight = lerpSp(11f, 10f, collapse),
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                 alpha = MaterialTheme.colorScheme.onSurfaceVariant.alpha * 0.72f * swipeAlpha
                             ),
@@ -964,13 +981,19 @@ private fun CompactWeekdayLabel(
     ) {
         Text(
             text = day,
-            fontSize = lerpSp(13f, 11.5f, collapse),
-            fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Medium,
+            style = weekdayStyle(collapse).copy(
+                fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Medium
+            ),
             color = textColor,
             maxLines = 1
         )
-        if (date != null) Text(date, fontSize = lerpSp(9f, 8f, collapse), color = textColor,
-            modifier = Modifier.graphicsLayer { alpha = weekSwipeAlpha(weekOffset) }, maxLines = 1)
+        if (date != null) Text(
+            date,
+            style = weekdayDateStyle(collapse),
+            color = textColor,
+            modifier = Modifier.graphicsLayer { alpha = weekSwipeAlpha(weekOffset) },
+            maxLines = 1
+        )
         else Box(
             modifier = Modifier
                 .scale(dotScale)
