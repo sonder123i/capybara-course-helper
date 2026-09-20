@@ -207,6 +207,58 @@ fi
 
 note "更新日志 $(printf '%s\n' "$NOTES" | wc -l | tr -d ' ') 行，来自 ${NOTES_FILE}"
 
+# ── 4b. 应用内公告必须存在且合规 ─────────────────────────────────────
+# CI 的 Validate Release Announcement 走的是 publish_announcement.py，缺文件
+# 直接失败。这个检查原先只存在于 CI，而它排在 assembleRelease 之后——漏写公告
+# 要白编译一整轮才暴露。这里用同一个脚本提前拦下。
+#
+# 用 python 调库而不是在 bash 里手写校验，是为了只有一份规则：CI 与本地跑的是
+# 同一段 validate_announcement，不会各写各的然后悄悄分叉。
+ANNOUNCEMENT_FILE="release-notes/${TAG}-announcement.json"
+if [ ! -f "$ANNOUNCEMENT_FILE" ]; then
+    mkdir -p release-notes
+    cat > "$ANNOUNCEMENT_FILE" <<TEMPLATE
+{
+  "id": "$(date +%Y%m%d)_$(printf '%s' "$TAG" | sed 's/\./_/g')_release",
+  "title": "${TAG} 更新：",
+  "content": "这里写应用内公告的正文，支持 Markdown。\\n\\n用 \\\\n 表示换行。",
+  "type": "info",
+  "audience": "app",
+  "contentType": "markdown",
+  "showOnce": true,
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "created_by": "admin"
+}
+TEMPLATE
+    die "已生成 ${ANNOUNCEMENT_FILE}，请填好 title 与 content 后重新运行本脚本。"
+fi
+
+PYTHON_BIN=""
+for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+
+if [ -n "$PYTHON_BIN" ]; then
+    "$PYTHON_BIN" - "$TAG" "$ANNOUNCEMENT_FILE" <<'PYCHECK' || die "应用内公告校验未通过，见上方报错。"
+import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path("scripts").resolve()))
+from publish_announcement import validate_announcement
+tag, path = sys.argv[1], sys.argv[2]
+try:
+    validate_announcement(json.loads(Path(path).read_text(encoding="utf-8")), tag)
+except (ValueError, json.JSONDecodeError) as exc:
+    print(f"ERROR: {path} 不合规: {exc}", file=sys.stderr)
+    sys.exit(1)
+print(f"  公告 {Path(path).name} 校验通过")
+PYCHECK
+else
+    note "警告：未找到 python，跳过公告校验（CI 仍会检查）"
+fi
+
 # ── 5. 写 version.properties ─────────────────────────────────────────
 cat > "$VERSION_FILE" <<PROPS
 #Release version. 唯一权威是 git tag：CI 会从 tag 反写这个文件
@@ -244,7 +296,9 @@ else
 fi
 
 # ── 7. 提交并打 tag ──────────────────────────────────────────────────
-git add "$VERSION_FILE" "$NOTES_FILE" "$CHANGELOG" 2>/dev/null || git add "$VERSION_FILE" "$NOTES_FILE"
+# 公告文件是第 4b 步校验的那个，必须一起进提交：CI 在 tag 指向的 tree 里找它。
+git add "$VERSION_FILE" "$NOTES_FILE" "$ANNOUNCEMENT_FILE" "$CHANGELOG" 2>/dev/null \
+    || git add "$VERSION_FILE" "$NOTES_FILE" "$ANNOUNCEMENT_FILE"
 git commit -q -m "release: ${VERSION}" -m "$(printf '%s\n' "$NOTES")"
 git tag -a "$TAG" -m "Release ${TAG}"
 note "已提交并打好 tag ${TAG}"
