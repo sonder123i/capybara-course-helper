@@ -208,22 +208,24 @@ fun ScheduleRoute() {
         )
     }
 
+    // 演示模式没有真实开学日期，用「本周一」兜底。这个口径必须**课表与小组件共用**：
+    // 以前只有小组件兜底，于是桌面上的组件算得出周次，应用内的星期条却算不出日期与月份。
+    val effectiveTimeBase = displayedTimeBase ?: if (UserManager.getInstance().isDemoMode) {
+        com.k2767.course.schedule.ScheduleTimeBase(
+            firstWeekDate = com.k2767.course.schedule.ScheduleTimeBase.dateFromMillis(
+                com.k2767.course.schedule.ScheduleDates.mondayOfWeek(System.currentTimeMillis()).timeInMillis
+            )
+        )
+    } else null
+
     // 桌面小组件（今日课程）：课表数据变化时同步一份快照，并让组件立即重绘。
     // 组件自己按日期与周次算「今天上什么」，这里只负责给原始数据。
-    LaunchedEffect(courses, periodTimes, displayedTimeBase?.firstWeekDate, routeAccountKey) {
+    LaunchedEffect(courses, periodTimes, effectiveTimeBase?.firstWeekDate, routeAccountKey) {
         if (courses.isEmpty()) return@LaunchedEffect
-        // 演示模式没有真实开学日期，用「本周一」兜底——否则组件算不出第几周，会一个课都不显示
-        val widgetTimeBase = displayedTimeBase ?: if (UserManager.getInstance().isDemoMode) {
-            com.k2767.course.schedule.ScheduleTimeBase(
-                firstWeekDate = com.k2767.course.schedule.ScheduleTimeBase.dateFromMillis(
-                    com.k2767.course.schedule.ScheduleDates.mondayOfWeek(System.currentTimeMillis()).timeInMillis
-                )
-            )
-        } else null
         com.k2767.course.widget.WidgetSnapshotWriter.write(
             context = context,
             schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
-            timeBase = widgetTimeBase,
+            timeBase = effectiveTimeBase,
             periods = periodTimes.map {
                 com.k2767.course.widget.WidgetPeriodTime(it.period, it.startTime, it.endTime)
             },
@@ -458,14 +460,14 @@ fun ScheduleRoute() {
     LaunchedEffect(displayedTimeBase) {
         periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
     }
-    LaunchedEffect(resolvedTermId, displayedTimeBase?.firstWeekDate) {
+    LaunchedEffect(resolvedTermId, effectiveTimeBase?.firstWeekDate) {
         if (resolvedTermId.isBlank()) return@LaunchedEffect
-        val calendar = "$resolvedTermId|${displayedTimeBase?.firstWeekDate.orEmpty()}"
+        val calendar = "$resolvedTermId|${effectiveTimeBase?.firstWeekDate.orEmpty()}"
         // Apply date changes when saved, including system-back dismissal. Retain a
         // browsed week across page restoration and unrelated reminder/time changes.
         if (appliedCalendar != calendar) {
             appliedCalendar = calendar
-            currentWeek = ScheduleDates.weekAt(displayedTimeBase?.firstWeekDate, System.currentTimeMillis()) ?: 1
+            currentWeek = ScheduleDates.weekAt(effectiveTimeBase?.firstWeekDate, System.currentTimeMillis()) ?: 1
         }
     }
     LaunchedEffect(undoDeadline) {
@@ -486,7 +488,7 @@ fun ScheduleRoute() {
         onRetry = { loadSchedule(true) },
         periodTimes = periodTimes,
         periodCount = periodCount,
-        firstWeekDate = displayedTimeBase?.firstWeekDate,
+        firstWeekDate = effectiveTimeBase?.firstWeekDate,
         weekRequestKey = appliedCalendar.orEmpty(),
         onWeekChange = { currentWeek = it },
         onCourseClick = {
