@@ -1,7 +1,7 @@
 {
-  "versionCode": 10107,
-  "versionName": "1.1.7",
-  "releaseNotes": "修好了「检查更新」一直提示已是最新、装不上新版的问题。\n问题出在版本号：上个版本的内部版本号比更早的版本还小，系统判定成降级，更新自然被挡住。\n现在改用由版本号直接算出的内部编号，不会再出现倒退。\n顺带把应用读取版本信息的那份文件接进了发版流程，之前它靠手工维护，长期落后于实际版本。",
-  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.1.7/app-release.apk",
+  "versionCode": 10108,
+  "versionName": "1.1.8",
+  "releaseNotes": "教务系统登录时，如果服务器把自己跳转的地址写成了 http，现在会自动改回 https 再继续登录，不再报「跳转到了未配置的域名」。这类教务在反向代理后面很常见，之前会直接卡在登录第一步。\n登录失败的提示改成了中文，并且会说清到底卡在域名、端口还是证书上，附上那个具体地址。证书过期或不受信任时，不再被误报成「网络问题」。\n周视图星期下面的日期显示出来了。它从写下那天起一直被行高压成一段空白，只有把系统字体调到最大时才会漏出一点边角。\n「今日课程」和「今日与明日」两个桌面小组件改成可以上下滑动，下午和晚上的课不再被截掉。「今日与明日」左右两栏各滑各的，今天翻今天、明天翻明天。",
+  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.1.8/app-release.apk",
   "forceUpdate": false
 }
