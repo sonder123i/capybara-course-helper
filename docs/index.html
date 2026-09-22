@@ -500,7 +500,23 @@ html[data-theme="light"] .promo-frame{
   transform:scale(1.075);background:rgba(255,255,255,.27);
 }
 .promo-cover:active .promo-play{transform:scale(.96)}
-.promo-play svg{width:34%;height:34%;fill:#fff;margin-left:9%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+.promo-ico-play{width:34%;height:34%;fill:#fff;margin-left:9%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+
+/* 播放键 ↔ 加载转圈 的切换。
+   点下去先换成转圈，等真正出画（playing 事件）封面才淡出 ——
+   否则"点了没反应"的那一秒会被当成没点上、再点一次。
+   （这里用 CSS animation 是安全的：页面不是 Remotion 渲染，不受
+    "动画必须由 frame 驱动"那条约束。） */
+.promo-ico-spin{
+  display:none;width:34%;height:34%;border-radius:50%;
+  border:2.5px solid rgba(255,255,255,.30);border-top-color:#fff;
+  animation:promo-spin .75s linear infinite;
+}
+@keyframes promo-spin{to{transform:rotate(360deg)}}
+.promo-cover.is-loading .promo-ico-play{display:none}
+.promo-cover.is-loading .promo-ico-spin{display:block}
+.promo-cover.is-loading .promo-play,
+.promo-cover.is-loading:hover .promo-play{transform:none;background:rgba(255,255,255,.20)}
 
 /* 左下角的时长角标。transition 写在基础样式上，这样播放（淡出）和
    播完封面回来（淡入）两头都有过渡 —— 只挂在 .is-gone 上的话，
@@ -619,15 +635,16 @@ html.lenis,html.lenis body{height:auto}
       </video>
       <button class="promo-cover" id="promoCover" type="button" aria-label="播放宣传片">
         <span class="promo-play">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.4v15.2l13.2-7.6z"/></svg>
+          <svg class="promo-ico-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.4v15.2l13.2-7.6z"/></svg>
+          <span class="promo-ico-spin" aria-hidden="true"></span>
         </span>
       </button>
       <span class="promo-len">0:48</span>
     </div>
 
     <p class="promo-foot">
-      <span><b>1280×720</b> · 3.1 MB</span>
-      <span>点击才加载，不占首屏带宽</span>
+      <span><b>1280×720</b> · 1.6 MB</span>
+      <span>滚到这儿才开始加载，不占首屏带宽</span>
       <span>片子放在 <code>assets/video/</code></span>
     </p>
   </div>
@@ -958,23 +975,58 @@ html.lenis,html.lenis body{height:auto}
     });
   }
 
-  /* 宣传片 ── 封面点击才去加载 video（配合 preload="none"），
-     否则 3.1MB 的片子一进页面就跟首屏抢带宽。
-     控制条也等到播放时才挂：封面阶段顶着一条播放器控件会很出戏。
-     不加 autoplay —— 48s 完整片带 BGM，详情页里自动播又费流量又吵。 */
+  /* 宣传片 ── 两个体验要点（都来自"国内访问 GitHub Pages 会卡"这个实测）：
+
+     1. 滚进视口才把 preload 放开。标签上写死 preload="none"，
+        不让首屏访客无条件付流量；但用户从滚过来到真去点播放，
+        通常有好几秒 —— 这段时间足够把这 1.6MB 收下大半，点击即播。
+        （之前是"点了才开始下"，实测 TTFB 0.7s + 缓冲，要等 2~3 秒才出画，
+         用户反馈就是"卡卡的"。）
+
+     2. 点下去先把播放键换成转圈，等 playing 事件才淡出封面。
+        否则点击到出画之间那一秒毫无反馈，会被当成没点上、再点一次。
+
+     控制条仍等到点击时才挂：封面阶段顶着一条播放器控件很出戏。
+     也不加 autoplay —— 48s 完整片带 BGM，自动播又费流量又吵。 */
   (function promoPlayer() {
     var v = document.getElementById('promoVideo');
     var c = document.getElementById('promoCover');
     if (!v || !c) return;
+
+    /* 提前 300px 开始预加载 —— 用户视线还没到视频，数据已经在下 */
+    if ('IntersectionObserver' in window) {
+      var vio = new IntersectionObserver(function (entries) {
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].isIntersecting) {
+            v.preload = 'auto';
+            vio.disconnect();
+            break;
+          }
+        }
+      }, { rootMargin: '300px 0px' });
+      vio.observe(v);
+    }
+
     c.addEventListener('click', function () {
-      c.classList.add('is-gone');
+      if (c.classList.contains('is-loading')) return;   /* 防连点 */
+      c.classList.add('is-loading');
       v.controls = true;
       var p = v.play();
-      /* 这里是用户手势触发，正常不会被拦；万一被拦就把封面放回去，别留一块黑 */
+      /* 点击算用户手势，正常不会被拦；万一被拦就退回封面，别留一块黑 */
       if (p && p.catch) {
-        p.catch(function () { c.classList.remove('is-gone'); v.controls = false; });
+        p.catch(function () {
+          c.classList.remove('is-loading');
+          v.controls = false;
+        });
       }
     });
+
+    /* 真正出画了，封面才淡出 */
+    v.addEventListener('playing', function () {
+      c.classList.remove('is-loading');
+      c.classList.add('is-gone');
+    });
+
     /* 播完把封面放回来，给一个明确的「再看一遍」入口。
        ★ 别指望 poster 会回来：<video> 一旦播过就保留解码帧，poster 只在
        「还没有可用帧」时显示。所以此时封面底下是落版的最后一帧（品牌 slogan），
