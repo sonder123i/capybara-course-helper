@@ -444,6 +444,89 @@ html.js-reveal .rv.in{opacity:1;transform:none}
   .progress{display:none !important}
 }
 
+/* ---------- 宣传片 ----------
+   视频是 1280x720 / 3.1MB / faststart（moov 前置，可边下边播）。
+   ★ 不自动播放：48s 完整片带 BGM，详情页里自动播既费流量又吵。
+   改用「封面 + 播放键」——封面是 webp 只有 31KB，首屏零负担。 */
+.promo-frame{
+  position:relative;border-radius:var(--r);overflow:hidden;
+  aspect-ratio:16/9;background:#0A0D14;
+  box-shadow:
+    0 48px 96px -46px rgba(0,0,0,.92),
+    0 0 0 1px var(--line-2),
+    inset 0 1px 0 rgba(255,255,255,.12);
+}
+html[data-theme="light"] .promo-frame{
+  background:#D3DAE4;
+  box-shadow:
+    0 40px 84px -40px rgba(20,35,60,.52),
+    0 14px 30px -18px rgba(20,35,60,.30),
+    0 0 0 1px rgba(11,16,22,.15),
+    inset 0 1px 0 rgba(255,255,255,.95);
+}
+/* 片子的底色是浅灰（#EDF0F5），跟站点的深底之间需要一圈过渡，
+   否则会是一块生硬的亮方块。用 ::before 压一道由深到透明的渐晕。 */
+.promo-frame::before{
+  content:"";position:absolute;inset:0;z-index:2;pointer-events:none;border-radius:inherit;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),
+             inset 0 0 60px -20px rgba(6,8,15,.28);
+}
+.promo-video{
+  display:block;width:100%;height:100%;object-fit:cover;background:#0A0D14;
+}
+
+/* 封面层：整块可点，中央一枚玻璃播放键 */
+.promo-cover{
+  position:absolute;inset:0;z-index:3;border:0;padding:0;margin:0;
+  display:grid;place-items:center;cursor:pointer;
+  background:linear-gradient(180deg,rgba(6,8,15,.06) 0%,rgba(6,8,15,.30) 62%,rgba(6,8,15,.52) 100%);
+  transition:opacity var(--dur-moderate-02) var(--ease-standard),
+             visibility var(--dur-moderate-02) var(--ease-standard);
+}
+.promo-cover.is-gone{opacity:0;visibility:hidden;pointer-events:none}
+.promo-play{
+  width:clamp(62px,7.4vw,88px);height:clamp(62px,7.4vw,88px);
+  border-radius:50%;display:grid;place-items:center;
+  background:rgba(255,255,255,.17);
+  -webkit-backdrop-filter:blur(18px) saturate(170%);
+  backdrop-filter:blur(18px) saturate(170%);
+  border:1px solid rgba(255,255,255,.44);
+  box-shadow:0 20px 48px -16px rgba(0,0,0,.72),
+             inset 0 1px 0 rgba(255,255,255,.42);
+  transition:transform var(--dur-moderate-01) var(--ease-spring),
+             background var(--dur-fast-02) var(--ease-standard);
+}
+.promo-cover:hover .promo-play{
+  transform:scale(1.075);background:rgba(255,255,255,.27);
+}
+.promo-cover:active .promo-play{transform:scale(.96)}
+.promo-play svg{width:34%;height:34%;fill:#fff;margin-left:9%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+
+/* 左下角的时长角标。transition 写在基础样式上，这样播放（淡出）和
+   播完封面回来（淡入）两头都有过渡 —— 只挂在 .is-gone 上的话，
+   移除类名那一刻会瞬跳。 */
+.promo-len{
+  position:absolute;left:16px;bottom:15px;z-index:4;
+  font-size:12.5px;letter-spacing:.04em;font-variant-numeric:tabular-nums;
+  color:rgba(255,255,255,.94);
+  background:rgba(6,8,15,.55);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.18);
+  padding:5px 10px;border-radius:999px;
+  transition:opacity var(--dur-moderate-02) var(--ease-standard);
+}
+.promo-cover.is-gone ~ .promo-len{opacity:0}
+
+.promo-foot{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px;
+  margin-top:16px;font-size:13.5px;color:var(--faint);
+}
+.promo-foot b{color:var(--muted);font-weight:500}
+.promo-foot code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+@media (max-width:640px){
+  .promo-len{left:12px;bottom:11px;font-size:11.5px;padding:4px 8px}
+}
+
 /* ---------- 内联自 assets/lenis.css（v1.3.26）----------
    只为省掉一次渲染阻塞请求；这些样式在 JS 加上类名之前完全惰性。 */
 html.lenis,html.lenis body{height:auto}
@@ -516,6 +599,39 @@ html.lenis,html.lenis body{height:auto}
 </header>
 
 <main>
+
+<section id="promo">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-tag">宣传片</div>
+      <h2>48 秒，看它怎么干活</h2>
+      <p>从定时抢课到成绩考试，一条片子走完。没有解说，画面自己说。</p>
+    </div>
+
+    <div class="promo-frame rv">
+      <video class="promo-video" id="promoVideo"
+             poster="assets/video/promo-poster.webp"
+             width="1280" height="720"
+             preload="none" playsinline
+             aria-label="卡皮巴拉教务助手宣传片">
+        <source src="assets/video/promo.mp4" type="video/mp4">
+        你的浏览器不支持内嵌视频，<a href="assets/video/promo.mp4" download>点此下载观看</a>。
+      </video>
+      <button class="promo-cover" id="promoCover" type="button" aria-label="播放宣传片">
+        <span class="promo-play">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.4v15.2l13.2-7.6z"/></svg>
+        </span>
+      </button>
+      <span class="promo-len">0:48</span>
+    </div>
+
+    <p class="promo-foot">
+      <span><b>1280×720</b> · 3.1 MB</span>
+      <span>点击才加载，不占首屏带宽</span>
+      <span>片子放在 <code>assets/video/</code></span>
+    </p>
+  </div>
+</section>
 
 <section id="features">
   <div class="wrap">
@@ -841,6 +957,30 @@ html.lenis,html.lenis body{height:auto}
       }, { passive: true });
     });
   }
+
+  /* 宣传片 ── 封面点击才去加载 video（配合 preload="none"），
+     否则 3.1MB 的片子一进页面就跟首屏抢带宽。
+     控制条也等到播放时才挂：封面阶段顶着一条播放器控件会很出戏。
+     不加 autoplay —— 48s 完整片带 BGM，详情页里自动播又费流量又吵。 */
+  (function promoPlayer() {
+    var v = document.getElementById('promoVideo');
+    var c = document.getElementById('promoCover');
+    if (!v || !c) return;
+    c.addEventListener('click', function () {
+      c.classList.add('is-gone');
+      v.controls = true;
+      var p = v.play();
+      /* 这里是用户手势触发，正常不会被拦；万一被拦就把封面放回去，别留一块黑 */
+      if (p && p.catch) {
+        p.catch(function () { c.classList.remove('is-gone'); v.controls = false; });
+      }
+    });
+    /* 播完把封面放回来，给一个明确的「再看一遍」入口。
+       ★ 别指望 poster 会回来：<video> 一旦播过就保留解码帧，poster 只在
+       「还没有可用帧」时显示。所以此时封面底下是落版的最后一帧（品牌 slogan），
+       不是海报图 —— 观感上没问题，但这不是"回到初始态"。 */
+    v.addEventListener('ended', function () { c.classList.remove('is-gone'); });
+  })();
 
   /* 粒子收尾 ── Canvas 2D 手写，约 2KB，不引 Three.js（后者 gzip 就 150KB）。
      原理：文字画到离屏 canvas → 读像素 → 亮点处放一个粒子 → 粒子飞过去。
