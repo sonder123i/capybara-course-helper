@@ -66,7 +66,9 @@ class ScheduleReminderScheduler private constructor(private val context: Context
     }
 
     private fun activeAccount(): String = UserManager.getInstance().let {
-        if (it.isLoggedIn && !it.isDemoMode) it.currentAccountStorageKey else ""
+        // 课程提醒是本地闹钟，不碰教务：离线查看不是登录态，但也没理由因为"登不上教务"
+        // 就把提醒整个撤掉——那正好是在教务最不稳的时候把人唯一的用处拿走。
+        if ((it.isLoggedIn || it.isLocalViewMode) && !it.isDemoMode) it.currentAccountStorageKey else ""
     }
 
     private fun records() = ReminderJson.decode(preferences.getString("records", null))

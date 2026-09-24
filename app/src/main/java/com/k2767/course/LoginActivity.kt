@@ -121,6 +121,8 @@ class LoginActivity : ComponentActivity() {
             CourseSelectorTheme {
                 // Use mutableStateOf for reactive schools list
                 var schools by remember { mutableStateOf(UserManager.getInstance().selectableSchools) }
+                // 本机真的存过课表才给这个条目——点进去是白屏比不给入口更伤人
+                val localViewAccount = remember { localViewAccountName() }
                 var showSchoolAdaptation by remember { mutableStateOf(false) }
                 var showSchoolPicker by remember { mutableStateOf(false) }
                 var schoolFavorites by remember {
@@ -194,6 +196,10 @@ class LoginActivity : ComponentActivity() {
                     onOpenSchoolPicker = { showSchoolPicker = true },
                     onDemoMode = {
                         handleDemoMode()
+                    },
+                    localViewAccountName = localViewAccount,
+                    onLocalView = {
+                        handleLocalView()
                     },
                     onSchoolAdaptation = {
                         showSchoolAdaptation = true
@@ -310,6 +316,32 @@ class LoginActivity : ComponentActivity() {
         DemoData.resetSession()
         UserManager.getInstance().startDemoSession(DemoData.school())
         Toast.makeText(this, "已进入本地演示模式，不会连接教务系统", Toast.LENGTH_SHORT).show()
+        startActivity(Intent(this, MainActivity::class.java))
+        finish()
+    }
+
+    /**
+     * 有可离线查看的课表时返回要显示的姓名/学号，否则 null（不显示入口）。
+     *
+     * 门槛故意收紧到"本机真的存过这份课表"：只剩一个空课表页的离线模式，
+     * 不如让人老老实实等教务恢复。
+     */
+    private fun localViewAccountName(): String? {
+        val user = UserManager.getInstance()
+        val accountKey = user.lastViewAccountKey
+        if (accountKey.isEmpty()) return null
+        val record = user.savedAccounts.firstOrNull { it.key == accountKey } ?: return null
+        com.k2767.course.schedule.ScheduleCacheStore(
+            getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE)
+        ).selected(user.localViewStorageKey, record.schoolId, false) ?: return null
+        return record.studentName.ifBlank { record.studentId.ifBlank { "本机课表" } }
+    }
+
+    private fun handleLocalView() {
+        if (!UserManager.getInstance().enterLocalView()) {
+            Toast.makeText(this, "本机的账号记录已不存在，无法离线查看", Toast.LENGTH_SHORT).show()
+            return
+        }
         startActivity(Intent(this, MainActivity::class.java))
         finish()
     }

@@ -38,6 +38,11 @@ object CookieWatchdog {
     @JvmStatic
     fun start(ctx: Context, intervalMs: Long = DEFAULT_INTERVAL_MS): Unit = onMain {
         val user = UserManager.getInstance()
+        // 离线查看的"零教务请求"收口在这里：靠调用方各自判断，以后多一个入口就漏一个。
+        if (user.isLocalViewMode) {
+            loop.stop()
+            return@onMain
+        }
         watchedSchool = user.currentSchool
         if (watchedSchool == null) {
             loop.stop()

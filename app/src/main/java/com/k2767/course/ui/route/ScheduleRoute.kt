@@ -103,6 +103,7 @@ fun ScheduleRoute() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
+    val isLocalView = remember { UserManager.getInstance().isLocalViewMode }
     val routeAccountKey = remember { UserManager.getInstance().currentAccountStorageKey }
     val sessions = UserManager.getInstance().sessionState
     val session by sessions.state.collectAsState()
@@ -337,11 +338,28 @@ fun ScheduleRoute() {
             val requestedTerm = if (isNextSemester) currentTerm.next() else currentTerm
             val cached = scheduleCache.selected(account, school.id, isNextSemester)
             loadError = ""
-            if (!forceRefresh && cached != null) {
+            if (cached != null && (!forceRefresh || isLocalView)) {
                 courses = reloadCustomCourses(requireNotNull(parseSchedule(cached.json)))
                 resolvedTermId = cached.term.id
                 isLoading = false
                 reminderScheduler.updateSnapshot(routeAccountKey, cached.term.id, courses.map { it.record() })
+                if (isLocalView && forceRefresh) GlassToaster.show("离线查看中，显示本机缓存的课表")
+                return
+            }
+            if (isLocalView) {
+                // 离线查看不碰网络：缓存没命中就只剩手填的课，下面那些抓取分支一个都不能走。
+                isLoading = false
+                val customOnly = reloadCustomCourses(emptyList())
+                courses = customOnly
+                resolvedTermId = requestedTerm.id
+                if (customOnly.isEmpty()) {
+                    loadError = "本机还没存过这份课表，离线查看不能同步课表"
+                    // 桌面上还演着演示课是错的：本机真没课，就把那份快照收掉。
+                    com.k2767.course.widget.CourseWidgetData.clear(context)
+                    com.k2767.course.widget.CourseWidgetData.requestUpdateAsync(context)
+                } else {
+                    GlassToaster.show("离线查看中没有课表缓存，这里只显示手填的课程")
+                }
                 return
             }
             // Refresh in place. Only a different semester must discard the previous rows.

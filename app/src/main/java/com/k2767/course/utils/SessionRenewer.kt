@@ -44,7 +44,8 @@ object SessionRenewer {
 
     val state get() = coordinator.state
 
-    @JvmStatic fun canRenew(): Boolean = coordinator.canAttempt(UserManager.getInstance().sessionState.token)
+    @JvmStatic fun canRenew(): Boolean = !UserManager.getInstance().isLocalViewMode &&
+        coordinator.canAttempt(UserManager.getInstance().sessionState.token)
 
     fun sessionChanged() = onMain { coordinator.sessionChanged() }
 
@@ -52,7 +53,14 @@ object SessionRenewer {
         expected: SessionToken,
         manual: Boolean = false,
         onDone: (SessionRecoveryResult) -> Unit = {}
-    ) = onMain { coordinator.request(expected, manual, onDone) }
+    ) {
+        if (UserManager.getInstance().isLocalViewMode) {
+            // 离线查看不去敲教务的门：按"没法自动续期、要手动登录"如实回。
+            onMain { onDone(SessionRecoveryResult.NeedsLogin(RecoveryFailure.NoPassword)) }
+            return
+        }
+        coordinator.request(expected, manual, onDone)
+    }
 
     /** Compatibility for the existing background service; UI uses the typed result above. */
     @JvmStatic fun renew(context: Context, onDone: (Boolean) -> Unit) {

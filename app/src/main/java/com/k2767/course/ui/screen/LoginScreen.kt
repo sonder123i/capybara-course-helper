@@ -75,6 +75,9 @@ fun LoginScreen(
     onSchoolAdded: () -> Unit = {},
     onOpenSchoolPicker: () -> Unit = {},
     onDemoMode: () -> Unit = {},
+    /** 非空才显示离线条目：值为要查看的姓名/学号，空说明本机没有可离线读的课表。 */
+    localViewAccountName: String? = null,
+    onLocalView: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     isLoading: Boolean = false,
@@ -517,6 +520,22 @@ fun LoginScreen(
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
+
+                        // 离线查看：账号在教务侧被禁用/维护时，本机缓存的课表还看得到
+                        if (localViewAccountName != null) {
+                            TextButton(
+                                onClick = onLocalView,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "离线查看「$localViewAccountName」的课表",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
 
                         // Demo Mode Button
                         TextButton(

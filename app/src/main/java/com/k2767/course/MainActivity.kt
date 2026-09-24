@@ -171,7 +171,8 @@ class MainActivity : FragmentActivity() {
         SmartSelector.getInstance().init(this)
         com.k2767.course.network.CourseApiClient.getInstance().init(this)
 
-        if (!userManager.isLoggedIn && !(userManager.hasSavedCookie() && userManager.sessionState.state.value.expired)) {
+        if (!userManager.isLoggedIn && !userManager.isLocalViewMode &&
+            !(userManager.hasSavedCookie() && userManager.sessionState.state.value.expired)) {
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -240,11 +241,29 @@ sealed class BottomNavItem(
     }
 }
 
+/**
+ * 离线查看下，只能实时抓教务的那几页共用这一屏。
+ * 空着不解释、或者报错 Toast，都会让人以为是 app 坏了。
+ */
+@Composable
+fun LocalViewOfflinePage(pageLabel: String, onLogin: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        com.k2767.course.ui.system.SystemEmptyState(
+            title = "${pageLabel}要连教务系统",
+            message = "离线查看只读这台手机上的缓存，不提供${pageLabel}。想查${pageLabel}就重新登录；课表仍能在课表页看缓存。",
+            action = {
+                com.k2767.course.ui.system.SystemSecondaryButton(text = "去登录", onClick = onLogin)
+            }
+        )
+    }
+}
+
 @Composable
 fun MainScreen(fragmentActivity: FragmentActivity) {
     val context = LocalContext.current
     val appWallpaper = com.k2767.course.ui.theme.rememberAppWallpaperStyle()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
+    val isLocalView = remember { UserManager.getInstance().isLocalViewMode }
     val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
     val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
     val items = remember { BottomNavItem.entries }
@@ -319,6 +338,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         }
         fragmentActivity.lifecycle.addObserver(observer)
         onDispose { fragmentActivity.lifecycle.removeObserver(observer) }
+    }
+    val exitLocalView: () -> Unit = {
+        UserManager.getInstance().exitLocalView()
+        fragmentActivity.startActivity(Intent(fragmentActivity, LoginActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        })
+        fragmentActivity.finish()
     }
     LaunchedEffect(surveyRepository, foreground, surveyVisit) {
         if (foreground) surveyRepository.refresh()
@@ -408,7 +434,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             LocalContext.current.applicationInfo.flags and
                 ApplicationInfo.FLAG_DEBUGGABLE
             ) != 0 && !BuildConfig.UI_PREVIEW
-        val tokenExpiredNotice = if (isTokenExpired) {
+        val tokenExpiredNotice = if (isLocalView) {
+            FloatingNotice(
+                message = "离线查看中，只读本地缓存",
+                actionLabel = "去登录",
+                onClick = exitLocalView
+            )
+        } else if (isTokenExpired) {
             FloatingNotice(
                 message = "需要重新登录",
                 actionLabel = "重新登录",
@@ -571,10 +603,15 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                             ) { page ->
                               savedPages.SaveableStateProvider(items[page].route) {
                                 when (page) {
-                                    0 -> com.k2767.course.ui.route.CourseListRoute()
+                                    // 课程/抢课/成绩三页必须实时抓教务，所以在这里一次性分流：
+                                    // 往三个 route 里各塞一次判断，漏一个就是一次教务请求。
+                                    0 -> if (isLocalView) LocalViewOfflinePage(items[0].label, exitLocalView)
+                                        else com.k2767.course.ui.route.CourseListRoute()
                                     1 -> com.k2767.course.ui.route.ScheduleRoute()
-                                    2 -> com.k2767.course.ui.route.GrabProRoute()
-                                    3 -> com.k2767.course.ui.route.GradesRoute()
+                                    2 -> if (isLocalView) LocalViewOfflinePage(items[2].label, exitLocalView)
+                                        else com.k2767.course.ui.route.GrabProRoute()
+                                    3 -> if (isLocalView) LocalViewOfflinePage(items[3].label, exitLocalView)
+                                        else com.k2767.course.ui.route.GradesRoute()
                                     4 -> com.k2767.course.ui.route.SettingsRoute(
                                         onSurveyCenter = { initialSurveyId = null; showSurveyCenter = true },
                                         surveyUnreadCount = surveyFeed.unreadCount(System.currentTimeMillis())

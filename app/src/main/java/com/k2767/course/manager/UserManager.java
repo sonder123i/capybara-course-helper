@@ -25,6 +25,7 @@ public class UserManager {
     // 内存缓存，避免每次续期都过一次 Keystore 解密；真正的落盘在 CredentialStore
     private String sessionPassword = "";
     private String currentAccountKey = "";
+    private boolean isLocalViewMode = false;
     private final SessionStateStore sessionState = new SessionStateStore();
     private String runtimeAccountStorageKey = "";
     private String runtimeCookie = "";
@@ -45,6 +46,12 @@ public class UserManager {
     private static final String KEY_LOGIN_MODE = "login_mode";
     private static final String KEY_ACCOUNTS = "saved_accounts";
     private static final String KEY_CURRENT_ACCOUNT_KEY = "current_account_key";
+    /** 本地数据归属哪个账号。登出时**故意保留**：缓存课表、手填课、提醒都按这个键分片，
+     *  跟着 {@link #KEY_CURRENT_ACCOUNT_KEY} 一起删就把它们变成了永远读不到的孤儿数据。 */
+    private static final String KEY_LAST_VIEW_ACCOUNT_KEY = "last_view_account_key";
+    /** 离线查看开关单独一个文件，和登录态族（{@link #KEY_LOGGED_IN} 等）互不污染。 */
+    private static final String LOCAL_VIEW_PREFS_NAME = "local_view_prefs";
+    private static final String KEY_LOCAL_VIEW_ENABLED = "enabled";
 
     private Context appContext;
 
@@ -249,6 +256,9 @@ public class UserManager {
         if (appContext == null || isDemoMode)
             return;
 
+        // 登录态一旦真的落盘，离线查看就该让位——包括换学校这种"我要登另一个账号"的动作。
+        exitLocalView();
+
         try {
             SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             SharedPreferences.Editor editor = prefs.edit();
@@ -308,6 +318,15 @@ public class UserManager {
             }
 
             migrateLegacyAccountIfNeeded(prefs);
+
+            if (!isLoggedIn && isLocalViewPersisted()) {
+                // 上次是「离线查看」：杀进程重开不该又把人关在登录页外。
+                if (enterLocalView()) {
+                    Log.d(TAG, "以离线查看恢复上次账号: " + getLastViewAccountKey());
+                    return;
+                }
+                setLocalViewPersisted(false);
+            }
 
             currentAccountKey = prefs.getString(KEY_CURRENT_ACCOUNT_KEY, "");
             if (!currentAccountKey.isEmpty()) {
@@ -455,6 +474,15 @@ public class UserManager {
         boolean removed = records.removeIf(record -> accountKey.equals(record.key));
         if (removed) {
             saveAccountRecords(records);
+            // 记录没了，"本地数据归属"这个指针就成了悬空引用，连离线查看的入口一起收掉。
+            if (accountKey.equals(getLastViewAccountKey())) {
+                if (appContext != null) {
+                    appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                            .remove(KEY_LAST_VIEW_ACCOUNT_KEY)
+                            .apply();
+                }
+                exitLocalView();
+            }
         }
 
         deletePassword(accountKey);
@@ -799,6 +827,15 @@ public class UserManager {
     public void clearLoginState() {
         boolean wasDemoMode = isDemoMode;
         String accountStorageKeyToClear = getCurrentAccountStorageKey();
+        // 先记下这份本地数据属于谁：缓存课表、手填课、提醒都挂在这个键上，
+        // 登出只该作废凭证，不该把数据变成找不到主人的孤儿。
+        String accountKeyToRemember = getCurrentAccountKey();
+        if (!accountKeyToRemember.isEmpty() && !wasDemoMode && appContext != null) {
+            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putString(KEY_LAST_VIEW_ACCOUNT_KEY, accountKeyToRemember)
+                    .apply();
+        }
+        exitLocalView();
         if (currentSchool != null) {
             com.k2767.course.academic.AcademicGatewayFactory.INSTANCE.invalidate(currentSchool, accountStorageKeyToClear);
         }
@@ -868,6 +905,8 @@ public class UserManager {
     }
 
     public void startDemoSession(SchoolConfig school) {
+        // 演示和离线查看都是"不连教务"，同时为真的话分支优先级就没人说得清了。
+        exitLocalView();
         currentSchool = school;
         studentName = "演示用户";
         studentId = "2024000001";
@@ -890,6 +929,80 @@ public class UserManager {
 
     public boolean isDemoMode() {
         return isDemoMode;
+    }
+
+    // ========== 离线查看：只读本地数据，不连教务 ==========
+
+    public boolean isLocalViewMode() {
+        return isLocalViewMode;
+    }
+
+    /** 登出后仍保留的「本地数据归属哪个账号」。空串表示没有可离线查看的账号。 */
+    public String getLastViewAccountKey() {
+        if (appContext == null) return "";
+        return appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_LAST_VIEW_ACCOUNT_KEY, "");
+    }
+
+    /** 归属账号对应的缓存分片键。归一化只有 {@link #toStorageKey} 一条规则，这里不另写一份。 */
+    public String getLocalViewStorageKey() {
+        return toStorageKey(getLastViewAccountKey());
+    }
+
+    /**
+     * 进入离线查看：只为恢复数据归属，借 {@link AccountRecord} 把学校、学号、账号键装回来。
+     *
+     * 刻意保持 {@code isLoggedIn == false}——离线查看不是登录态，别处（适配上报、自动续期）
+     * 因此自然拒绝；放行主界面是 {@code isLocalViewMode()} 的事。
+     */
+    public boolean enterLocalView() {
+        String key = getLastViewAccountKey();
+        AccountRecord record = key.isEmpty() ? null : findAccountRecord(key);
+        if (record == null) {
+            isLocalViewMode = false;
+            setLocalViewPersisted(false);
+            return false;
+        }
+        if (!applyAccountRecord(record, false)) return false;
+        // applyAccountRecord 会顺手把 isLoggedIn 立起来，但离线查看不是登录态：
+        // 主界面放行靠的是 isLocalViewMode()，别的地方一律当我们没登录。
+        isLoggedIn = false;
+        // 记录里那条 Cookie 早就作废了。留在运行期等于给"顺手发一个带旧凭证的请求"留口子。
+        savedCookie = "";
+        sessionPassword = "";
+        runtimeCookie = "";
+        String storageKey = toStorageKey(record.key);
+        try {
+            CourseApiClient.getInstance().clearCookies(storageKey);
+            if (currentSchool != null) {
+                com.k2767.course.academic.AcademicGatewayFactory.INSTANCE.invalidate(currentSchool, storageKey);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "离线查看清理运行期 Cookie 失败: " + e.getMessage());
+        }
+        isLocalViewMode = true;
+        setLocalViewPersisted(true);
+        Log.d(TAG, "已进入离线查看: " + studentName + " @ " + record.schoolName);
+        return true;
+    }
+
+    public void exitLocalView() {
+        isLocalViewMode = false;
+        setLocalViewPersisted(false);
+    }
+
+    private void setLocalViewPersisted(boolean enabled) {
+        if (appContext == null) return;
+        appContext.getSharedPreferences(LOCAL_VIEW_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_LOCAL_VIEW_ENABLED, enabled)
+                .apply();
+    }
+
+    private boolean isLocalViewPersisted() {
+        if (appContext == null) return false;
+        return appContext.getSharedPreferences(LOCAL_VIEW_PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_LOCAL_VIEW_ENABLED, false);
     }
 
     public String getStudentName() {
