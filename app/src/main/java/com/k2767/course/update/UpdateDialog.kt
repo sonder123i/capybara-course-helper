@@ -37,8 +37,13 @@ fun UpdateDialog(
     onDismiss: () -> Unit,
     onUpdate: () -> Unit,
     downloadProgress: Int = -1,  // -1 表示未开始下载
-    isDownloading: Boolean = false
+    isDownloading: Boolean = false,
+    /** 上一次下载失败的原因。非空时按钮换成「重试 / 用浏览器下载」。 */
+    downloadError: String = "",
+    /** 用浏览器打开下载地址：应用内下载都不通时的保底出口。 */
+    onBrowserDownload: () -> Unit = {}
 ) {
+    val failed = downloadError.isNotBlank() && !isDownloading
     val canDismiss = !isDownloading && !updateInfo.forceUpdate
 
     // 图标动画：呼吸效果
@@ -83,19 +88,33 @@ fun UpdateDialog(
                 color = MaterialTheme.colorScheme.onSurface
             )
         },
-        dismissButton = if (!isDownloading && !updateInfo.forceUpdate) {
-            {
-                SystemSecondaryButton(
-                    text = "稍后",
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                )
+        dismissButton = when {
+            isDownloading -> null
+            // 失败之后不再给「稍后」：要换成一条确定走得通的路
+            failed -> {
+                {
+                    SystemSecondaryButton(
+                        text = "用浏览器下载",
+                        onClick = onBrowserDownload,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
-        } else null,
+            !updateInfo.forceUpdate -> {
+                {
+                    SystemSecondaryButton(
+                        text = "稍后",
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            else -> null
+        },
         confirmButton = if (!isDownloading) {
             {
                 SystemPrimaryButton(
-                    text = "立即更新",
+                    text = if (failed) "重试" else "立即更新",
                     onClick = onUpdate,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -206,6 +225,18 @@ fun UpdateDialog(
                     )
                 }
             }
+
+            // 失败原因留在弹窗里：只弹一条 toast，用户回头看到的还是一个正常的
+            // 「立即更新」，根本不知道刚才为什么没下成。
+            AnimatedVisibility(visible = failed) {
+                Text(
+                    text = downloadError,
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
@@ -223,6 +254,7 @@ fun rememberUpdateState(
     var showDialog by remember { mutableStateOf(false) }
     var isDownloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableIntStateOf(0) }
+    var downloadError by remember { mutableStateOf("") }
     
     return remember(updateManager) {
         UpdateState(
@@ -234,7 +266,9 @@ fun rememberUpdateState(
             isDownloading = { isDownloading },
             setIsDownloading = { isDownloading = it },
             downloadProgress = { downloadProgress },
-            setDownloadProgress = { downloadProgress = it }
+            setDownloadProgress = { downloadProgress = it },
+            downloadError = { downloadError },
+            setDownloadError = { downloadError = it }
         )
     }
 }
@@ -248,7 +282,9 @@ class UpdateState(
     val isDownloading: () -> Boolean,
     val setIsDownloading: (Boolean) -> Unit,
     val downloadProgress: () -> Int,
-    val setDownloadProgress: (Int) -> Unit
+    val setDownloadProgress: (Int) -> Unit,
+    val downloadError: () -> String,
+    val setDownloadError: (String) -> Unit
 ) {
     fun checkForUpdate() {
         updateManager.checkForUpdate { info ->
@@ -263,9 +299,11 @@ class UpdateState(
         val info = updateInfo() ?: return
         setIsDownloading(true)
         setDownloadProgress(0)
+        setDownloadError("")
         
         updateManager.downloadApk(
             downloadUrl = info.downloadUrl,
+            mirrorUrl = info.mirrorUrl,
             onProgress = { progress ->
                 setDownloadProgress(progress)
             },
@@ -276,8 +314,19 @@ class UpdateState(
                     setShowDialog(false)
                 }
             },
-            onFailure = { message -> com.k2767.course.ui.system.GlassToaster.show(message) }
+            onFailure = { message ->
+                // 同时留在弹窗里（按钮变成重试/浏览器），toast 只是即时提醒
+                setDownloadError(message)
+                com.k2767.course.ui.system.GlassToaster.show(message)
+            }
         )
+    }
+    
+    /** 应用内下载都不通时的保底：交给系统浏览器。 */
+    fun browserDownload() {
+        val info = updateInfo() ?: return
+        setDownloadError("")
+        updateManager.openDownloadInBrowser(info.downloadUrl.ifBlank { info.mirrorUrl })
     }
     
     fun dismiss() {

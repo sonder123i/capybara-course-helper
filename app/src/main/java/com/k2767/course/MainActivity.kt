@@ -685,7 +685,9 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                     onDismiss = { updateState.dismiss() },
                     onUpdate = { updateState.startDownload() },
                     downloadProgress = updateState.downloadProgress(),
-                    isDownloading = updateState.isDownloading()
+                    isDownloading = updateState.isDownloading(),
+                    downloadError = updateState.downloadError(),
+                    onBrowserDownload = { updateState.browserDownload() }
                 )
             }
 

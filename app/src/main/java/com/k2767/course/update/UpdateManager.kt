@@ -1,10 +1,7 @@
 package com.k2767.course.update
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageInfo
 import android.net.Uri
 import android.os.Build
@@ -19,6 +16,9 @@ import okhttp3.Response
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 /**
  * 应用更新管理器
@@ -45,14 +45,16 @@ class UpdateManager(private val context: Context) {
         }
     }
     
+    // 检查版本与下载安装包共用。读超时 60 秒：下载时「连接还在但不吐数据」就靠它抛错，
+    // 这是替代系统下载器之后唯一的停滞保护。
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
-    
-    private var downloadId: Long = -1
-    private var downloadReceiver: BroadcastReceiver? = null
-    
+
+    /** 下载纯逻辑：不碰 Android，便于用 MockWebServer 单测。 */
+    private val downloader = ApkDownloader(client)
+
     /**
      * 更新信息数据类
      */
@@ -61,7 +63,9 @@ class UpdateManager(private val context: Context) {
         val versionName: String,
         val releaseNotes: String,
         val downloadUrl: String,
-        val forceUpdate: Boolean
+        val forceUpdate: Boolean,
+        /** 备用下载地址（另一个下载源）。version.json 没写就是空串。 */
+        val mirrorUrl: String = ""
     )
     
     /**
@@ -140,7 +144,8 @@ class UpdateManager(private val context: Context) {
                             versionName = obj.optString("versionName", ""),
                             releaseNotes = obj.optString("releaseNotes", ""),
                             downloadUrl = obj.optString("downloadUrl", ""),
-                            forceUpdate = obj.optBoolean("forceUpdate", false)
+                            forceUpdate = obj.optBoolean("forceUpdate", false),
+                            mirrorUrl = obj.optString("mirrorUrl", "")
                         )
                         mainHandler.post { callback(updateInfo) }
                     } else {
@@ -154,133 +159,54 @@ class UpdateManager(private val context: Context) {
         })
     }
     
-    /**
-     * 下载APK
+/**
+     * 下载安装包，流式写入应用私有目录。
+     *
+     * **不再用系统 DownloadManager。** 它在部分 ROM 上把任务排进队列后永远停在 PENDING：
+     * 一个字节不传、也不报 FAILED，用户看到的就是「正在下载…」挂住，两分钟后我们只能
+     * 报「没能开始」（v1.2.0 现场，OriginOS）。改由应用自己跟随重定向下载，进度、超时、
+     * 重试都握在自己手里。
+     *
+     * 下载本身在 [ApkDownloader] 里（不碰 Android，可单测），这里只负责线程与主线程回调。
+     * 失败时按序再试 [mirrorUrl]（另一个下载源），两个都失败才报错。
      */
     fun downloadApk(
         downloadUrl: String,
+        mirrorUrl: String = "",
         onProgress: (Int) -> Unit,
         onComplete: (File?) -> Unit,
         onFailure: (String) -> Unit = {}
     ) {
-        Log.d(TAG, "开始下载: $downloadUrl")
-        
-        // 删除旧的APK文件
         val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILE_NAME)
-        if (apkFile.exists()) {
-            apkFile.delete()
+        if (apkFile.exists()) apkFile.delete()
+
+        val sources = listOf(downloadUrl, mirrorUrl).filter { it.isNotBlank() }.distinct()
+        if (sources.isEmpty()) {
+            onFailure("没有可用的下载地址")
+            onComplete(null)
+            return
         }
-        
-        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        
-        val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
-            setTitle("正在下载更新")
-            setDescription("正在下载新版本...")
-            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-            setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, APK_FILE_NAME)
-            setAllowedOverMetered(true)
-            setAllowedOverRoaming(true)
-        }
-        
-        downloadId = downloadManager.enqueue(request)
-        
-        // 监听下载进度
+
         Thread {
             val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-            val enqueuedAt = System.currentTimeMillis()
-            // 只有真的拿到过字节数，才认为下载已经开始
-            var started = false
-            var downloading = true
-            while (downloading) {
-                val query = DownloadManager.Query().setFilterById(downloadId)
-                val cursor = downloadManager.query(query)
-
-                if (cursor.moveToFirst()) {
-                    val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                    val bytesIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-                    val totalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                    val reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
-
-                    if (statusIndex >= 0 && bytesIndex >= 0 && totalIndex >= 0) {
-                        val status = cursor.getInt(statusIndex)
-                        val bytesDownloaded = cursor.getLong(bytesIndex)
-                        val bytesTotal = cursor.getLong(totalIndex)
-
-                        // 「已经开始」的标志是收到了字节，而不是拿到了总大小——
-                        // GitHub 分流下载常常不给 Content-Length，用它判断会误判成失败。
-                        if (bytesDownloaded > 0) started = true
-
-                        if (bytesTotal > 0) {
-                            val progress = ((bytesDownloaded * 100) / bytesTotal).toInt()
-                            mainHandler.post { onProgress(progress) }
-                        } else if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
-                            // 拿不到总大小（CDN 没给 Content-Length）：报 -1 表示「进度未知」，
-                            // 界面显示滚动条 + “正在下载…”，而不是卡在 0%
-                            mainHandler.post { onProgress(-1) }
-                        }
-
-                        when (status) {
-                            DownloadManager.STATUS_SUCCESSFUL -> {
-                                downloading = false
-                                mainHandler.post { onComplete(apkFile) }
-                            }
-                            DownloadManager.STATUS_FAILED -> {
-                                downloading = false
-                                val code = if (reasonIndex >= 0) cursor.getInt(reasonIndex) else 0
-                                mainHandler.post {
-                                    onFailure(describeFailure(code))
-                                    onComplete(null)
-                                }
-                            }
-                        }
-                    }
+            try {
+                downloader.download(sources, apkFile) { progress ->
+                    mainHandler.post { onProgress(progress) }
                 }
-                cursor.close()
-
-                // 只在「一直排队、一个字节都没收到」时才算失败，并给足 2 分钟：
-                // 裸连 GitHub 时连接建立本身就可能很慢，网络慢不等于下载坏掉。
-                // 状态是 RUNNING 时一律继续等——系统下载器自己会报成功或失败。
-                val stalled = !started && System.currentTimeMillis() - enqueuedAt > STALL_TIMEOUT_MILLIS
-                if (downloading && stalled && !isRunning(downloadManager)) {
-                    downloading = false
-                    // 把系统下载器里的这条任务撤掉，免得通知栏留个永不动弹的条目
-                    runCatching { downloadManager.remove(downloadId) }
-                    mainHandler.post {
-                        onFailure("下载一直没能开始，可能网络不通。可稍后重试，或到官网手动下载")
-                        onComplete(null)
-                    }
+                mainHandler.post {
+                    onProgress(100)
+                    onComplete(apkFile)
                 }
-
-                if (downloading) {
-                    Thread.sleep(500)
+            } catch (e: Exception) {
+                Log.e(TAG, "下载失败（已试 ${sources.size} 个源）: ${e.message}")
+                mainHandler.post {
+                    onFailure(ApkDownloader.describe(e))
+                    onComplete(null)
                 }
             }
         }.start()
     }
 
-    /** 查一次系统下载器的状态，用于判断「卡住的到底是排队还是正在跑」。 */
-    private fun isRunning(downloadManager: DownloadManager): Boolean {
-        val cursor = downloadManager.query(DownloadManager.Query().setFilterById(downloadId))
-        return cursor.use {
-            if (!it.moveToFirst()) return@use false
-            val statusIndex = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            // 列不存在时 getColumnIndex 返回 -1，直接当下标会抛异常。
-            statusIndex >= 0 && it.getInt(statusIndex) == DownloadManager.STATUS_RUNNING
-        }
-    }
-
-    /** 把 DownloadManager 的错误码翻译成人话，方便用户判断该怎么办。 */
-    private fun describeFailure(code: Int): String = when (code) {
-        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "存储空间不足，清理后重试"
-        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "找不到存储设备"
-        DownloadManager.ERROR_HTTP_DATA_ERROR -> "下载数据出错，请重试"
-        DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "服务器返回了异常响应（可能链接已失效）"
-        DownloadManager.ERROR_FILE_ERROR -> "写入文件失败，请重试"
-        DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "重定向次数过多，请到官网手动下载"
-        DownloadManager.ERROR_CANNOT_RESUME -> "无法续传，请重试"
-        else -> if (code in 400..599) "服务器返回 $code，可能链接已失效" else "下载失败（错误码 $code）"
-    }
-    
     /**
      * 安装APK
      */
@@ -312,16 +238,22 @@ class UpdateManager(private val context: Context) {
     }
     
     /**
-     * 取消下载
+     * 用系统浏览器打开下载地址。
+     *
+     * 应用内下载（Gitee 与镜像）都不通时的保底出口——浏览器跟随重定向的兼容性
+     * 远好于任何应用内实现，用户在浏览器里下完再点安装即可。
      */
-    fun cancelDownload() {
-        if (downloadId != -1L) {
-            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            downloadManager.remove(downloadId)
-            downloadId = -1
-        }
+    fun openDownloadInBrowser(url: String) {
+        if (url.isBlank()) return
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }.onFailure { Log.e(TAG, "打不开浏览器: ${it.message}") }
     }
-    
+
     /**
      * 获取当前版本名
      */
@@ -336,7 +268,4 @@ class UpdateManager(private val context: Context) {
         return getLocalVersionCode().toInt()
     }
 }
-
-/** 一个字节都没收到多久算「卡住」。只对排队（PENDING）状态生效，RUNNING 不设上限。 */
-private const val STALL_TIMEOUT_MILLIS = 120_000L
 

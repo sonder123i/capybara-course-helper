@@ -145,6 +145,7 @@ fun SettingsRoute(
     var showUpdateDialog by remember { mutableStateOf(false) }
     var isDownloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableIntStateOf(0) }
+    var downloadError by remember { mutableStateOf("") }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     val currentVersion = remember { updateManager.getCurrentVersionName() }
 
@@ -271,9 +272,11 @@ fun SettingsRoute(
         val info = updateInfo ?: return
         isDownloading = true
         downloadProgress = 0
+        downloadError = ""
         
         updateManager.downloadApk(
             downloadUrl = info.downloadUrl,
+            mirrorUrl = info.mirrorUrl,
             onProgress = { progress ->
                 downloadProgress = progress
             },
@@ -283,10 +286,20 @@ fun SettingsRoute(
                     updateManager.installApk(file)
                     showUpdateDialog = false
                 }
-                // 失败时 DownloadManager 一定先走 onFailure（原因已提示），这里不再重复报错
             },
-            onFailure = { message -> GlassToaster.show(message) }
+            onFailure = { message ->
+                // 留在弹窗里，按钮会变成「重试 / 用浏览器下载」；toast 只是即时提醒
+                downloadError = message
+                GlassToaster.show(message)
+            }
         )
+    }
+    
+    /** 应用内下载都不通时的保底：交给系统浏览器。 */
+    fun browserDownload() {
+        val info = updateInfo ?: return
+        downloadError = ""
+        updateManager.openDownloadInBrowser(info.downloadUrl.ifBlank { info.mirrorUrl })
     }
 
     fun refreshCookieManually() {
@@ -337,7 +350,9 @@ fun SettingsRoute(
             },
             onUpdate = { startDownload() },
             downloadProgress = downloadProgress,
-            isDownloading = isDownloading
+            isDownloading = isDownloading,
+            downloadError = downloadError,
+            onBrowserDownload = { browserDownload() }
         )
     }
     
