@@ -223,6 +223,18 @@ fun UpdateDialog(
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // 下载由应用自己完成（不再交给系统下载器），进程活着才算数。
+                    // 如实说清代价，别让用户以为可以退出去干别的。
+                    if (downloadProgress < 100) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "下载中请留在本页，退出应用会中断下载",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
 
