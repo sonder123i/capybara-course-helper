@@ -106,29 +106,6 @@ class WidgetTodayTest {
         )
     }
 
-    @Test fun weekGridFillsContinuationCellsAndFiltersByWeek() {
-        val courses = listOf(
-            WidgetCourse("a", "模拟电子技术", "", "", 4, 2, 3, "1-16周"),
-            WidgetCourse("b", "双周课", "", "", 5, 1, 1, "2-16周(双)"),
-            WidgetCourse("c", "第七节以后", "", "", 1, 7, 8, "1-16周")
-        )
-        val snap = snapshot(courses)
-
-        // 第 3 周（单周）：周四 2-3 节落格，第 3 节是延续块；双周课不出现
-        val oddWeek = WidgetToday.cellsForWeek(snap, now = at(2026, 9, 17), maxPeriods = 6)
-        assertEquals("模拟电子技术", oddWeek[4 to 2]!!.name)
-        assertTrue(oddWeek[4 to 3]!!.continued)
-        assertEquals("", oddWeek[4 to 3]!!.name)
-        assertNull(oddWeek[5 to 1])
-        // 起始节次超出网格高度（maxPeriods）的课不进图
-        assertNull(oddWeek[1 to 7])
-
-        // 第 4 周（双周）：轮到双周课；每周都上的课仍在
-        val evenWeek = WidgetToday.cellsForWeek(snap, now = at(2026, 9, 24), maxPeriods = 6)
-        assertEquals("双周课", evenWeek[5 to 1]!!.name)
-        assertEquals("模拟电子技术", evenWeek[4 to 2]!!.name)
-    }
-
     @Test fun stripsCampusPrefixButKeepsLocationReadable() {
         assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区 致远楼A519"))
         assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区·致远楼A519"))

@@ -58,7 +58,7 @@ object CourseWidgetData {
     suspend fun requestUpdate(context: Context) {
         CourseWidget().updateAll(context)
         TodayTomorrowWidget().updateAll(context)
-        WeekWidget().updateAll(context)
+        TimelineWidget().updateAll(context)
     }
 
     /** 非挂起入口：给 Java 侧（UserManager 退出演示模式时）调用。 */

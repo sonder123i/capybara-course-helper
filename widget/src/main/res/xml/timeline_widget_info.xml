@@ -10,4 +10,4 @@
     android:widgetCategory="home_screen"
     android:updatePeriodMillis="1800000"
     android:initialLayout="@layout/glance_default_loading_layout"
-    android:description="@string/widget_week_description" />
+    android:description="@string/widget_timeline_description" />

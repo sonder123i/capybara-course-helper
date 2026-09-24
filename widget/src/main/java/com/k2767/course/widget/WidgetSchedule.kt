@@ -202,7 +202,7 @@ object WidgetToday {
             .filter { it.day == day && visibleInWeek(it, week) }
             .filter { course ->
                 if (!skipEnded || dayOffset != 0) true
-                else (courseEndMillis(now, zone, ends[course.endPeriod]) ?: Long.MAX_VALUE) > now
+                else (timeOnDay(now, zone, ends[course.endPeriod]) ?: Long.MAX_VALUE) > now
             }
             .sortedWith(compareBy({ it.startPeriod }, { it.name }))
             .map { course ->
@@ -268,14 +268,20 @@ object WidgetToday {
         zone: TimeZone = TimeZone.getDefault()
     ): Boolean = rowsAt(snapshot, dayOffset, now = now, zone = zone).isNotEmpty()
 
-    /** 某节课的下课时刻（今天的日期 + 结束时间）。时间缺失时返回 null。 */
-    private fun courseEndMillis(now: Long, zone: TimeZone, end: String?): Long? {
-        val parts = end?.split(':') ?: return null
+    /**
+     * 某一天、某个 `HH:mm` 对应的绝对时刻。
+     *
+     * [daySample] 只提供「哪一天」，时分秒被抹掉后换成给定的时间——所以传今天的样本时刻
+     * 就算今天，传后天的样本时刻就算后天。时间缺失或写成非数字时返回 null，调用方必须
+     * 把这节课整条丢掉：一节算不出起止的课排进时间轴，位置只能靠猜。
+     */
+    private fun timeOnDay(daySample: Long, zone: TimeZone, time: String?): Long? {
+        val parts = time?.split(':') ?: return null
         val hour = parts.getOrNull(0)?.toIntOrNull() ?: return null
         val minute = parts.getOrNull(1)?.toIntOrNull() ?: return null
         if (hour !in 0..23 || minute !in 0..59) return null
         return Calendar.getInstance(zone).apply {
-            timeInMillis = now
+            timeInMillis = daySample
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
@@ -308,7 +314,7 @@ object WidgetToday {
         val ends = snap.periods.associate { it.period to it.end }
         return snap.courses
             .filter { it.day == today && visibleInWeek(it, week) }
-            .mapNotNull { course -> courseEndMillis(now, zone, ends[course.endPeriod]) }
+            .mapNotNull { course -> timeOnDay(now, zone, ends[course.endPeriod]) }
             .filter { it > now }
             .minOrNull() ?: midnight
     }
@@ -332,41 +338,74 @@ object WidgetToday {
     }
 
     /**
-     * 一周网格：返回 (星期, 节次) → 格子。
+     * 时间轴：从今天起往后最多 [days] 天，按真实起止时刻排的一列课。
      *
-     * 跨多节的课只在起始节次写课名，后续节次画同色的延续块——Glance 没有 rowSpan，
-     * 靠同色把一列拼成连续的竖条。同一格被多门课占用时先到先得（按节次与课名排序）。
+     * 三条口径，缺一条就会骗人：
+     *
+     * 1. **今天只留还没下课的。** 桌面上这一列回答的是「接下来要上什么」，不是当天回顾；
+     *    明天及以后不受这条影响。
+     * 2. **排序看时刻，不看节次号。** 节次表完全可以第 5 节 14:00、第 6 节 14:55，
+     *    但也能被用户改成不单调——按时刻排才不会把课排到已经过去的时段上。
+     * 3. **算不出周次的那天整天跳过。** 没填开学日期时这里返回空列表，组件据此说
+     *    「还没设开学日期」，而不是对着有课的课表说「今天没有课啦」。
+     *
+     * [WidgetTimelineRow.firstOfDay] 标在每天的第一节课上，供组件画日分隔：一列课
+     * 不标日子，用户分不清哪节是今天的。
      */
-    fun cellsForWeek(
+    fun timeline(
         snapshot: WidgetSnapshot,
         now: Long = System.currentTimeMillis(),
         zone: TimeZone = TimeZone.getDefault(),
-        maxPeriods: Int
-    ): Map<Pair<Int, Int>, WidgetCell> {
-        val week = weekAt(snapshot.firstWeekDate, now, zone) ?: return emptyMap()
-        val cells = HashMap<Pair<Int, Int>, WidgetCell>()
+        days: Int = MaxPreviewDays
+    ): List<WidgetTimelineRow> {
+        val starts = snapshot.periods.associate { it.period to it.start }
+        val ends = snapshot.periods.associate { it.period to it.end }
         val palette = WidgetPalette.colors.size
-        snapshot.courses
-            .filter { it.day in 1..7 && it.startPeriod in 1..maxPeriods && visibleInWeek(it, week) }
-            .sortedWith(compareBy({ it.day }, { it.startPeriod }, { it.name }))
-            .forEach { course ->
-                val colorIndex = (course.id.hashCode().toLong() and 0x7fffffffL).rem(palette.toLong()).toInt()
-                for (period in course.startPeriod..course.endPeriod.coerceAtMost(maxPeriods)) {
-                    val key = course.day to period
-                    if (cells.containsKey(key)) continue
-                    cells[key] = if (period == course.startPeriod) {
-                        WidgetCell(name = course.name, colorIndex = colorIndex, continued = false)
-                    } else {
-                        WidgetCell(name = "", colorIndex = colorIndex, continued = true)
-                    }
+        val result = ArrayList<WidgetTimelineRow>()
+        for (offset in 0 until days.coerceAtLeast(1)) {
+            val daySample = Calendar.getInstance(zone).apply {
+                timeInMillis = now
+                add(Calendar.DAY_OF_YEAR, offset)
+            }.timeInMillis
+            val week = weekAt(snapshot.firstWeekDate, daySample, zone) ?: continue
+            val day = dayOfWeek(daySample, zone)
+            val occurrences = snapshot.courses
+                .filter { it.day == day && visibleInWeek(it, week) }
+                .mapNotNull { course ->
+                    val start = timeOnDay(daySample, zone, starts[course.startPeriod]) ?: return@mapNotNull null
+                    val end = timeOnDay(daySample, zone, ends[course.endPeriod]) ?: return@mapNotNull null
+                    if (end <= start) null else Triple(course, start, end)
                 }
+                .filter { offset != 0 || it.third > now }
+                .sortedWith(compareBy({ it.second }, { it.first.name }))
+            occurrences.forEachIndexed { index, (course, start, end) ->
+                result += WidgetTimelineRow(
+                    dayOffset = offset,
+                    day = day,
+                    time = timeText(starts[course.startPeriod], ends[course.endPeriod]),
+                    name = course.name,
+                    location = compactLocation(course.location),
+                    colorIndex = (course.id.hashCode().toLong() and 0x7fffffffL).rem(palette.toLong()).toInt(),
+                    happening = now in start until end,
+                    firstOfDay = index == 0
+                )
             }
-        return cells
+        }
+        return result
     }
 }
 
-/** 周视图网格里的一格：continued 表示它是上一格那门课的延续（不重复写课名）。 */
-data class WidgetCell(val name: String, val colorIndex: Int, val continued: Boolean)
+/** 时间轴上的一节课。[happening] = 此刻正在上；[firstOfDay] = 这一天的第一节，用来画日分隔。 */
+data class WidgetTimelineRow(
+    val dayOffset: Int,
+    val day: Int,
+    val time: String,
+    val name: String,
+    val location: String,
+    val colorIndex: Int,
+    val happening: Boolean,
+    val firstOfDay: Boolean
+)
 
 /** 与 App 内课表同一套配色（ScheduleRoute 的 courseColors）。 */
 object WidgetPalette {

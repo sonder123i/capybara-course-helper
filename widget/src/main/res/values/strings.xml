@@ -4,8 +4,8 @@
     <string name="widget_today_description">显示今天的课程安排，点击可打开课表</string>
     <string name="widget_today_tomorrow_label">近日课程</string>
     <string name="widget_today_tomorrow_description">左右两栏显示最近的上课安排，今天没课时自动预告后面要上的课，点击可打开课表</string>
-    <string name="widget_week_label">周课表</string>
-    <string name="widget_week_description">整周课表网格（周一至周日 × 节次），当前周的单双周课程自动过滤</string>
+    <string name="widget_timeline_label">今日时间轴</string>
+    <string name="widget_timeline_description">从今天起往后几天的课按上课时刻排成一列，正在上的一节高亮，点击可打开课表</string>
     <string name="widget_no_school">未绑定学校</string>
     <string name="widget_empty_today">今天没有课啦</string>
     <string name="widget_empty_finished">今天的课都上完啦</string>

@@ -28,16 +28,19 @@
                 android:resource="@xml/today_tomorrow_widget_info" />
         </receiver>
 
+        <!-- 「今日时间轴」。类名仍叫 WeekWidgetReceiver：桌面上已经摆了旧「周课表」的
+             组件认的就是这个组件名，改名会让它们升级后变成「不可用」的灰块。
+             内容换掉、名字留着，原因写在 TimelineWidget.kt 里。 -->
         <receiver
             android:name=".WeekWidgetReceiver"
             android:exported="true"
-            android:label="@string/widget_week_label">
+            android:label="@string/widget_timeline_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/week_widget_info" />
+                android:resource="@xml/timeline_widget_info" />
         </receiver>
     <!-- 下课闹钟：到点重画组件（只由本应用的 PendingIntent 触发，不导出） -->
         <receiver
