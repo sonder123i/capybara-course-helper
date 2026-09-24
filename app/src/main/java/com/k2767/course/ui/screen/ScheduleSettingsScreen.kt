@@ -53,6 +53,7 @@ import com.k2767.course.ui.system.LocalAppBackdrop
 import com.k2767.course.ui.system.LocalAppOverlayBottomInset
 import com.k2767.course.ui.system.LocalControlBackdrop
 import com.k2767.course.ui.system.LocalDialogHost
+import com.k2767.course.ui.system.LiquidSwitch
 import com.k2767.course.ui.system.LocalFloatingNotice
 import com.k2767.course.ui.system.LocalModalBackdrop
 import com.k2767.course.ui.system.LocalNoticeAnchor
@@ -97,7 +98,9 @@ fun ScheduleSettingsScreen(
     customCourses: List<ScheduleSettingsManager.CustomCourse> = emptyList(),
     onAddCustomCourse: (() -> Unit)? = null,
     onEditCustomCourse: (String) -> Unit = {},
-    onSyncSchedule: (() -> Unit)? = null
+    onSyncSchedule: (() -> Unit)? = null,
+    showWeekend: Boolean = true,
+    onShowWeekendChange: ((Boolean) -> Unit)? = null
 ) {
     var periodCount by remember { mutableStateOf(manager.periodCount) }
     var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
@@ -268,6 +271,17 @@ fun ScheduleSettingsScreen(
                                 // 原先是 Material DropdownMenu；换成与节次时间同一种
                                 // 滚轮弹窗，两处交互一致
                                 onClick = { showPeriodCountPicker = true }
+                            )
+                        }
+                    }
+
+                    if (onShowWeekendChange != null) {
+                        InsetGroupedSection(header = "课表显示", footer = "周末通常没有课，收起来之后周一到周五能占满整屏宽度") {
+                            InsetGroupedRow(
+                                title = "显示周末",
+                                subtitle = "课表横向是否包含周六、周日",
+                                trailing = { LiquidSwitch(checked = showWeekend, onCheckedChange = onShowWeekendChange) },
+                                showDivider = false
                             )
                         }
                     }

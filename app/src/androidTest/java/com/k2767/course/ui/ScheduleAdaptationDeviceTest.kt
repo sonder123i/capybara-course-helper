@@ -47,7 +47,8 @@ class ScheduleAdaptationDeviceTest {
                 CourseSelectorTheme {
                     Column(Modifier.requiredSize(width.intValue.dp, 720.dp).background(MaterialTheme.colorScheme.background)
                         .testTag("schedule-viewport")) {
-                        WeekHeaderCompact(24, {}, {}, collapseFraction = collapse.floatValue, firstWeekDate = "2026-03-02")
+                        WeekHeaderCompact(currentWeek = 24, onPrevClick = {}, onNextClick = {},
+                            collapseFraction = collapse.floatValue, firstWeekDate = "2026-03-02")
                         Box(Modifier.weight(1f)) { ScheduleGrid(courses, 25, periodCount = 4, onCourseClick = {}) }
                     }
                 }
@@ -63,10 +64,13 @@ class ScheduleAdaptationDeviceTest {
                 assertTrue("Title overlaps actions at $w/$f/$p", title.right <= actions.left + 1f || title.bottom <= actions.top + 1f)
                 assertTrue(actions.left >= viewport.left && actions.right <= viewport.right + 1f)
                 if (w == 412 && f == 1f) assertTrue("Keep the approved two-column header", title.right <= actions.left + 1f)
-                val actionBounds = listOf("上一周", "下一周", "导出", "设置").map {
-                    compose.onNodeWithContentDescription(it, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                val more = compose.onNodeWithTag("schedule-more", true).fetchSemanticsNode().boundsInRoot
+                assertTrue("More menu left the viewport at $w/$f/$p", more.left >= viewport.left && more.right <= viewport.right + 1f)
+                if (p < 0.5f) {
+                    val toggle = compose.onNodeWithTag("schedule-view-toggle", true).fetchSemanticsNode().boundsInRoot
+                    assertTrue("View toggle left the viewport at $w/$f/$p", toggle.left >= viewport.left)
+                    assertEquals("View toggle and the more menu drifted apart at $w/$f/$p", toggle.center.y, more.center.y, 2f)
                 }
-                actionBounds.forEach { assertEquals(actionBounds.first().center.y, it.center.y, 1f) }
                 for (day in 1..7) {
                     val label = compose.onNodeWithTag("schedule-weekday-$day", true).fetchSemanticsNode().boundsInRoot
                     val card = compose.onNodeWithTag("schedule-course-day-$day", true).fetchSemanticsNode().boundsInRoot

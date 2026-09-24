@@ -15,6 +15,10 @@ object ScheduleDates {
             set(Calendar.MILLISECOND, 0)
         }
 
+    /** 教学周里的第几天（周一=1）。与 [mondayOfWeek] 同一套周首日口径。 */
+    fun dayAt(millis: Long, zone: TimeZone = TimeZone.getDefault()): Int =
+        Calendar.getInstance(zone).apply { timeInMillis = millis }.let { (it.get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1 }
+
     private fun calendarDate(value: String?, zone: TimeZone): Calendar? = runCatching {
         val parts = requireNotNull(value).split('-').map(String::toInt)
         require(parts.size == 3)

@@ -160,7 +160,8 @@ class ScheduleMotionDeviceTest {
         compose.setContent {
             CourseSelectorTheme {
                 Box(Modifier.size(360.dp, 640.dp)) {
-                    ScheduleScreen(week.intValue, courses, false, onWeekChange = { week.intValue = it }, onCourseClick = {},
+                    ScheduleScreen(currentWeek = week.intValue, courses = courses, isLoading = false,
+                        onWeekChange = { week.intValue = it }, onCourseClick = {},
                         firstWeekDate = "2026-09-07")
                 }
             }

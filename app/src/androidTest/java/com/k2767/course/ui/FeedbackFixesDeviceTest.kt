@@ -216,7 +216,8 @@ class FeedbackFixesDeviceTest {
                             when (page.intValue) {
                                 0 -> MeasuredGradesHeader("7 门课程", listOf("学期", "总体", "考试"), 0, {},
                                     collapse.floatValue, LocalAppBackdrop.current, true, true, false, {}, {}, { _, _ -> })
-                                1 -> WeekHeaderCompact(1, {}, {}, collapseFraction = collapse.floatValue,
+                                1 -> WeekHeaderCompact(currentWeek = 1, onPrevClick = {}, onNextClick = {},
+                                    collapseFraction = collapse.floatValue,
                                     sampleBackdrop = LocalAppBackdrop.current)
                             }
                         }

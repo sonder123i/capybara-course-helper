@@ -139,9 +139,22 @@ fun ScheduleRoute() {
     var isNextSemester by rememberSaveable(routeAccountKey) {
         mutableStateOf(restoredSnapshot?.isNextSemester ?: false)
     }
+    // 视图与周末显示按账号各存一份（默认周视图，见 ScheduleDisplayPreferences）。
+    // 存这里而不是存进 ScheduleScreen：切走再回来不该把自己刚选的视图弄丢。
+    val displayStore = remember(context) {
+        ScheduleDisplayStore(context.getSharedPreferences("schedule_display", android.content.Context.MODE_PRIVATE))
+    }
+    var displayPreferences by remember(routeAccountKey) {
+        mutableStateOf(displayStore.read(routeAccountKey))
+    }
+    LaunchedEffect(routeAccountKey, displayPreferences) { displayStore.write(routeAccountKey, displayPreferences) }
+    var selectedDay by rememberSaveable(routeAccountKey) {
+        mutableIntStateOf(ScheduleDates.dayAt(System.currentTimeMillis()))
+    }
     
     // Dialog State
     var showSettingsDialog by rememberSaveable { mutableStateOf(false) }
+    var showWidgetPicker by rememberSaveable { mutableStateOf(false) }
     var detailId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var detailSourceBounds by remember(routeAccountKey) { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var editingId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
@@ -500,15 +513,23 @@ fun ScheduleRoute() {
     CompositionLocalProvider(com.k2767.course.ui.screen.LocalScheduleFocus provides focusRegistry) {
     ScheduleScreen(
         currentWeek = currentWeek,
+        selectedDay = selectedDay,
         courses = courses,
         isLoading = isLoading,
         errorMessage = loadError,
         onRetry = { loadSchedule(true) },
         periodTimes = periodTimes,
         periodCount = periodCount,
+        dayView = displayPreferences.dayView,
+        showWeekend = displayPreferences.showWeekend,
         firstWeekDate = effectiveTimeBase?.firstWeekDate,
         weekRequestKey = appliedCalendar.orEmpty(),
         onWeekChange = { currentWeek = it },
+        onDayChange = { selectedDay = it },
+        onDayViewChange = { displayPreferences = displayPreferences.copy(dayView = it) },
+        onSyncClick = { loadSchedule(true) },
+        onAddClick = { settingsTermOverride = null; editingId = java.util.UUID.randomUUID().toString() },
+        onWidgetClick = { showWidgetPicker = true },
         onCourseClick = {
             notificationCourseJson = null
             // Freeze the tapped card before pager neighbours or sheet layout update their bounds.
@@ -566,6 +587,10 @@ fun ScheduleRoute() {
     }
     }
     
+    if (showWidgetPicker) {
+        com.k2767.course.ui.screen.ScheduleWidgetPicker(onDismiss = { showWidgetPicker = false })
+    }
+
     if (showSettingsDialog) {
         com.k2767.course.ui.system.GlassSubpage(onDismiss = { showSettingsDialog = false; settingsTermOverride = null }) { close ->
             ScheduleSettingsScreen(
@@ -593,6 +618,8 @@ fun ScheduleRoute() {
                     close()
                     loadSchedule(true)
                 },
+                showWeekend = displayPreferences.showWeekend,
+                onShowWeekendChange = { displayPreferences = displayPreferences.copy(showWeekend = it) },
                 onClose = {
                     periodCount = settingsManager.periodCount
                     periodTimes = periodTimesFor(displayedTimeBase).map { PeriodTimeUi(it.period, it.startTime, it.endTime) }
