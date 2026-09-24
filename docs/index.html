@@ -281,17 +281,17 @@ html[data-theme="light"] .frame{
 .wshot{width:100%;max-width:360px;margin:0 auto 4px;height:auto;display:block;
   filter:drop-shadow(0 14px 26px rgba(0,0,0,.45))}
 html[data-theme="light"] .wshot{filter:drop-shadow(0 14px 26px rgba(20,35,60,.20))}
-/* 周课表卡片的迷你示意（CSS 画的，不冒充截图） */
-.wmini{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;align-items:end;height:104px;margin:2px 0 6px}
-.wmini i{display:block;border-radius:4px;background:rgba(255,255,255,.10);height:58%}
-.wmini i:nth-child(1){height:42%}
-.wmini i:nth-child(2){height:82%}
-.wmini i:nth-child(3){height:46%}
-.wmini i:nth-child(4){height:74%}
-.wmini i:nth-child(5){height:100%;background:linear-gradient(180deg,var(--brand),var(--brand-deep))}
-.wmini i:nth-child(6){height:38%}
-.wmini i:nth-child(7){height:54%}
+/* 今日时间轴的迷你示意（CSS 画的，不冒充截图） */
+.wmini{display:flex;flex-direction:column;justify-content:center;gap:12px;height:104px;margin:2px 0 6px}
+.wmini i{display:block;position:relative;height:9px;margin-left:16px;border-radius:5px;background:rgba(255,255,255,.10)}
+.wmini i::before{content:"";position:absolute;left:-16px;top:1px;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.30)}
+.wmini i:nth-child(1){width:44%}
+.wmini i:nth-child(2){width:70%}
+.wmini i:nth-child(3){width:52%;background:linear-gradient(90deg,var(--brand),var(--brand-deep))}
+.wmini i:nth-child(3)::before{background:var(--brand)}
+.wmini i:nth-child(4){width:64%}
 html[data-theme="light"] .wmini i{background:rgba(11,16,22,.08)}
+html[data-theme="light"] .wmini i::before{background:rgba(11,16,22,.22)}
 .wfoot{margin:26px 0 0;font-size:14px;color:var(--faint);max-width:62em}
 .wfoot b{color:var(--fg);font-weight:500}
 
@@ -588,9 +588,9 @@ html.lenis,html.lenis body{height:auto}
       <h1>一只情绪稳定的卡皮巴拉，<em>替你盯着余量</em>。</h1>
       <p class="lede">选课抢课、课表、成绩，全在一个 App 里。抢课可以定时、可以捡漏、可以按条件自动匹配——把「抢」当成一件正经事来做。</p>
       <div class="cta">
-        <a class="btn btn-primary" id="dl-main" href="https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.1.8/app-release.apk">
+        <a class="btn btn-primary" id="dl-main" href="https://gitee.com/sonder123i/capybara-course-helper/releases/download/v1.2.0/app-release.apk">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
-          下载 APK <span style="opacity:.72;font-weight:400" id="dl-size">6.12 MB</span>
+          下载 APK <span style="opacity:.72;font-weight:400" id="dl-size">6.16 MB</span>
         </a>
         <a class="btn btn-ghost" href="https://github.com/sonder123i/capybara-course-helper" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.8a10.2 10.2 0 0 0-3.2 19.9c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .9-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10.2 10.2 0 0 0 12 1.8"/></svg>
@@ -670,14 +670,14 @@ html.lenis,html.lenis body{height:auto}
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="8" height="7" rx="2"/><rect x="15" y="14" width="6" height="7" rx="2"/></svg></div>
         <h3>桌面小组件</h3>
         <p>三个 Glance 组件，<b style="color:var(--fg);font-weight:500">不依赖应用常驻后台</b>，自己按日期和周次算出今天上什么。下课那一刻自动刷新。</p>
-        <div class="tags"><span class="tag">今日课程</span><span class="tag">今日与明日</span><span class="tag">周课表网格</span></div>
+        <div class="tags"><span class="tag">今日课程</span><span class="tag">近日课程</span><span class="tag">今日时间轴</span></div>
       </article>
 
       <article class="glass fringe card c-2 rv">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></div>
         <h3>周视图 + 日视图</h3>
-        <p>顶部一键切换，两拍式动画——旧视图收起淡出、新视图展开淡入，全程不空屏。一屏容纳全部 8 节，长地点折行不截断。</p>
-        <div class="tags"><span class="tag">单双周过滤</span><span class="tag">.ics 导出</span><span class="tag">课前 15 分钟提醒</span></div>
+        <p>左上角直接是日期，点开能切学期、跳周次；日／周切换在顶部，日视图一天一页、左右滑翻天，并写明今天还剩几堂。旧视图收起淡出、新视图展开淡入，全程不空屏。</p>
+        <div class="tags"><span class="tag">日期与学期入口</span><span class="tag">单双周过滤</span><span class="tag">.ics 导出</span><span class="tag">课前 15 分钟提醒</span></div>
       </article>
 
       <article class="glass fringe card c-2 rv">
@@ -720,16 +720,16 @@ html.lenis,html.lenis body{height:auto}
         <div class="tags"><span class="tag">下课自动刷新</span><span class="tag">上完自动让位</span></div>
       </article>
       <article class="glass fringe card rv">
-        <img class="wshot" src="assets/shots/widget-today-tomorrow.webp" width="916" height="564" alt="「今日与明日」桌面小组件：两栏并排" loading="lazy" decoding="async">
-        <h3>今日与明日</h3>
+        <img class="wshot" src="assets/shots/widget-today-tomorrow.webp" width="916" height="564" alt="「近日课程」桌面小组件：两栏并排" loading="lazy" decoding="async">
+        <h3>近日课程</h3>
         <p>两栏并排，提前知道明天要不要带书。</p>
         <div class="tags"><span class="tag">一屏两日</span><span class="tag">明天没课也会说明</span></div>
       </article>
       <article class="glass fringe card rv">
-        <div class="wmini" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <h3>周课表网格</h3>
-        <p>周一至周日 × 节次铺成网格，单双周自动过滤，当天那一列高亮。</p>
-        <div class="tags"><span class="tag">7 天 × 8 节</span><span class="tag">当天列高亮</span></div>
+        <div class="wmini" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <h3>今日时间轴</h3>
+        <p>从今天起往后几天的课按上课时刻排成一列，每天标出日子，正在上的那一节高亮。</p>
+        <div class="tags"><span class="tag">跨到今天以后</span><span class="tag">正在上的一节高亮</span></div>
       </article>
     </div>
     <p class="wfoot rv">教室与时间各占一行，校区前缀自动裁掉；全上完显示「今天的课都上完啦」。演示模式下也能用，退出演示会清掉桌面上的演示课。</p>
@@ -862,6 +862,7 @@ html.lenis,html.lenis body{height:auto}
       <li><b>v1.1.6</b><span>组件提前预告：今天没课就自动显示下一个有课的日子；「今日与明日」更名「近日课程」</span></li>
       <li><b>v1.1.7</b><span>修好「检查更新」永远提示已是最新、装不上新版；内部版本号改由版本号算出，不再倒退</span></li>
       <li><b>v1.1.8</b><span>教务系统的同域 http 跳转会升回 https 继续登录，登录失败提示改中文并说清卡在域名／端口／证书哪一处；周视图的日期这次真的显示出来；桌面组件支持上下滑动，下午的课不再被截掉</span></li>
+      <li><b>v1.2.0</b><span>课表页整页重做：左上角日期直接点开「日期与学期」、日／周视图各自翻页、顶栏收成一个更多菜单、日视图写明还剩几堂；「周课表」网格组件下线，换成「今日时间轴」</span></li>
     </ul>
   </div>
 </section>
