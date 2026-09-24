@@ -70,14 +70,15 @@ enum class CourseWidgetEntry(
  * 当成 bug，所以这条路必须留一句人话兜底——用户还是要长按桌面自己加。
  */
 object CourseWidgetPinning {
+    // 版本判断必须【直接写在这一行的条件里】：先算成一个布尔变量再分支，
+    // lint 认不出那是版本保护，会按 NewApi 报错（minSdk 24，该 API 26）。
     fun request(context: Context, entry: CourseWidgetEntry) {
         val manager = AppWidgetManager.getInstance(context)
-        val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.isRequestPinAppWidgetSupported
-        if (!supported) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.isRequestPinAppWidgetSupported) {
+            manager.requestPinAppWidget(ComponentName(context, entry.receiver), null, null)
+        } else {
             GlassToaster.show("当前桌面不支持从这里添加，请长按桌面空白处，在小组件中添加「${context.getString(entry.labelRes)}」")
-            return
         }
-        manager.requestPinAppWidget(ComponentName(context, entry.receiver), null, null)
     }
 }
 
