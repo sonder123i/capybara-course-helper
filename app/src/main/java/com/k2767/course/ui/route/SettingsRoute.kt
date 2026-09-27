@@ -323,6 +323,10 @@ fun SettingsRoute(
                         when (result.reason) {
                             com.k2767.course.utils.RecoveryFailure.Network -> "暂时无法连接，请稍后重试"
                             com.k2767.course.utils.RecoveryFailure.Storage -> "保存失败，请重试"
+                            com.k2767.course.utils.RecoveryFailure.AccountUnavailable ->
+                                "学校已禁用或锁定该账号" + result.message.take(80).takeIf(String::isNotBlank)?.let { "：$it" }.orEmpty()
+                            com.k2767.course.utils.RecoveryFailure.CredentialsRejected ->
+                                "本机保存的密码已被教务拒绝，请重新登录一次；反复自动重试会让学校锁定账号"
                             else -> "需要重新登录以更新登录状态"
                         }
                         )

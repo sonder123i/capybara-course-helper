@@ -20,6 +20,8 @@ class SessionRecoveryCoordinatorTest {
             })
         fun succeed(index: Int = requests.lastIndex, value: String = "fresh") = requests[index](LoginRecoveryOutcome.Cookie(value))
         fun fail(index: Int = requests.lastIndex) = requests[index](LoginRecoveryOutcome.Failure(RecoveryFailure.Network))
+        fun failWith(reason: RecoveryFailure, message: String = "", index: Int = requests.lastIndex) =
+            requests[index](LoginRecoveryOutcome.Failure(reason, message))
     }
 
     @Test fun automaticAndManualRecoveryShareOneLoginAndPublishNewVersion() {
@@ -116,5 +118,37 @@ class SessionRecoveryCoordinatorTest {
         val f = Fixture(); f.coordinator.request(f.sessions.token); f.fail()
         f.clock = 60_001
         assertTrue(f.coordinator.canAttempt(f.sessions.token))
+    }
+
+    @Test fun aDisabledAccountStopsAutomaticRetryButStillHonoursAManualOne() {
+        val f = Fixture()
+        f.coordinator.request(f.sessions.token)
+        f.failWith(RecoveryFailure.AccountUnavailable, "该用户已被禁用，请联系管理员")
+        f.clock = 600_000
+        assertFalse("永久性失败不能一直重试", f.coordinator.canAttempt(f.sessions.token))
+        val results = mutableListOf<SessionRecoveryResult>()
+        f.coordinator.request(f.sessions.token, onDone = results::add)
+        assertEquals(1, f.requests.size)
+        assertEquals(SessionRecoveryResult.NeedsLogin(RecoveryFailure.AccountUnavailable, "该用户已被禁用，请联系管理员"), results.single())
+        f.coordinator.request(f.sessions.token, manual = true, onDone = results::add)
+        assertEquals("用户主动点重试还是要放行", 2, f.requests.size)
+    }
+
+    @Test fun aRejectedStoredPasswordIsNotRetriedEither() {
+        val f = Fixture()
+        f.coordinator.request(f.sessions.token)
+        f.failWith(RecoveryFailure.CredentialsRejected)
+        f.clock = 600_000
+        assertFalse(f.coordinator.canAttempt(f.sessions.token))
+    }
+
+    @Test fun schoolWordingIsGradedInsteadOfCollapsingIntoNetwork() {
+        assertEquals(RecoveryFailure.AccountUnavailable, classifyRecoveryFailure("该用户已被禁用，请联系管理员"))
+        assertEquals(RecoveryFailure.AccountUnavailable, classifyRecoveryFailure("账号已锁定"))
+        assertEquals(RecoveryFailure.CredentialsRejected, classifyRecoveryFailure("用户名或密码错误"))
+        assertEquals(RecoveryFailure.VerificationRequired, classifyRecoveryFailure("验证码不正确"))
+        // 「会话已过期」是可恢复的，不能因为出现「过期」两个字就当永久失败
+        assertEquals(RecoveryFailure.Network, classifyRecoveryFailure("登录已过期，请重新登录"))
+        assertEquals(RecoveryFailure.Network, classifyRecoveryFailure("连接超时"))
     }
 }
