@@ -226,6 +226,22 @@ class AcademicRegressionTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun aWriteParkedAtTheLoginPageIsAnExpiredSession() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val school = AcademicCoreTest.testSchool(server, AcademicSystem.ZF)
+            val session = AcademicSessionStore().session(school.id, "a", school.fullBasePath)
+            val http = AcademicHttpTransport(school, session)
+            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/jsxsd/xtgl/login_slogin.html"))
+            try {
+                http.postForm(http.appUrl("xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html"), emptyList(), write = true)
+                fail("A write bounced to the login page never reached the backend")
+            } catch (e: AcademicException) { assertEquals(AcademicStatus.SESSION_EXPIRED, e.status) }
+            assertEquals(1, server.requestCount)
+        } finally { server.shutdown() }
+    }
+
     @Test fun oldPageCharsetAlsoAppliesToTheForm() = runBlocking {
         val server = MockWebServer()
         server.start()
@@ -242,5 +258,67 @@ class AcademicRegressionTest {
             server.takeRequest()
             assertEquals("role=%D1%A7%C9%FA", server.takeRequest().body.readUtf8())
         } finally { server.shutdown() }
+    }
+
+    @Test fun theSessionExpiryCodeIsNotAServerFault() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val school = AcademicCoreTest.testSchool(server, AcademicSystem.ZF)
+            val session = AcademicSessionStore().session(school.id, "a", school.fullBasePath)
+            val http = AcademicHttpTransport(school, session)
+            server.enqueue(MockResponse().setResponseCode(SESSION_EXPIRED_STATUS_CODE))
+            try {
+                http.postForm(http.appUrl("cjcx/cjcx_cxDgXscj.html"), emptyList(), ajax = true)
+                fail("An expired session is not a transient fault")
+            } catch (e: AcademicException) { assertEquals(AcademicStatus.SESSION_EXPIRED, e.status) }
+            server.enqueue(MockResponse().setResponseCode(SESSION_EXPIRED_STATUS_CODE))
+            try {
+                http.writeGet(http.appUrl("operation"))
+                fail("A dead session means the write never reached the backend")
+            } catch (e: AcademicException) { assertEquals(AcademicStatus.SESSION_EXPIRED, e.status) }
+            server.enqueue(MockResponse().setResponseCode(503).setBody("unavailable"))
+            try {
+                http.get(http.appUrl("form"))
+                fail("A real server outage must stay retryable")
+            } catch (e: AcademicException) { assertEquals(AcademicStatus.NETWORK_RETRYABLE, e.status) }
+        } finally { server.shutdown() }
+    }
+
+    @Test fun aLoginFlowExpiryCodeNeverEndsTheSession() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val school = AcademicCoreTest.testSchool(server, AcademicSystem.ZF)
+            val session = AcademicSessionStore().session(school.id, "a", school.fullBasePath)
+            val http = AcademicHttpTransport(school, session)
+            server.enqueue(MockResponse().setResponseCode(SESSION_EXPIRED_STATUS_CODE))
+            assertEquals("A gateway 901 on the login flow must not expire a working session",
+                SESSION_EXPIRED_STATUS_CODE, http.get(http.appUrl("xtgl/login_slogin.html")).code)
+        } finally { server.shutdown() }
+    }
+
+    @Test fun anExpiryCodeCarryingHtmlIsJudgedByItsContentNotItsStatus() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val school = AcademicCoreTest.testSchool(server, AcademicSystem.ZF)
+            val session = AcademicSessionStore().session(school.id, "a", school.fullBasePath)
+            val http = AcademicHttpTransport(school, session)
+            server.enqueue(MockResponse().setResponseCode(SESSION_EXPIRED_STATUS_CODE)
+                .addHeader("Content-Type", "text/html; charset=utf-8")
+                .setBody("""<html><body><input type="password" id="pwd"/></body></html>"""))
+            val page = http.get(http.appUrl("cjcx/cjcx_cxDgXscj.html"))
+            assertEquals(SESSION_EXPIRED_STATUS_CODE, page.code)
+            assertTrue("The caller decides from the page, not from the status code", AcademicHtml.isLoginPage(page.text))
+        } finally { server.shutdown() }
+    }
+
+    @Test fun onlyTheTransportClassifiesTheSessionExpiryCode() {
+        // 调用方能拿到这个状态码，就说明 transport 已经判定它不像失效信号；此处再判一次会绕过收窄。
+        assertEquals(AcademicStatus.RESULT_UNKNOWN, AcademicJson.status("{}", SESSION_EXPIRED_STATUS_CODE))
+        assertEquals(AcademicStatus.SESSION_EXPIRED, AcademicJson.status("""<input type="password" id="pwd"/>""", 200))
+        assertEquals(AcademicStatus.SESSION_EXPIRED, AcademicJson.status("{}", 401))
+        assertEquals(AcademicStatus.RESULT_UNKNOWN, AcademicJson.status("{}", 503))
     }
 }

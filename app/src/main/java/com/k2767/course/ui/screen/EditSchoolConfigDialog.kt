@@ -56,6 +56,7 @@ fun EditSchoolConfigDialog(
     var courseGnmkdm by remember { mutableStateOf(school.courseGnmkdm) }
     var gradeGnmkdm by remember { mutableStateOf(school.gradeGnmkdm) }
     var scheduleGnmkdm by remember { mutableStateOf(school.scheduleGnmkdm) }
+    var requestPacingMillis by remember { mutableStateOf(school.requestPacingMillis.toString()) }
 
     // URL input for smart parsing
     var urlInput by remember { mutableStateOf("") }
@@ -110,6 +111,7 @@ fun EditSchoolConfigDialog(
                         this.allowedAcademicHosts = java.util.ArrayList(allowedHosts.split(',', '，', '\n').map(String::trim).filter(String::isNotBlank))
                         if (!this.allowedAcademicHosts.contains(this.domain)) this.allowedAcademicHosts.add(this.domain)
                         this.academicConfigVersion = school.academicConfigVersion
+                        this.requestPacingMillis = requestPacingMillis.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
                     }
                     onSave(updatedSchool)
                 },
@@ -234,6 +236,7 @@ fun EditSchoolConfigDialog(
             if (showAdvanced) {
                 SchoolFormField(label = "页面字符集", value = pageCharset, onValueChange = { pageCharset = it }, helper = "通常为 UTF-8，旧站点可填写 GBK")
                 SchoolFormField(label = "额外允许访问的学校域名", value = allowedHosts, onValueChange = { allowedHosts = it }, helper = "统一认证域名可填在这里，多个域名以逗号分隔")
+                SchoolFormField(label = "请求最小间隔（毫秒）", value = requestPacingMillis, onValueChange = { requestPacingMillis = it.filter(Char::isDigit) }, helper = "仅当学校教务因短时间重复请求而掉登录时才需要填，如 1200；0 表示不限制")
                 if (supportsZfModulePaths) {
                     SchoolFormSectionTitle("URL 路径配置")
                     SchoolFormField(

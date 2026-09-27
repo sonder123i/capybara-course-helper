@@ -23,6 +23,16 @@ enum class AcademicStatus {
     VALIDATION_FAILED, CREDIT_LIMIT
 }
 
+/**
+ * 教务系统对 AJAX 请求报告"会话已失效"时用的自定义状态码：它既不重定向到登录页，
+ * 也不回 401，所以页面特征匹配和 401/403 判据都看不到它，必须赶在 `>= 500` 的服务器
+ * 故障兜底之前处理。
+ *
+ * 但它同时是非标准码，反向代理和网关都可能回它，而 `SESSION_EXPIRED` 会一路走到
+ * `setLoggedIn(false)`。所以判定要按形状收窄，见 `AcademicHttpTransport` 的调用处。
+ */
+internal const val SESSION_EXPIRED_STATUS_CODE = 901
+
 data class LoginResult(
     val status: AcademicStatus,
     val studentName: String = "",

@@ -88,13 +88,16 @@ class AcademicHttpTransport(
             if (currentMethod == "POST") builder.post(body ?: FormBody.Builder().build()) else builder.get()
             val request = builder.build()
             try {
+                if (school.requestPacingMillis > 0L) session.paceRequest(school.requestPacingMillis)
                 execute(request).use {
                 session.requireActive()
                 if (it.code in 300..399) {
                     val location = it.headers["Location"] ?: throw AcademicException(AcademicStatus.PAGE_CHANGED, "Redirect has no location")
                     if (write) {
-                        // Never replay a write across a redirect. The caller must verify the
-                        // selected list before deciding whether a retry is safe.
+                        // 会话已死时教务会把写请求甩到登录页，这次写入根本没进后端；报「结果尚未确认」
+                        // 会让人去核对一份不可能变化的已选列表，而且续期钩子只认 SESSION_EXPIRED。
+                        // 其它重定向仍报未知：绝不跨重定向重放写。
+                        if (isLoginRedirect(location)) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "登录已失效，请重新登录")
                         throw AcademicException(AcademicStatus.RESULT_UNKNOWN, "Write request was redirected")
                     }
                     if (currentMethod == "POST") {
@@ -118,9 +121,16 @@ class AcademicHttpTransport(
                 val bytes = source?.buffer?.readByteArray(minOf(source.buffer.size, (MAX_BODY_BYTES + 1).toLong())) ?: ByteArray(0)
                 session.requireActive()
                 if (bytes.size > MAX_BODY_BYTES) throw AcademicException(AcademicStatus.PAGE_CHANGED, "Academic response is too large")
+                val contentType = it.headers["Content-Type"]
                 if (it.code == 401 || it.code == 403) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "登录已失效，请重新登录")
+                if (it.code == SESSION_EXPIRED_STATUS_CODE) {
+                    if (!isLoginFlowUrl(parsed) && !looksLikeHtml(contentType, bytes))
+                        throw AcademicException(AcademicStatus.SESSION_EXPIRED, "登录已失效，请重新登录")
+                    // 不满足形状就不替中间层做主：把响应交回调用方，让页面内容去判是不是登录页。
+                    return RawResponse(it.code, it.request.url.toString(), bytes, it.headers.toMultimap(), contentType)
+                }
                 if (it.code == 429 || it.code >= 500) throw AcademicException(if (write && it.code >= 500) AcademicStatus.RESULT_UNKNOWN else AcademicStatus.NETWORK_RETRYABLE, "教务系统暂时不可用（HTTP ${it.code}），请稍后重试")
-                return RawResponse(it.code, it.request.url.toString(), bytes, it.headers.toMultimap(), it.headers["Content-Type"])
+                return RawResponse(it.code, it.request.url.toString(), bytes, it.headers.toMultimap(), contentType)
                 }
             } catch (e: IOException) {
                 currentCoroutineContext().ensureActive()
@@ -136,6 +146,19 @@ class AcademicHttpTransport(
             }
         }
     }
+
+    /** 登录流程自己的 901 只能算这次登录没成功，绝不能反过来踢掉一个还在用的会话。 */
+    private fun isLoginFlowUrl(url: HttpUrl): Boolean =
+        url.encodedPath.contains("login", true) || url.encodedPath.contains("captcha", true)
+
+    private fun looksLikeHtml(contentType: String?, bytes: ByteArray): Boolean =
+        contentType?.contains("html", true) == true ||
+            String(bytes, 0, minOf(bytes.size, 64), Charsets.ISO_8859_1).trimStart().startsWith("<")
+
+    /** 重定向目标是否登录入口：教务登录页、旧方正 default2.aspx、CAS/OAuth 跳转。 */
+    private fun isLoginRedirect(location: String): Boolean =
+        location.contains("login", true) || location.contains("default2.aspx", true) ||
+            location.contains("cas/", true) || location.contains("oauth", true)
 
     private fun ensureAllowed(url: HttpUrl) {
         val value = url.toString()

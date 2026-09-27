@@ -15,6 +15,8 @@ public class SchoolConfig {
     public String pageCharset = "UTF-8";
     public java.util.ArrayList<String> allowedAcademicHosts = new java.util.ArrayList<>();
     public int academicConfigVersion = 1;
+    // 部分教务后端会因为短时间重复请求主动过期会话。0 = 不节流。
+    public long requestPacingMillis = 0L;
 
     // gnmkdm 参数配置 (可自定义)
     public String gradeGnmkdm = "N305005";
@@ -158,6 +160,7 @@ public class SchoolConfig {
             for (String host : allowedAcademicHosts) academicHosts.put(host);
             json.put("allowedAcademicHosts", academicHosts);
             json.put("academicConfigVersion", academicConfigVersion);
+            json.put("requestPacingMillis", requestPacingMillis);
             json.put("basePath", basePath);
             json.put("gradeGnmkdm", gradeGnmkdm);
             json.put("courseGnmkdm", courseGnmkdm);
@@ -194,6 +197,7 @@ public class SchoolConfig {
             config.detectionSource = json.optString("detectionSource", "legacy");
             config.pageCharset = json.optString("pageCharset", "UTF-8");
             config.academicConfigVersion = json.optInt("academicConfigVersion", 1);
+            config.requestPacingMillis = json.optLong("requestPacingMillis", 0L);
             org.json.JSONArray academicHosts = json.optJSONArray("allowedAcademicHosts");
             if (academicHosts != null) {
                 for (int i = 0; i < academicHosts.length(); i++) {

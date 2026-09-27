@@ -1,5 +1,6 @@
 package com.k2767.course.academic
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -44,10 +45,26 @@ class AcademicSession internal constructor(
     internal var pageCharset: java.nio.charset.Charset? = null
     private val epochCounter = AtomicLong(1L)
     private val operationMutex = Mutex()
+    private val requestMutex = Mutex()
+    @Volatile private var lastRequestStarted: Long? = null
     @Volatile var retired: Boolean = false
         private set
     var epoch: Long = epochCounter.get()
         private set
+
+    /**
+     * 把同一会话的请求至少隔开 intervalMillis。部分教务后端会因为短时间重复请求主动过期会话，
+     * 而间隔必须跨并发读者共享，所以锁的是「上一次真正发出的时刻」而不是各调用方自己 delay。
+     */
+    internal suspend fun paceRequest(intervalMillis: Long) = requestMutex.withLock {
+        requireActive()
+        lastRequestStarted?.let { previous ->
+            val remaining = intervalMillis * 1_000_000L - (System.nanoTime() - previous)
+            if (remaining > 0) delay((remaining + 999_999L) / 1_000_000L)
+        }
+        requireActive()
+        lastRequestStarted = System.nanoTime()
+    }
 
     fun invalidate() {
         synchronized(this) {
