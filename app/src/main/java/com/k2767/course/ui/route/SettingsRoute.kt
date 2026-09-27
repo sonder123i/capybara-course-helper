@@ -387,6 +387,24 @@ fun SettingsRoute(
         onQuotaClick = { showQuotaDialog = true },
         onRefreshCookieClick = { refreshCookieManually() },
         onLogExport = { com.k2767.course.utils.LogUtils.exportLogs(context) },
+        onForgeTimetableChange = if (com.k2767.course.BuildConfig.DEBUG) {
+            {
+                val forged = runCatching {
+                    val user = UserManager.getInstance()
+                    val school = requireNotNull(user.currentSchool) { "先选好学校" }
+                    val account = user.currentAccountStorageKey
+                    val cache = com.k2767.course.schedule.ScheduleCacheStore(
+                        context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE))
+                    val term = cache.currentTerm(account, school.id)
+                    val stored = requireNotNull(cache.read(account, school.id, term)) { "本机还没有课表缓存，先去同步一次" }
+                    val previous = requireNotNull(com.k2767.course.schedule.DebugTimetableFixture.previousVersion(stored)) {
+                        "课表至少要有两门课才造得出变更"
+                    }
+                    cache.markSeen(account, school.id, term, previous)
+                }
+                GlassToaster.show(forged.exceptionOrNull()?.message ?: "已造好，回课表页同步一次看提示")
+            }
+        } else null,
         onSchoolAdaptation = {
             if (isDemoMode) GlassToaster.show("本地演示模式不连接学校适配服务") else showSchoolAdaptation = true
         },

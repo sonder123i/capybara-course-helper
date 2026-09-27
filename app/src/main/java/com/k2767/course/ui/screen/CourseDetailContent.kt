@@ -43,7 +43,8 @@ data class CourseDetailUiState(
     val needsPermission: Boolean = false,
     val needsTime: Boolean = false,
     val invalidWeeks: Boolean = false,
-    val sourceCenterX: Float? = null
+    val sourceCenterX: Float? = null,
+    val changeLines: List<String> = emptyList()
 )
 
 /** Content-sized sheet with a bounded scroll body and a persistent, single primary action. */
@@ -124,6 +125,14 @@ fun CourseDetailContent(
                         Column(Modifier.padding(vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             DetailInfoLine("教师", course.teacher.ifBlank { "未指定教师" }, AnimatedIconSpec.Person)
                             DetailInfoLine("周次", course.weeks.ifBlank { "待补全" }, AnimatedIconSpec.Calendar)
+                        }
+                        if (ui.changeLines.isNotEmpty()) {
+                            Column(Modifier.padding(vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("本次同步的调整", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                                ui.changeLines.forEach { line ->
+                                    Text(line, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                                }
+                            }
                         }
                         if (ui.invalidWeeks) Text("周次待核对，暂不能安排提醒。", color = colors.error, style = MaterialTheme.typography.bodySmall)
                         ui.conflicts.forEach { conflict ->

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
@@ -180,7 +181,8 @@ private fun ScheduleDayCourse(
         course.color,
         if (course.isCurrent) 0.13f else if (course.isNext) 0.07f else 0.025f
     )
-    val hasStatus = course.hasConflict || course.isCurrent || course.isNext || course.isCustom || unknownWeeks
+    val hasStatus = course.hasConflict || course.isCurrent || course.isNext || course.isCustom ||
+        course.hasChange || unknownWeeks
 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -275,18 +277,20 @@ private fun ScheduleDayCourse(
                             Icon(
                                 imageVector = when {
                                     course.hasConflict || unknownWeeks -> Icons.Default.Warning
+                                    course.hasChange -> Icons.Default.Info
                                     course.isCustom -> Icons.Default.Edit
                                     else -> Icons.Default.PlayArrow
                                 },
                                 contentDescription = when {
                                     unknownWeeks -> "周次待核对"
                                     course.hasConflict -> "同一时段有其他课程"
+                                    course.hasChange -> "本次同步调整过"
                                     course.isCurrent -> "正在上课"
                                     course.isNext -> "下一节"
                                     else -> null
                                 },
                                 modifier = Modifier.size(13.dp),
-                                tint = if (course.hasConflict || unknownWeeks) {
+                                tint = if (course.hasConflict || unknownWeeks || course.hasChange) {
                                     MaterialTheme.colorScheme.error
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.AssignmentInd
 import androidx.compose.material.icons.outlined.Assignment
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ContentPasteSearch
+import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
@@ -81,6 +82,7 @@ fun SettingsScreen(
     onQuotaClick: () -> Unit = {},
     onRefreshCookieClick: () -> Unit = {},
     onLogExport: () -> Unit = {},
+    onForgeTimetableChange: (() -> Unit)? = null,
     onSchoolAdaptation: () -> Unit = {},
     onSurveyCenter: () -> Unit = {},
     surveyUnreadCount: Int = 0,
@@ -255,6 +257,16 @@ fun SettingsScreen(
                     subtitle = "导出本地运行日志",
                     onClick = onLogExport
                 )
+                // 只在 debug 包里挂进来：造一份假的「上次看过」基线，让变更链路能在真机上验。
+                onForgeTimetableChange?.let { forge ->
+                    SettingsRow(
+                        icon = Icons.Outlined.Create,
+                        iconTint = Color(0xFFFFB340),
+                        title = "（调试）造一次课表变更",
+                        subtitle = "把上次看过的基线改成假的一份，回课表页会报调整",
+                        onClick = forge
+                    )
+                }
                 // 自用改造：学校库已覆盖绝大多数学校，隐藏适配入口（开关见 SelfHostConfig）
                 if (SelfHostConfig.ENABLE_SCHOOL_ADAPTATION_UI) {
                     SettingsRow(

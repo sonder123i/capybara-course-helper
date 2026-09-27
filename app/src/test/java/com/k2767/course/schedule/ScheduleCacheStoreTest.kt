@@ -102,6 +102,56 @@ class ScheduleCacheStoreTest {
         assertEquals(result.json, store(prefs).selected("a", "school", false)?.json)
     }
 
+    private fun seenRows(cache: ScheduleCacheStore) = cache.seenRows("a", "school", current)
+
+    @Test fun seenBaselineStaysScopedToAccountSchoolAndTerm() {
+        val cache = store(MemoryPreferences())
+        cache.markSeen("a", "school", current, json)
+        assertEquals(json, cache.seenJson("a", "school", current))
+        assertNull(cache.seenJson("b", "school", current))
+        assertNull(cache.seenJson("a", "other-school", current))
+        assertNull(cache.seenJson("a", "school", current.next()))
+    }
+
+    @Test fun aFailedSyncCannotBecomeTheSeenBaseline() {
+        val cache = store(MemoryPreferences())
+        try {
+            cache.markSeen("a", "school", current, "<html>登录</html>")
+            fail("Unparsable response accepted as a baseline")
+        } catch (_: IllegalArgumentException) { }
+        assertNull(cache.seenJson("a", "school", current))
+    }
+
+    @Test fun servingTheCacheNeverAdvancesTheSeenBaseline() = runTest {
+        val cache = store(MemoryPreferences())
+        cache.save("a", "school", saved())
+        cache.selected("a", "school", false)
+        cache.load("a", "school", false, false, ::noNetwork)
+        assertNull(cache.seenJson("a", "school", current))
+    }
+
+    @Test fun aSeenRecordIsNeverServedAsTheTimetable() {
+        val cache = store(MemoryPreferences())
+        cache.markSeen("a", "school", current, json)
+        assertNull(cache.selected("a", "school", false))
+    }
+
+    @Test fun aCorruptSeenRecordReadsAsNoBaselineAtAll() {
+        val prefs = MemoryPreferences()
+        prefs.edit().putString("schedule_a_school_${current.id}_seen", "<html>登录</html>").apply()
+        assertNull(store(prefs).seenJson("a", "school", current))
+        assertNull(store(prefs).seenRows("a", "school", current))
+    }
+
+    @Test fun markingSeenIsWhatTurnsPendingIntoInSync() {
+        val cache = store(MemoryPreferences())
+        val rows = scheduleRows(requireNotNull(ScheduleJson.parse(json)))
+        cache.save("a", "school", saved())
+        assertEquals(ScheduleBaseline.Establish, scheduleBaseline(seenRows(cache), rows, comparable = true))
+        cache.markSeen("a", "school", current, json)
+        assertEquals(ScheduleBaseline.InSync, scheduleBaseline(seenRows(cache), rows, comparable = true))
+    }
+
     private class Reader(private val term: AcademicTerm) : AcademicStudyAdapter {
         var catalogCalls = 0
         var scheduleCalls = 0

@@ -36,10 +36,13 @@ object ScheduleWeeks {
 }
 
 object ScheduleIdentity {
+    fun normalize(value: String): String =
+        Normalizer.normalize(value.trim(), Normalizer.Form.NFKC).replace(Regex("\\s+"), " ")
+
     fun network(sourceId: String, name: String, teacher: String, day: Int, start: Int, end: Int, weeks: String, location: String = ""): String {
         val fields = if (sourceId.isNotBlank()) listOf(sourceId, day.toString(), start.toString(), end.toString(), ScheduleWeeks.canonical(weeks))
             else listOf(name, teacher, location, day.toString(), start.toString(), end.toString(), ScheduleWeeks.canonical(weeks))
-        val canonical = fields.joinToString("\u001f") { Normalizer.normalize(it.trim(), Normalizer.Form.NFKC).replace(Regex("\\s+"), " ") }
+        val canonical = fields.joinToString("\u001f") { normalize(it) }
         return "network:" + digest(canonical)
     }
 

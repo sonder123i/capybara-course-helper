@@ -118,6 +118,8 @@ import com.k2767.course.ui.system.FloatingNotice
 import com.k2767.course.ui.system.FloatingNoticeHost
 import com.k2767.course.ui.system.LocalSemesterAnchorNotice
 import com.k2767.course.ui.system.rememberSemesterAnchorNotice
+import com.k2767.course.ui.system.LocalScheduleChangeNotice
+import com.k2767.course.ui.system.rememberScheduleChangeNotice
 import com.k2767.course.ui.system.PagePadding
 import com.k2767.course.ui.system.isBackdropSupported
 import com.k2767.course.ui.system.rememberDialogHostState
@@ -314,6 +316,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val isRecovering = session.expired && !isTokenExpired
     val noticeModel: SessionNoticeViewModel = viewModel()
     val semesterAnchorNotice = rememberSemesterAnchorNotice()
+    val scheduleChangeNotice = rememberScheduleChangeNotice()
     val sessionNotice by noticeModel.notices.state.collectAsState()
     var foreground by remember { mutableStateOf(fragmentActivity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     val relogin = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -449,8 +452,8 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         } else if (isRecovering) {
             FloatingNotice(message = "正在恢复登录状态", actionLabel = "恢复中", onClick = {})
         } else {
-            // 登录类提示优先；课表页没设开学日期时由它接手（离开课表页会被清空）
-            semesterAnchorNotice.notice()
+            // 登录类提示优先；其次开学日期，再次本次同步的课表调整（离开课表页会被清空）
+            semesterAnchorNotice.notice() ?: scheduleChangeNotice.notice()
         }
 
         val wallpaperBackdrop = if (useGlass) {
@@ -539,6 +542,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             LocalPageDataState provides pageData,
             LocalFloatingNotice provides tokenExpiredNotice,
             LocalSemesterAnchorNotice provides semesterAnchorNotice,
+            LocalScheduleChangeNotice provides scheduleChangeNotice,
             LocalNoticeAnchor provides noticeAnchorState,
             com.k2767.course.ui.system.glass.LocalPageGlassFreshness provides lensFreshness,
             com.k2767.course.ui.system.glass.LocalGlassLensAnchor provides appLensAnchor,

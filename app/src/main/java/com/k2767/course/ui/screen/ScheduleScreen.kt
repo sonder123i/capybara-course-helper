@@ -69,6 +69,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.semantics.Role
@@ -357,7 +358,8 @@ data class ScheduleCourseUi(
     ),
     val hasConflict: Boolean = false,
     val isCurrent: Boolean = false,
-    val isNext: Boolean = false
+    val isNext: Boolean = false,
+    val hasChange: Boolean = false
 ) {
     fun record() = com.k2767.course.schedule.ScheduleCourseRecord(id, name, teacher, location, day, startPeriod, endPeriod, weeks, isCustom)
 }
@@ -390,7 +392,8 @@ fun ScheduleScreen(
     errorMessage: String = "",
     onRetry: () -> Unit = {},
     firstWeekDate: String? = null,
-    weekRequestKey: String? = null
+    weekRequestKey: String? = null,
+    changedIds: Set<String> = emptySet()
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val coroutineScope = rememberCoroutineScope()
@@ -642,12 +645,13 @@ fun ScheduleScreen(
                     val dayNumber = dayOf(page)
                     // 与周视图同一套派生：冲突 / 正在上课 / 下一节的标记来源保持一致，
                     // 否则同一门课在两个视图里的状态会不一样。
-                    val displayedCourses = remember(courses, conflictIds, liveIds, nextId, weekNumber, actualWeek, isNextSemester) {
+                    val displayedCourses = remember(courses, conflictIds, liveIds, nextId, changedIds, weekNumber, actualWeek, isNextSemester) {
                         courses.map {
                             it.copy(
                                 hasConflict = it.id in conflictIds,
                                 isCurrent = !isNextSemester && weekNumber == actualWeek && it.id in liveIds,
-                                isNext = !isNextSemester && it.id == nextId
+                                isNext = !isNextSemester && it.id == nextId,
+                                hasChange = it.id in changedIds
                             )
                         }
                     }
@@ -1565,6 +1569,7 @@ fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: 
             .semantics {
                 stateDescription = listOfNotNull(if (course.hasConflict) "时间冲突" else null,
                     if (course.isCurrent) "正在上课" else null, if (course.isCustom) "自定义课程" else null,
+                    if (course.hasChange) "本次同步调整过" else null,
                     if (unknownWeeks) "周次待核对" else null).joinToString("，")
             }
             .scale(scale)
@@ -1587,6 +1592,12 @@ fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: 
         border = scheduleCardBorder(course.color, course.isCurrent || course.isNext)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            // 变更标记只做覆盖层：hasCardStatus 会决定整张网格的行高，
+            // 为一个临时状态把每一节抬高 11dp 不值得。
+            if (course.hasChange) Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 6.dp).size(6.dp)
+                    .background(MaterialTheme.colorScheme.error, CircleShape)
+            )
             // 顶部玻璃高光渐变：模拟光源照射的反射
             Box(
                 modifier = Modifier

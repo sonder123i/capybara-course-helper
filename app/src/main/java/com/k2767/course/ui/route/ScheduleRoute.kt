@@ -1,6 +1,7 @@
 package com.k2767.course.ui.route
 
 import com.k2767.course.ui.system.GlassToaster
+import com.k2767.course.ui.system.LocalScheduleChangeNotice
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -333,12 +334,46 @@ fun ScheduleRoute() {
         return nonCustom + customUi
     }
 
+    // ============ 变更检测：同步前进课表，看过才前进基线 ============
+    val changeNotice = LocalScheduleChangeNotice.current
+    var scheduleChanges by remember(routeAccountKey) { mutableStateOf<ScheduleChangeReport?>(null) }
+    DisposableEffect(changeNotice) { onDispose { changeNotice.clear() } }
+
+    fun publishChanges(account: String, schoolId: String, term: com.k2767.course.academic.AcademicTerm, json: String) {
+        val current = ScheduleJson.parse(json)?.let(::scheduleRows) ?: return
+        val decision = scheduleBaseline(scheduleCache.seenRows(account, schoolId, term), current,
+            comparable = !isLocalView && !isDemoMode)
+        when (decision) {
+            // 静默建立基线：第一次见到这份表，不该演成「新增了全部课程」。
+            ScheduleBaseline.Establish -> {
+                scheduleCache.markSeen(account, schoolId, term, json)
+                scheduleChanges = null
+                changeNotice.clear()
+            }
+            // 离线查看与演示模式既不比较也不推进，缓存命中同样不进这条链路。
+            ScheduleBaseline.Bypassed, ScheduleBaseline.InSync -> {
+                scheduleChanges = null
+                changeNotice.clear()
+            }
+            is ScheduleBaseline.Pending -> {
+                scheduleChanges = decision.report
+                changeNotice.report(decision.report.changes.size) {
+                    scheduleCache.markSeen(account, schoolId, term, json)
+                    scheduleChanges = null
+                    changeNotice.clear()
+                }
+            }
+        }
+    }
+
     // Load Schedule Function
     val loadSchedule = remember(isNextSemester, session.token) {
         fun(forceRefresh: Boolean) {
             if (isDemoMode) {
                 resolvedTermId = (if (isNextSemester) DemoData.currentTerm.next() else DemoData.currentTerm).id
                 courses = reloadCustomCourses(DemoData.scheduleCourses())
+                scheduleChanges = null
+                changeNotice.clear()
                 isLoading = false
                 return
             }
@@ -357,6 +392,7 @@ fun ScheduleRoute() {
                 resolvedTermId = cached.term.id
                 isLoading = false
                 reminderScheduler.updateSnapshot(routeAccountKey, cached.term.id, courses.map { it.record() })
+                publishChanges(account, school.id, cached.term, cached.json)
                 if (isLocalView && forceRefresh) GlassToaster.show("离线查看中，显示本机缓存的课表")
                 return
             }
@@ -394,6 +430,7 @@ fun ScheduleRoute() {
                         courses = reloadCustomCourses(requireNotNull(parseSchedule(loaded.json)))
                         resolvedTermId = loaded.term.id
                         reminderScheduler.updateSnapshot(routeAccountKey, loaded.term.id, courses.map { it.record() })
+                        publishChanges(account, school.id, loaded.term, loaded.json)
                         if (forceRefresh) GlassToaster.show("已同步课表")
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
@@ -445,6 +482,7 @@ fun ScheduleRoute() {
                             scheduleCache.save(account, school.id, CachedSchedule(currentTerm, requestedTerm, json, false))
                             courses = reloadCustomCourses(parsed)
                             reminderScheduler.updateSnapshot(routeAccountKey, requestTermId, courses.map { it.record() })
+                            publishChanges(account, school.id, requestedTerm, json)
                             if (forceRefresh) GlassToaster.show("已刷新")
                         } else {
                             val message = "课表响应无效，请重试"
@@ -525,6 +563,7 @@ fun ScheduleRoute() {
         showWeekend = displayPreferences.showWeekend,
         firstWeekDate = effectiveTimeBase?.firstWeekDate,
         weekRequestKey = appliedCalendar.orEmpty(),
+        changedIds = scheduleChanges?.changedIds().orEmpty(),
         onWeekChange = { currentWeek = it },
         onDayChange = { selectedDay = it },
         onDayViewChange = { displayPreferences = displayPreferences.copy(dayView = it) },
@@ -665,6 +704,7 @@ fun ScheduleRoute() {
         com.k2767.course.ui.screen.ScheduleCourseSheet(course, routeAccountKey, detailTerm, if (detailTerm == resolvedTermId) courses else listOf(course),
             sourceCenterX = detailSourceBounds?.center?.x,
             sourceBounds = detailSourceBounds,
+            changeLines = scheduleChanges?.linesFor(course.id).orEmpty(),
             onDismiss = { detailId = null; detailSourceBounds = null; notificationCourseJson = null; focusRegistry.restore(course.id) },
             onEdit = { editingId = course.customId },
             onConfigureTime = { settingsTermOverride = detailTerm; showSettingsDialog = true },

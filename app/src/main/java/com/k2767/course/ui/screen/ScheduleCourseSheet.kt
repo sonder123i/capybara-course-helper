@@ -23,7 +23,8 @@ import java.util.Locale
 @Composable
 fun ScheduleCourseSheet(course: ScheduleCourseUi, account: String, term: String,
     allCourses: List<ScheduleCourseUi>, onDismiss: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit,
-    onConfigureTime: () -> Unit, sourceCenterX: Float? = null, sourceBounds: Rect? = null) {
+    onConfigureTime: () -> Unit, sourceCenterX: Float? = null, sourceBounds: Rect? = null,
+    changeLines: List<String> = emptyList()) {
     val host = LocalDialogHost.current
     val ownHost = rememberDialogHostState()
     val targetHost = host ?: ownHost
@@ -36,7 +37,7 @@ fun ScheduleCourseSheet(course: ScheduleCourseUi, account: String, term: String,
     val currentDelete by rememberUpdatedState(onDelete)
     val body: @Composable () -> Unit = {
         ScheduleCourseSheetContent(course, account, term, allCourses, sheet, close, onEdit,
-            { deleteAfterExit = true; close() }, onConfigureTime, sourceCenterX)
+            { deleteAfterExit = true; close() }, onConfigureTime, sourceCenterX, changeLines)
     }
     val currentBody by rememberUpdatedState(body)
     DisposableEffect(targetHost, course.id) {
@@ -55,7 +56,8 @@ fun ScheduleCourseSheet(course: ScheduleCourseUi, account: String, term: String,
 @Composable
 private fun ScheduleCourseSheetContent(course: ScheduleCourseUi, account: String, term: String,
     allCourses: List<ScheduleCourseUi>, state: ScheduleBottomSheetState, close: () -> Unit,
-    onEdit: () -> Unit, onDelete: () -> Unit, onConfigureTime: () -> Unit, sourceCenterX: Float?) {
+    onEdit: () -> Unit, onDelete: () -> Unit, onConfigureTime: () -> Unit, sourceCenterX: Float?,
+    changeLines: List<String>) {
     val context = LocalContext.current
     val scheduler = remember(context) { ScheduleReminderScheduler.get(context) }
     val revision = scheduler.revision
@@ -76,7 +78,8 @@ private fun ScheduleCourseSheetContent(course: ScheduleCourseUi, account: String
     CourseDetailContent(
         CourseDetailUiState(course, conflicts, record?.enabled == true, term.isNotBlank(), description,
             record?.enabled == true && status.availability == ReminderAvailability.NeedsPermission,
-            status.availability == ReminderAvailability.NeedsTime, !ScheduleWeeks.parse(course.weeks).valid, sourceCenterX),
+            status.availability == ReminderAvailability.NeedsTime, !ScheduleWeeks.parse(course.weeks).valid, sourceCenterX,
+            changeLines = changeLines),
         state, close, onReminderChanged = { scheduler.setEnabled(key, course.record(), it) },
         onPermission = {
             val permissions = scheduler.permissions()

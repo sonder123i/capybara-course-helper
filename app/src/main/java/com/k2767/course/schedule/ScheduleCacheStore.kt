@@ -77,4 +77,22 @@ internal class ScheduleCacheStore(
                 .put("calendar", calendarTerm().id).toString())
             .apply()
     }
+
+    /**
+     * 「用户上次看过的那份课表」。它与课表本身分开存放：课表可以随每次同步前进，
+     * 这条基线只在用户看过时前进，未读期间的多次同步才会累计成一条变更。
+     */
+    fun seenJson(account: String, school: String, term: AcademicTerm): String? =
+        runCatching { preferences.getString("${prefix(account, school)}_${term.id}_seen", null) }.getOrNull()
+            ?.takeIf { ScheduleJson.parse(it) != null }
+
+    fun markSeen(account: String, school: String, term: AcademicTerm, json: String) {
+        require(ScheduleJson.parse(json) != null) { "A failed sync must not become the seen baseline" }
+        val base = "${prefix(account, school)}_${term.id}"
+        preferences.edit().putString("${base}_seen", json).putLong("${base}_seen_time", System.currentTimeMillis()).apply()
+    }
+
+    /** 比较方向要的是可配对的行；推进方向要的才是原始 json。 */
+    fun seenRows(account: String, school: String, term: AcademicTerm): List<DiffRow>? =
+        seenJson(account, school, term)?.let { scheduleRows(requireNotNull(ScheduleJson.parse(it))) }
 }
