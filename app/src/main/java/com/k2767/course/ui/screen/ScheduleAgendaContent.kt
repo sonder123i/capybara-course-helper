@@ -1,9 +1,8 @@
 package com.k2767.course.ui.screen
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,21 +28,35 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.core.animateFloatAsState
 import com.k2767.course.schedule.ScheduleDates
 import com.k2767.course.schedule.ScheduleMaxWeeks
 import com.k2767.course.schedule.ScheduleWeeks
 import com.k2767.course.ui.system.LocalAppOverlayBottomInset
 import com.k2767.course.ui.system.PagePadding
 import com.k2767.course.ui.system.SystemSecondaryButton
+import com.k2767.course.ui.system.rememberGlassAccessibilityMode
 import java.util.Calendar
 
 /**
@@ -67,6 +80,7 @@ fun ScheduleDayList(
     actualWeek: Int?,
     isNextSemester: Boolean,
     onCourseClick: (ScheduleCourseUi) -> Unit,
+    onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
     onCalendar: () -> Unit = {},
     scrollState: ScrollState = rememberScrollState(),
     topInset: Dp = 0.dp
@@ -128,7 +142,7 @@ fun ScheduleDayList(
                 }
                 if (daily.isEmpty()) ScheduleNotice(if (isToday) "今天没有课程" else "当天没有课程")
                 daily.forEach { course ->
-                    ScheduleDayCourse(course, times) { onCourseClick(course) }
+                    ScheduleDayCourse(course, times, { onCourseLongClick(course) }) { onCourseClick(course) }
                 }
             }
         }
@@ -155,17 +169,35 @@ private fun ScheduleNotice(message: String, action: String? = null, onAction: ()
 private fun ScheduleDayCourse(
     course: ScheduleCourseUi,
     periodTimes: List<PeriodTimeUi>,
+    onLongClick: () -> Unit = {},
     onClick: () -> Unit
 ) {
     val startTime = periodTimes.firstOrNull { it.period == course.startPeriod }?.startTime.orEmpty()
     val endTime = periodTimes.firstOrNull { it.period == course.endPeriod }?.endTime.orEmpty()
     val unknownWeeks = remember(course.weeks) { !ScheduleWeeks.parse(course.weeks).valid }
-    val containerColor = androidx.compose.ui.graphics.lerp(
-        MaterialTheme.colorScheme.surface,
+    val emphasis = course.isCurrent || course.isNext
+    val containerColor = scheduleCardColor(
         course.color,
-        if (course.isCustom) 0.30f else 0.22f
+        if (course.isCurrent) 0.13f else if (course.isNext) 0.07f else 0.025f
     )
     val hasStatus = course.hasConflict || course.isCurrent || course.isNext || course.isCustom || unknownWeeks
+
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val reduced = rememberGlassAccessibilityMode().reduceMotion
+    val scale by animateFloatAsState(
+        if (pressed && !reduced) 0.985f else 1f,
+        androidx.compose.animation.core.tween(if (reduced) 0 else com.k2767.course.ui.theme.MotionDuration.Fast),
+        label = "schedule-day-course-press"
+    )
+    // 日视图也得登记焦点：详情卡用点击处的矩形当动画原点，关闭后还要把焦点还回去。
+    val focus = remember { FocusRequester() }
+    val registry = LocalScheduleFocus.current
+    var bounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    DisposableEffect(course.id, registry, focus) {
+        registry?.register(course.id, focus)
+        onDispose { registry?.remove(course.id, focus) }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -192,13 +224,30 @@ private fun ScheduleDayCourse(
             modifier = Modifier
                 .weight(1f)
                 .testTag("schedule-day-course-${course.id}")
-                .clickable(onClick = onClick),
+                .focusRequester(focus)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .onGloballyPositioned {
+                    bounds = it.boundsInWindow()
+                    registry?.place(course.id, it.boundsInWindow())
+                }
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    role = Role.Button,
+                    onClick = {
+                        registry?.register(course.id, focus)
+                        bounds?.let { registry?.place(course.id, it) }
+                        onClick()
+                    },
+                    onLongClickLabel = "课程快捷操作",
+                    onLongClick = onLongClick
+                ),
             shape = RoundedCornerShape(14.dp),
             color = containerColor,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            border = BorderStroke(0.6.dp, course.color.copy(alpha = 0.50f))
+            border = scheduleCardBorder(course.color, emphasis)
         ) {
-            Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            Row(modifier = Modifier.height(IntrinsicSize.Min).scheduleGlassSheen()) {
                 Box(
                     modifier = Modifier
                         .width(3.dp)

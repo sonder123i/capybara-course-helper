@@ -64,6 +64,13 @@ data class GlassAccessibilityMode(
     val highContrast: Boolean
 )
 
+/** 弹窗类玻璃面的不透明度下限；常驻的 Modal 角色面板仍用它自己的材质。 */
+internal fun modalSurfaceAlpha(dark: Boolean, highContrast: Boolean): Float = when {
+    highContrast -> 0.96f
+    dark -> 0.84f
+    else -> 0.78f
+}
+
 @Composable
 fun rememberGlassAccessibilityMode(): GlassAccessibilityMode {
     val application = LocalContext.current.applicationContext as Application

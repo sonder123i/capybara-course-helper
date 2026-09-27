@@ -20,6 +20,7 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -378,6 +379,7 @@ fun ScheduleScreen(
     onDayChange: (Int) -> Unit = {},
     onDayViewChange: (Boolean) -> Unit = {},
     onCourseClick: (ScheduleCourseUi) -> Unit,
+    onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onExportClick: () -> Unit = {},
     onSyncClick: () -> Unit = {},
@@ -667,6 +669,7 @@ fun ScheduleScreen(
                                 actualWeek = actualWeek,
                                 isNextSemester = isNextSemester,
                                 onCourseClick = onCourseClick,
+                                onCourseLongClick = onCourseLongClick,
                                 scrollState = gridScrollState,
                                 topInset = statusBarHeight + headerMetrics.expanded
                             )
@@ -678,6 +681,7 @@ fun ScheduleScreen(
                                 periodCount = periodCount,
                                 dayCount = dayCount,
                                 onCourseClick = onCourseClick,
+                                onCourseLongClick = onCourseLongClick,
                                 scrollState = gridScrollState,
                                 // 【常量】而不是 paddingValues.calculateTopPadding()：后者随顶栏
                                 // 一起收缩，而它施加在 verticalScroll 内部，于是顶栏每缩 1dp
@@ -1183,6 +1187,7 @@ fun ScheduleGrid(
     /** 显示几列：7=含周末，5=只看周一到周五。日期条与网格必须拿同一个值。 */
     dayCount: Int = 7,
     onCourseClick: (ScheduleCourseUi) -> Unit,
+    onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
     /**
      * scrollState 由调用方持有：顶栏的玻璃浓度要跟着它推导，而且所有 pager 页
      * 共用一个，左右切周时纵向位置不会跳回顶部。
@@ -1322,7 +1327,8 @@ fun ScheduleGrid(
                         periodCount = periodCount,
                         periodHeight = periodHeight,
                         dayCount = dayCount,
-                        onCourseClick = onCourseClick
+                        onCourseClick = onCourseClick,
+                        onCourseLongClick = onCourseLongClick
                     )
 
                     if (weeklyCourses.isEmpty()) {
@@ -1468,13 +1474,18 @@ fun TimetableLayout(
     periodHeight: Dp = SchedulePeriodHeight,
     dayCount: Int = 7,
     modifier: Modifier = Modifier,
-    onCourseClick: (ScheduleCourseUi) -> Unit
+    onCourseClick: (ScheduleCourseUi) -> Unit,
+    onCourseLongClick: (ScheduleCourseUi) -> Unit = {}
 ) {
     Layout(
         modifier = modifier.fillMaxSize(),
         content = {
             courses.forEach { course ->
-                androidx.compose.runtime.key(course.id) { CourseCard(course = course, onClick = { onCourseClick(course) }) }
+                androidx.compose.runtime.key(course.id) { CourseCard(
+                    course = course,
+                    onLongClick = { onCourseLongClick(course) },
+                    onClick = { onCourseClick(course) }
+                ) }
             }
         }
     ) { measurables, constraints ->
@@ -1517,7 +1528,7 @@ fun TimetableLayout(
 }
 
 @Composable
-fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
+fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
     val darkCard = com.k2767.course.ui.system.rememberGlassDarkTheme()
     val focusRequester = remember { FocusRequester() }
     val focusRegistry = LocalScheduleFocus.current
@@ -1529,8 +1540,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
     }
     val duration = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
     // 彩色半透玻璃 tile：加深填充保证壁纸上可读，边缘细亮线似透镜
-    val containerColor = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.surface, course.color, if (course.isCustom) 0.30f else 0.22f)
-    val borderColor = course.color.copy(alpha = 0.50f)
+    val containerColor = scheduleCardColor(course.color, if (course.isCurrent) 0.20f else 0.10f)
     val accentColor = course.color.copy(alpha = 0.85f)
 
     // 只显示楼栋 + 教室：校区前缀每门课都重复一遍，裁掉后真正的楼栋与教室才放得下。
@@ -1558,9 +1568,11 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
                     if (unknownWeeks) "周次待核对" else null).joinToString("，")
             }
             .scale(scale)
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
+                onLongClickLabel = "课程快捷操作",
+                onLongClick = onLongClick,
                 onClick = {
                     // A course can also exist in the pager's adjacent week. The clicked copy
                     // owns the opening origin and the focus returned after dismissal.
@@ -1572,7 +1584,7 @@ fun CourseCard(course: ScheduleCourseUi, onClick: () -> Unit) {
         shape = RoundedCornerShape(12.dp),
         color = containerColor,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(0.6.dp, borderColor)
+        border = scheduleCardBorder(course.color, course.isCurrent || course.isNext)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // 顶部玻璃高光渐变：模拟光源照射的反射

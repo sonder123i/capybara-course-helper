@@ -1,6 +1,5 @@
 package com.k2767.course.ui.screen
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -15,7 +14,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
@@ -67,15 +68,16 @@ fun CourseDetailContent(
         val compactHeight = maxHeight < 420.dp
         val titleDrift = ui.sourceCenterX?.let { (it - with(density) { maxWidth.toPx() } / 2f)
             .coerceIn(-with(density) { 16.dp.toPx() }, with(density) { 16.dp.toPx() }) } ?: 0f
-        Surface(
+        Box(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = maxHeight * 0.85f)
                 .testTag("course-detail-surface").onSizeChanged { sheet.height = it.height.toFloat() }
-                .nestedScroll(connection).semantics { contentDescription = "课程详情" },
-            shape = RoundedCornerShape(28.dp), color = colors.surface,
-            border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.45f)), shadowElevation = 10.dp
+                .nestedScroll(connection).semantics { contentDescription = "课程详情" }
         ) {
-            Column(Modifier.background(Brush.verticalGradient(
-                listOf(course.color.copy(alpha = 0.06f), colors.surface), endY = with(density) { 144.dp.toPx() }
+            // 光学效果必须留在前景内容的兄弟节点上：内容进了 backdrop 就被连入场动画一起捕获；
+            // 半透面板上的 Material 阴影也只是白画。
+            Box(Modifier.matchParentSize().scheduleDetailGlass())
+            Column(Modifier.clip(RoundedCornerShape(28.dp)).background(Brush.verticalGradient(
+                listOf(course.color.copy(alpha = 0.08f), Color.Transparent), endY = with(density) { 144.dp.toPx() }
             )).padding(horizontal = 18.dp)) {
                 Box(Modifier.fillMaxWidth().height(if (compactHeight) 16.dp else 26.dp)
                     .draggable(rememberDraggableState { sheet.dragBy(it) }, Orientation.Vertical,
@@ -135,8 +137,8 @@ fun CourseDetailContent(
                             }
                         }
                     }
-                    Surface(Modifier.fillMaxWidth().moduleEntrance(2, entrance), color = colors.surfaceContainerLow,
-                        shape = RoundedCornerShape(18.dp)) {
+                    Surface(Modifier.fillMaxWidth().moduleEntrance(2, entrance), color = scheduleCardColor(course.color, 0.025f),
+                        border = scheduleCardBorder(course.color), shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 AnimatedLineIcon(AnimatedIconSpec.Bell, Modifier.size(20.dp),
@@ -172,8 +174,9 @@ fun CourseDetailContent(
 
 @Composable
 private fun DetailInfoTile(label: String, value: String, icon: AnimatedIconSpec, modifier: Modifier = Modifier) {
-    Surface(modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Surface(modifier.fillMaxWidth(), color = scheduleCardColor(MaterialTheme.colorScheme.primary, 0.02f),
+        border = scheduleCardBorder(MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.scheduleGlassSheen().padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                 AnimatedLineIcon(icon, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

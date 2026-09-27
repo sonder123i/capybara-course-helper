@@ -158,6 +158,7 @@ fun ScheduleRoute() {
     var detailId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var detailSourceBounds by remember(routeAccountKey) { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var editingId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
+    var quickCourseId by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
     var resolvedTermId by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.termId.orEmpty()) }
     var appliedCalendar by rememberSaveable(routeAccountKey) { mutableStateOf(restoredSnapshot?.appliedCalendar) }
     var notificationCourseJson by rememberSaveable(routeAccountKey) { mutableStateOf<String?>(null) }
@@ -536,6 +537,7 @@ fun ScheduleRoute() {
             detailSourceBounds = focusRegistry.bounds(it.id)
             detailId = it.id
         },
+        onCourseLongClick = { course -> quickCourseId = course.id },
         onSettingsClick = { settingsTermOverride = null; showSettingsDialog = true },
         onExportClick = {
             if (courses.isEmpty()) {
@@ -634,6 +636,30 @@ fun ScheduleRoute() {
     val selectedDetail = courses.firstOrNull { it.id == detailId && detailTerm == resolvedTermId } ?: notificationCourse?.course?.let {
         ScheduleCourseUi(it.name, it.teacher, it.location, it.day, it.startPeriod, it.endPeriod, it.weeks,
             courseColors[ScheduleIdentity.colorIndex(it.id, courseColors.size)], it.custom, if (it.custom) it.id.removePrefix("custom:") else "", id = it.id)
+    }
+    courses.firstOrNull { it.id == quickCourseId }?.let { course ->
+        val reminderKey = CourseReminderKey(routeAccountKey, resolvedTermId, course.id)
+        val enabled = reminderScheduler.find(reminderKey)?.enabled == true
+        com.k2767.course.ui.screen.ScheduleQuickActions(course, enabled,
+            onDismiss = { quickCourseId = null },
+            onReminder = {
+                quickCourseId = null
+                reminderScheduler.setEnabled(reminderKey, course.record(), !enabled)
+                val availability = reminderScheduler.status(reminderKey).availability
+                if (!enabled && availability != ReminderAvailability.Scheduled) {
+                    // 开了但没排上（缺权限 / 缺学期时间 / 周次待核对）：光 toast 等于没交代，
+                    // 直接把详情卡打开，让他在同一个地方补全。
+                    notificationCourseJson = null; detailSourceBounds = null; detailId = course.id
+                } else GlassToaster.show(if (enabled) "已关闭提醒" else "已开启课前提醒")
+            },
+            onCopy = {
+                quickCourseId = null
+                context.getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("教室", course.location))
+                // 13+ 系统自己会弹「已复制」提示，再报一遍就是两句重叠的 toast。
+                if (android.os.Build.VERSION.SDK_INT < 33) GlassToaster.show("教室已复制")
+            },
+            onEdit = { quickCourseId = null; editingId = course.customId })
     }
     selectedDetail?.let { course ->
         com.k2767.course.ui.screen.ScheduleCourseSheet(course, routeAccountKey, detailTerm, if (detailTerm == resolvedTermId) courses else listOf(course),
