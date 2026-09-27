@@ -21,6 +21,12 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.k2767.course.schedule.ExamTable
+import com.k2767.course.schedule.ScheduleBaseline
+import com.k2767.course.schedule.ScheduleChangeReport
+import com.k2767.course.schedule.scheduleBaseline
+import com.k2767.course.ui.screen.examDiffRows
+import com.k2767.course.ui.system.LocalScheduleChangeNotice
 
 @Composable
 fun AcademicGradesRoute(school: SchoolConfig) {
@@ -66,6 +72,40 @@ fun AcademicGradesRoute(school: SchoolConfig) {
         }
         finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) loading = false }
     }
+    val changeNotice = LocalScheduleChangeNotice.current
+    val examCache = remember(context) {
+        com.k2767.course.schedule.ScheduleCacheStore(
+            context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE))
+    }
+    var examChanges by remember(account) { mutableStateOf<ScheduleChangeReport?>(null) }
+    DisposableEffect(changeNotice) { onDispose { changeNotice.clear("考试安排") } }
+
+    fun publishExamChanges(term: com.k2767.course.academic.AcademicTerm, items: List<ExamItemUi>) {
+        val current = examDiffRows(items)
+        val user = UserManager.getInstance()
+        when (val decision = scheduleBaseline(examCache.examSeenRows(account, school.id, term), current,
+            comparable = !user.isLocalViewMode && !user.isDemoMode, table = ExamTable)) {
+            // 第一次见到这份考试表：静默建基线，不演成「新增了一堆考试」。
+            ScheduleBaseline.Establish -> {
+                examCache.markExamSeen(account, school.id, term, current)
+                examChanges = null
+                changeNotice.clear("考试安排")
+            }
+            ScheduleBaseline.Bypassed, ScheduleBaseline.InSync -> {
+                examChanges = null
+                changeNotice.clear("考试安排")
+            }
+            is ScheduleBaseline.Pending -> {
+                examChanges = decision.report
+                changeNotice.report("考试安排", decision.report.changes.size) {
+                    examCache.markExamSeen(account, school.id, term, current)
+                    examChanges = null
+                    changeNotice.clear("考试安排")
+                }
+            }
+        }
+    }
+
     LaunchedEffect(account, tab, examRevision, session.token) {
         val expected = expectedSession
         if (tab != 2 || examsLoaded) return@LaunchedEffect
@@ -73,10 +113,12 @@ fun AcademicGradesRoute(school: SchoolConfig) {
         try {
             val loaded = withContext(Dispatchers.IO) {
                 val reader = AcademicStudyBridge.reader(school, account, expected)
-                reader.exams(reader.catalog().currentTerm).map(AcademicStudyBridge::exam)
+                val term = reader.catalog().currentTerm
+                term to reader.exams(term).map(AcademicStudyBridge::exam)
             }
             if (!sessions.isCurrent(expected)) return@LaunchedEffect
-            exams = loaded; examsLoaded = true
+            exams = loaded.second; examsLoaded = true
+            publishExamChanges(loaded.first, loaded.second)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
             if (!sessions.isCurrent(expected)) return@LaunchedEffect
@@ -93,6 +135,7 @@ fun AcademicGradesRoute(school: SchoolConfig) {
         semesterIsLoading = loading, overallGrades = overallGrades,
         overallStats = overallStats, overallIsLoading = loading,
         examList = exams, examIsLoading = examLoading,
+        examChangeLines = examChanges?.linesById().orEmpty(),
         onRefresh = { if (tab == 2) { examsLoaded = false; examRevision++ } else revision++ },
         semesterError = error, overallError = error, examError = examError,
         onExportGrades = { exportAcademicGrades(context, it) })

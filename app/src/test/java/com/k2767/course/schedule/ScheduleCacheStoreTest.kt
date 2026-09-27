@@ -1,6 +1,8 @@
 package com.k2767.course.schedule
 
 import com.k2767.course.academic.*
+import com.k2767.course.ui.screen.ExamItemUi
+import com.k2767.course.ui.screen.examDiffRows
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -150,6 +152,19 @@ class ScheduleCacheStoreTest {
         assertEquals(ScheduleBaseline.Establish, scheduleBaseline(seenRows(cache), rows, comparable = true))
         cache.markSeen("a", "school", current, json)
         assertEquals(ScheduleBaseline.InSync, scheduleBaseline(seenRows(cache), rows, comparable = true))
+    }
+
+    @Test fun examBaselineAndTimetableBaselineNeverReadEachOther() {
+        val cache = store(MemoryPreferences())
+        cache.save("a", "school", saved())
+        cache.markSeen("a", "school", current, json)
+        val exams = examDiffRows(listOf(ExamItemUi("大学英语", "2026-06-30 09:00", "一教101", "12", "期末", "王老师")))
+        cache.markExamSeen("a", "school", current, exams)
+        assertEquals(exams, cache.examSeenRows("a", "school", current))
+        assertEquals(json, cache.seenJson("a", "school", current))
+        assertEquals(json, cache.selected("a", "school", false)?.json)
+        assertNull(cache.examSeenRows("b", "school", current))
+        assertNull(cache.examSeenRows("a", "school", current.next()))
     }
 
     private class Reader(private val term: AcademicTerm) : AcademicStudyAdapter {

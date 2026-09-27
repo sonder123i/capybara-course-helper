@@ -95,4 +95,22 @@ internal class ScheduleCacheStore(
     /** 比较方向要的是可配对的行；推进方向要的才是原始 json。 */
     fun seenRows(account: String, school: String, term: AcademicTerm): List<DiffRow>? =
         seenJson(account, school, term)?.let { scheduleRows(requireNotNull(ScheduleJson.parse(it))) }
+
+    /**
+     * 考试安排的「上次看过」。与课表基线分键存放——同一门课的考试换了考场，
+     * 不该被读成课表变了，反之也一样。
+     */
+    fun examSeenRows(account: String, school: String, term: AcademicTerm): List<DiffRow>? =
+        runCatching { preferences.getString(examSeenKey(account, school, term), null) }.getOrNull()
+            ?.let { decodeRows(it) }
+
+    fun markExamSeen(account: String, school: String, term: AcademicTerm, rows: List<DiffRow>) {
+        val encoded = encodeRows(rows)
+        require(decodeRows(encoded) != null) { "An unparsable exam snapshot must not become the seen baseline" }
+        preferences.edit().putString(examSeenKey(account, school, term), encoded)
+            .putLong("${examSeenKey(account, school, term)}_time", System.currentTimeMillis()).apply()
+    }
+
+    private fun examSeenKey(account: String, school: String, term: AcademicTerm) =
+        "exam_seen_${account}_${school}_${term.id}"
 }

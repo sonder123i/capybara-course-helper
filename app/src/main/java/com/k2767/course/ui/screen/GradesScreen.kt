@@ -110,6 +110,34 @@ data class ExamItemUi(
     val teacher: String
 )
 
+/**
+ * 考试行喂给课表那套差异引擎。考试没有稳定 id，所以整表走 PresenceOnly；
+ * 时间点就是那场考试的考试时间——整串当键，不解析，措辞因此永远不带日期推算。
+ */
+fun examDiffRows(items: List<ExamItemUi>): List<com.k2767.course.schedule.DiffRow> = items.map { exam ->
+    com.k2767.course.schedule.DiffRow(
+        id = examRowId(exam),
+        sourceId = "",
+        label = examText(exam.courseName),
+        pairKey = examPairKey(exam),
+        fields = mapOf(
+            "time" to examText(exam.examTime),
+            "place" to examText(exam.location),
+            "seat" to examText(exam.seatNumber),
+            "teacher" to examText(exam.teacher),
+        ),
+        cover = setOf(examText(exam.examTime)),
+    )
+}
+
+/** 同名同考试名称的两场共用一个 id——它们本来就分不开，宁可一起点亮也不假装能分。 */
+fun examRowId(exam: ExamItemUi): String =
+    "exam:" + com.k2767.course.schedule.ScheduleIdentity.digest(examPairKey(exam))
+
+private fun examPairKey(exam: ExamItemUi) = "${examText(exam.courseName)}\u001f${examText(exam.examName)}"
+
+private fun examText(value: String) = com.k2767.course.schedule.ScheduleIdentity.normalize(value)
+
 internal fun semesterAverageGpa(grades: List<GradeItemUi>): String {
     val graded = grades.mapNotNull { grade ->
         val credit = grade.credits.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
@@ -160,6 +188,7 @@ fun GradesScreen(
     overallIsLoading: Boolean,
     examList: List<ExamItemUi>,
     examIsLoading: Boolean,
+    examChangeLines: Map<String, List<String>> = emptyMap(),
     onRefresh: () -> Unit,
     onExportGrades: (List<GradeItemUi>) -> Unit = {},
     semesterError: String = "",
@@ -290,6 +319,7 @@ fun GradesScreen(
 
                     else -> ExamScheduleContent(
                         exams = examList,
+                        changeLines = examChangeLines,
                         isLoading = examIsLoading,
                         error = examError,
                         listState = examListState,
@@ -782,7 +812,8 @@ private fun ExamScheduleContent(
     error: String,
     listState: LazyListState,
     topInset: Dp,
-    bottomInset: Dp
+    bottomInset: Dp,
+    changeLines: Map<String, List<String>>
 ) {
     when {
         isLoading && exams.isEmpty() -> {
@@ -835,7 +866,9 @@ private fun ExamScheduleContent(
                 }
 
                 items(exams) { exam ->
-                    Box(Modifier.moduleEntrance(2)) { ExamItemRow(exam = exam) }
+                    Box(Modifier.moduleEntrance(2)) {
+                        ExamItemRow(exam = exam, changeLines = changeLines[examRowId(exam)].orEmpty())
+                    }
                 }
             }
         }
@@ -844,7 +877,8 @@ private fun ExamScheduleContent(
 
 @Composable
 private fun ExamItemRow(
-    exam: ExamItemUi
+    exam: ExamItemUi,
+    changeLines: List<String>
 ) {
     val examTone = if (exam.examName.contains("期中")) SystemTone.Warning else SystemTone.Info
 
@@ -866,6 +900,10 @@ private fun ExamItemRow(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.width(12.dp))
+            if (changeLines.isNotEmpty()) {
+                SystemStatusBadge(text = "有调整", tone = SystemTone.Danger)
+                Spacer(modifier = Modifier.width(6.dp))
+            }
             SystemStatusBadge(
                 text = if (exam.examName.isBlank()) "考试" else exam.examName,
                 tone = examTone
@@ -889,6 +927,21 @@ private fun ExamItemRow(
             icon = Icons.Default.Person,
             text = exam.teacher.ifBlank { "未提供教师信息" }
         )
+        if (changeLines.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "本次同步的调整",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            changeLines.forEach { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

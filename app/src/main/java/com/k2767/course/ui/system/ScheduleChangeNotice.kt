@@ -20,28 +20,34 @@ class ScheduleChangeNotice {
     var count by mutableIntStateOf(0)
         private set
 
+    var subject by mutableStateOf("课表")
+        private set
+
     var acknowledge by mutableStateOf<(() -> Unit)?>(null)
         private set
 
-    fun report(count: Int, acknowledge: () -> Unit) {
+    fun report(subject: String, count: Int, acknowledge: () -> Unit) {
+        this.subject = subject
         this.count = count
         this.acknowledge = acknowledge
     }
 
-    fun clear() {
+    /** 只清自己那一条：另一个页面挂着的提示不许被顺手抹掉，抹掉就是信息无声消失。 */
+    fun clear(owner: String) {
+        if (subject != owner) return
         count = 0
         acknowledge = null
     }
 
     /**
-     * 「知道了」就是已读：基线只在这里前进。点课程卡看明细不算已读——
+     * 「知道了」就是已读：基线只在这里前进。点开某一条看不算已读——
      * 那样一开门就会把别处还没看到的调整抹掉。
      */
     fun notice(): FloatingNotice? {
         if (count <= 0) return null
         val action = acknowledge ?: return null
         return FloatingNotice(
-            message = "课表有 $count 处调整，点开课程可看从→到",
+            message = "${subject}有 $count 处调整，明细已标在对应条目上",
             actionLabel = "知道了",
             onClick = action
         )

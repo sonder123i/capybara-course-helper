@@ -337,7 +337,7 @@ fun ScheduleRoute() {
     // ============ 变更检测：同步前进课表，看过才前进基线 ============
     val changeNotice = LocalScheduleChangeNotice.current
     var scheduleChanges by remember(routeAccountKey) { mutableStateOf<ScheduleChangeReport?>(null) }
-    DisposableEffect(changeNotice) { onDispose { changeNotice.clear() } }
+    DisposableEffect(changeNotice) { onDispose { changeNotice.clear("课表") } }
 
     fun publishChanges(account: String, schoolId: String, term: com.k2767.course.academic.AcademicTerm, json: String) {
         val current = ScheduleJson.parse(json)?.let(::scheduleRows) ?: return
@@ -348,19 +348,19 @@ fun ScheduleRoute() {
             ScheduleBaseline.Establish -> {
                 scheduleCache.markSeen(account, schoolId, term, json)
                 scheduleChanges = null
-                changeNotice.clear()
+                changeNotice.clear("课表")
             }
             // 离线查看与演示模式既不比较也不推进，缓存命中同样不进这条链路。
             ScheduleBaseline.Bypassed, ScheduleBaseline.InSync -> {
                 scheduleChanges = null
-                changeNotice.clear()
+                changeNotice.clear("课表")
             }
             is ScheduleBaseline.Pending -> {
                 scheduleChanges = decision.report
-                changeNotice.report(decision.report.changes.size) {
+                changeNotice.report("课表", decision.report.changes.size) {
                     scheduleCache.markSeen(account, schoolId, term, json)
                     scheduleChanges = null
-                    changeNotice.clear()
+                    changeNotice.clear("课表")
                 }
             }
         }
@@ -373,7 +373,7 @@ fun ScheduleRoute() {
                 resolvedTermId = (if (isNextSemester) DemoData.currentTerm.next() else DemoData.currentTerm).id
                 courses = reloadCustomCourses(DemoData.scheduleCourses())
                 scheduleChanges = null
-                changeNotice.clear()
+                changeNotice.clear("课表")
                 isLoading = false
                 return
             }
