@@ -57,6 +57,17 @@ object AcademicHtml {
                     .containsMatchIn(it.attr("style"))
         } && !element.attr("type").equals("hidden", true)
 
+    /** 正方把登录失败原因写在 <p id="tips"> 里；取不到就返回空，让调用方决定兜底。 */
+    fun loginTip(html: String): String =
+        Jsoup.parse(html).selectFirst("#tips, .tips, [id$=tips]")?.text()?.trim().orEmpty()
+
+    /** 账号状态类措辞。刻意不含「过期」——它会撞上「登录已过期」那种可恢复情况。 */
+    fun isAccountUnavailableMessage(text: String): Boolean =
+        listOf("禁用", "锁定", "冻结", "停用", "注销").any(text::contains)
+
+    fun isBadCredentialsMessage(text: String): Boolean =
+        listOf("密码错误", "密码不正确", "用户名或密码", "账号或密码").any(text::contains)
+
     fun isLoginPage(html: String): Boolean {
         val document = Jsoup.parse(html)
         val directCasRedirect = document.body().text().isBlank() && document.select("script").any {

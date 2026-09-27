@@ -1,5 +1,6 @@
 package com.k2767.course.utils
 
+import com.k2767.course.academic.AcademicHtml
 import com.k2767.course.manager.SessionStateStore
 import com.k2767.course.manager.SessionToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,8 +19,8 @@ internal val RecoveryFailure.terminal: Boolean
 internal fun classifyRecoveryFailure(message: String): RecoveryFailure {
     val text = message.trim()
     return when {
-        listOf("禁用", "锁定", "冻结", "停用", "注销").any(text::contains) -> RecoveryFailure.AccountUnavailable
-        listOf("密码错误", "密码不正确", "用户名或密码", "账号或密码").any(text::contains) -> RecoveryFailure.CredentialsRejected
+        AcademicHtml.isAccountUnavailableMessage(text) -> RecoveryFailure.AccountUnavailable
+        AcademicHtml.isBadCredentialsMessage(text) -> RecoveryFailure.CredentialsRejected
         text.contains("验证码") -> RecoveryFailure.VerificationRequired
         else -> RecoveryFailure.Network
     }

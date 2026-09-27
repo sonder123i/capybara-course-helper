@@ -151,4 +151,14 @@ class SessionRecoveryCoordinatorTest {
         assertEquals(RecoveryFailure.Network, classifyRecoveryFailure("登录已过期，请重新登录"))
         assertEquals(RecoveryFailure.Network, classifyRecoveryFailure("连接超时"))
     }
+
+    @Test fun theDisabledReplyInsideTheLoginPageReachesTheClassifier() {
+        // 实测形状：HTTP 200，失败原因只写在 <p id="tips"> 里
+        val page = """<html><body><form name="loginForm"><p id="tips">该用户已被禁用，请联系管理员！</p></form></body></html>"""
+        val tip = com.k2767.course.academic.AcademicHtml.loginTip(page)
+        assertEquals("该用户已被禁用，请联系管理员！", tip)
+        assertEquals(RecoveryFailure.AccountUnavailable, classifyRecoveryFailure(tip))
+        assertEquals("没有 tips 元素时不能凭空判成永久失败", RecoveryFailure.Network,
+            classifyRecoveryFailure(com.k2767.course.academic.AcademicHtml.loginTip("<html><body>系统繁忙</body></html>")))
+    }
 }

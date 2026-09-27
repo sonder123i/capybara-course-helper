@@ -159,9 +159,9 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         val page = transport.get(transport.appUrl("xtgl/login_slogin.html?time=${System.currentTimeMillis()}"))
         val document = Jsoup.parse(page.text, page.url)
         val hidden = AcademicHtml.hiddenFields(document).toMutableMap()
-        if (hidden["csrftoken"].isNullOrBlank()) return@serial LoginResult(AcademicStatus.PAGE_CHANGED, message = "Missing csrftoken")
+        if (hidden["csrftoken"].isNullOrBlank()) return@serial LoginResult(AcademicStatus.PAGE_CHANGED, message = "登录页缺少 csrf 令牌，请重新进入登录页再试")
         val captchaImage = document.select("img").firstOrNull { it.attr("src").contains("yzm", true) || it.attr("src").contains("captcha", true) }
-        if (captchaImage != null) return@serial LoginResult(AcademicStatus.HUMAN_VERIFICATION_REQUIRED, message = "Complete the school's captcha in WebView")
+        if (captchaImage != null) return@serial LoginResult(AcademicStatus.HUMAN_VERIFICATION_REQUIRED, message = "该学校登录需要验证码，请改用网页登录")
         val password = if (hidden["mmsfjm"] == "1") {
             val key = transport.get(transport.appUrl("xtgl/login_getPublicKey.html?time=${System.currentTimeMillis()}&_=${System.currentTimeMillis()}"))
             val json = JSONObject(key.text)
@@ -173,10 +173,17 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         val result = transport.postForm(transport.appUrl("xtgl/login_slogin.html"), hidden.toList(), page.url)
         transport.get(transport.appUrl("xtgl/index_initMenu.html"))
         val identity = validateIdentity()
+        val tip = AcademicHtml.loginTip(result.text)
+        val wording = tip.ifBlank { result.text }
         when {
             identity != null -> LoginResult(AcademicStatus.SUCCESS, identity.first, identity.second)
-            result.text.contains("密码错误") || result.text.contains("用户名或密码") -> LoginResult(AcademicStatus.INVALID_CREDENTIALS, message = "Invalid credentials")
-            else -> LoginResult(AcademicStatus.VALIDATION_FAILED, message = "Login response could not be verified")
+            // 账号状态类失败必须带原文走 VALIDATION_FAILED：网关把 INVALID_CREDENTIALS 映射成一个
+            // 不带 message 的回调，而静默续期要靠这段文字认出"永久失败、别再重试"。
+            AcademicHtml.isAccountUnavailableMessage(wording) ->
+                LoginResult(AcademicStatus.VALIDATION_FAILED, message = tip.ifBlank { "学校已禁用或锁定该账号，请联系教务管理员" })
+            AcademicHtml.isBadCredentialsMessage(wording) -> LoginResult(AcademicStatus.INVALID_CREDENTIALS, message = tip)
+            else -> LoginResult(AcademicStatus.VALIDATION_FAILED,
+                message = tip.ifBlank { "登录响应无法确认，请稍后重试或改用网页登录" })
         }
     }
 
