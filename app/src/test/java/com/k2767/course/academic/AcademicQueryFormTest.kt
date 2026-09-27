@@ -31,4 +31,10 @@ class AcademicQueryFormTest {
         assertNull(action("""document.forms['kscjQueryForm'].action = '/first';
             var queryUrl = '/second'; document.forms['kscjQueryForm'].action = queryUrl;"""))
     }
+
+    @Test fun theSameEndpointWrittenTwoWaysIsNotAConflict() {
+        assertEquals("https://school.test/jsxsd/kscj/cjcx_list",
+            action("""var actionUrl = 'cjcx_list'; document.forms['kscjQueryForm'].action = actionUrl;
+                document.forms['kscjQueryForm'].action = '/jsxsd/kscj/cjcx_list';"""))
+    }
 }

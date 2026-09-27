@@ -120,9 +120,11 @@ object AcademicHtml {
             // 学校常见写法是先把地址放进紧邻的局部字面量，再赋给 form.action；只认紧邻声明，不执行 JS。
             val local = Regex("""\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*['"]([^'"]+)['"]\s*;\s*""" +
                 target + """\1\s*;""").findAll(html).map { it.groupValues[2] }
-            (literal + local).distinct().toList().singleOrNull()
+            // 分歧按解析后的地址判：同一个端点写成绝对路径和页面相对路径不算两个地址。
+            (literal + local).map { runCatching { URI(baseUrl).resolve(it).toString() }.getOrDefault(it) }
+                .distinct().singleOrNull()
         }
-        return (declared ?: assigned)?.let { URI(baseUrl).resolve(it).toString() }
+        return declared?.let { URI(baseUrl).resolve(it).toString() } ?: assigned
     }
 
     fun firstScriptValue(html: String, name: String): String? {
