@@ -22,10 +22,11 @@ internal class AcademicStudyReader(
     }
 
     private var menu: AcademicResponse? = null
+    private val zfSchedule by lazy { ZfStudySchedule(school, http, ::checked) }
 
     override suspend fun catalog(): AcademicStudyCatalog = session.withProtocolLock {
         val page = when (school.academicType()) {
-            AcademicSystem.ZF -> checked(http.get(http.appUrl("kbcx/xskbcx_cxXsKb.html?gnmkdm=${school.scheduleGnmkdm}")))
+            AcademicSystem.ZF -> zfSchedule.catalogPage()
             AcademicSystem.ZF_OLD -> studyPage(Page.SCHEDULE)
             else -> qzSchedulePage()
         }
@@ -37,8 +38,7 @@ internal class AcademicStudyReader(
     override suspend fun schedule(term: AcademicTerm): List<AcademicScheduleEntry> = session.withProtocolLock {
         when (school.academicType()) {
             AcademicSystem.ZF -> {
-                val url = http.appUrl(school.schedulePath) + "?gnmkdm=${school.scheduleGnmkdm}"
-                val response = checked(http.postForm(url, zfTerm(term).toList(), ajax = true))
+                val response = zfSchedule.schedule(zfTerm(term))
                 AcademicStudyParser.jsonSchedule(response.text)
             }
             AcademicSystem.ZF_OLD -> AcademicStudyParser.htmlSchedule(oldZfQuery(Page.SCHEDULE, term).text)

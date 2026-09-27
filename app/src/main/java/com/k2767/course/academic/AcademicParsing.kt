@@ -59,8 +59,12 @@ object AcademicHtml {
 
     fun isLoginPage(html: String): Boolean {
         val document = Jsoup.parse(html)
+        val directCasRedirect = document.body().text().isBlank() && document.select("script").any {
+            Regex("""^\s*(?:(?:top|window|parent)\.)?location(?:\.href)?\s*=\s*['"]https?://[^'"\s]+/authserver/login(?:\?[^'"]*)?['"]\s*;?\s*$""")
+                .matches(it.data())
+        }
         return document.select("input[type=password], input[name=mm], input[name=TextBox2]").isNotEmpty() ||
-            Regex("(?:top\\.|window\\.|parent\\.)?location(?:\\.href)?\\s*=\\s*['\"][^'\"]*(?:login_slogin|default2\\.aspx|LoginToXk)", RegexOption.IGNORE_CASE).containsMatchIn(html)
+            Regex("(?:top\\.|window\\.|parent\\.)?location(?:\\.href)?\\s*=\\s*['\"][^'\"]*(?:login_slogin|default2\\.aspx|LoginToXk)", RegexOption.IGNORE_CASE).containsMatchIn(html) || directCasRedirect
     }
     fun parse(html: String, baseUrl: String, charset: Charset = Charsets.UTF_8) =
         Jsoup.parse(html, baseUrl)
@@ -110,10 +114,14 @@ object AcademicHtml {
     fun queryFormAction(form: Element, html: String, baseUrl: String): String? {
         val declared = form.attr("action").takeIf(String::isNotBlank)
         val name = form.attr("name").ifBlank { form.id() }
-        val assigned = if (name.isBlank()) null else Regex(
-            """document\.forms\s*\[\s*['"]""" + Regex.escape(name) +
-                """['"]\s*\]\.action\s*=\s*['"]([^'"]+)['"]"""
-        ).find(html)?.groupValues?.get(1)
+        val assigned = if (name.isBlank()) null else {
+            val target = """document\.forms\s*\[\s*['"]""" + Regex.escape(name) + """['"]\s*\]\.action\s*=\s*"""
+            val literal = Regex(target + """['"]([^'"]+)['"]""").findAll(html).map { it.groupValues[1] }
+            // 学校常见写法是先把地址放进紧邻的局部字面量，再赋给 form.action；只认紧邻声明，不执行 JS。
+            val local = Regex("""\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*['"]([^'"]+)['"]\s*;\s*""" +
+                target + """\1\s*;""").findAll(html).map { it.groupValues[2] }
+            (literal + local).distinct().toList().singleOrNull()
+        }
         return (declared ?: assigned)?.let { URI(baseUrl).resolve(it).toString() }
     }
 
