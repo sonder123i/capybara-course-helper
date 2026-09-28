@@ -219,6 +219,7 @@ fun GradesScreen(
     examReminderEnabled: Boolean = false,
     examReminderNote: String = "",
     onExamReminderToggle: (Boolean) -> Unit = {},
+    examToolsVisible: Boolean = true,
     semesterError: String = "",
     overallError: String = "",
     examError: String = ""
@@ -293,7 +294,7 @@ fun GradesScreen(
                         1 -> overallGrades.isNotEmpty()
                         else -> examList.isNotEmpty()
                     },
-                    showShare = true,
+                    showShare = currentTab != 2 || examToolsVisible,
                     isRefreshing = isRefreshing,
                     onShare = {
                         // 同一个分享位：考试那半导出的是 .ics，不是成绩 CSV。
@@ -355,6 +356,7 @@ fun GradesScreen(
                         reminderEnabled = examReminderEnabled,
                         reminderNote = examReminderNote,
                         onReminderToggle = onExamReminderToggle,
+                        reminderVisible = examToolsVisible,
                         isLoading = examIsLoading,
                         error = examError,
                         listState = examListState,
@@ -851,7 +853,8 @@ private fun ExamScheduleContent(
     changeLines: Map<String, List<String>>,
     reminderEnabled: Boolean,
     reminderNote: String,
-    onReminderToggle: (Boolean) -> Unit
+    onReminderToggle: (Boolean) -> Unit,
+    reminderVisible: Boolean
 ) {
     when {
         isLoading && exams.isEmpty() -> {
@@ -900,11 +903,13 @@ private fun ExamScheduleContent(
                             title = "考试列表",
                             subtitle = "按时间顺序展示"
                         )
-                        ExamReminderToggle(
-                            enabled = reminderEnabled,
-                            note = reminderNote,
-                            onToggle = onReminderToggle
-                        )
+                        if (reminderVisible) {
+                            ExamReminderToggle(
+                                enabled = reminderEnabled,
+                                note = reminderNote,
+                                onToggle = onReminderToggle
+                            )
+                        }
                     }
                 }
 

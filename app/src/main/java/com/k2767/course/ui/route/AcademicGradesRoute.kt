@@ -171,7 +171,8 @@ fun AcademicGradesRoute(school: SchoolConfig) {
                 examReminderOn = enabled
                 reminderScheduler.setExamRemindersEnabled(account, examTermId, enabled, examCalendarPlan(exams).events)
             }
-        })
+        },
+        examToolsVisible = !UserManager.getInstance().isDemoMode)
 }
 
 private fun exportAcademicGrades(context: Context, grades: List<GradeItemUi>) {

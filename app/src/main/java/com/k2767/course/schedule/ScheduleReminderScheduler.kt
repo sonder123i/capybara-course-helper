@@ -284,9 +284,11 @@ class ScheduleReminderScheduler private constructor(private val context: Context
     fun setExamRemindersEnabled(account: String, term: String, enabled: Boolean, events: List<ExamCalendarEvent>) {
         if (account.isBlank() || term.isBlank()) return
         preferences.edit().putBoolean("exam_reminders_on_$account", enabled).apply()
-        val scoped = examSnapshots().filter { it.account == account && it.term == term }
-        scoped.forEach { cancelExamAlarm(it) }
-        saveExamSnapshots(examSnapshots().filterNot { it in scoped } +
+        // 一个账号同时只有一份考试表：换学期或换管线（legacy 与协议层的学期键形状不同）时
+        // 旧那批必须一起撤，否则同一晚会排两条通知。
+        val stale = examSnapshots().filter { it.account == account }
+        stale.forEach { cancelExamAlarm(it) }
+        saveExamSnapshots(examSnapshots().filterNot { it in stale } +
             if (enabled) examDayAlarms(account, term, events, System.currentTimeMillis()) else emptyList())
         reconcile()
     }

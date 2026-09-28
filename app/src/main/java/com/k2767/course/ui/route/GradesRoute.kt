@@ -15,6 +15,10 @@ import com.k2767.course.manager.SessionRequestGate
 import com.k2767.course.model.SchoolConfig
 import com.k2767.course.network.CourseApiClient
 import com.k2767.course.ui.screen.ExamItemUi
+import com.k2767.course.ui.screen.examCalendarPlan
+import com.k2767.course.schedule.ExamReminderNavigation
+import com.k2767.course.schedule.ScheduleReminderScheduler
+import com.k2767.course.utils.ICalExporter
 import com.k2767.course.ui.screen.GradeItemUi
 import com.k2767.course.ui.screen.GradesScreen
 import com.k2767.course.ui.screen.OverallStatsUi
@@ -62,6 +66,23 @@ fun GradesRoute() {
     var examList by rememberPageData<List<ExamItemUi>>("grades.exams") { emptyList() }
     var examsLoaded by rememberPageData("grades.exams.loaded") { false }
     var examIsLoading by remember { mutableStateOf(false) }
+    val reminderScheduler = remember(context) { ScheduleReminderScheduler.get(context) }
+    // 开关与学期键都属于「当前这个账号」：不按账号重建，切账号后显示的是上一个账号的偏好。
+    val examAccount = UserManager.getInstance().currentAccountStorageKey
+    var examReminderOn by remember(examAccount) { mutableStateOf(reminderScheduler.examRemindersEnabled(examAccount)) }
+    var examTermKey by remember(examAccount) { mutableStateOf("") }
+
+    fun armExamReminders(items: List<ExamItemUi>) {
+        if (examReminderOn && examTermKey.isNotBlank()) reminderScheduler.setExamRemindersEnabled(
+            examAccount, examTermKey, true, examCalendarPlan(items).events)
+    }
+
+    LaunchedEffect(ExamReminderNavigation.requestedDate) {
+        if (ExamReminderNavigation.requestedDate != null) {
+            currentTab = 2
+            ExamReminderNavigation.consume()
+        }
+    }
 
     // Init semesters
     LaunchedEffect(Unit) {
@@ -278,6 +299,7 @@ fun GradesRoute() {
             val month = calendar.get(Calendar.MONTH)
             val xnm = if (month >= 7) year.toString() else (year - 1).toString()
             val xqm = if (month >= 7 || month < 2) "3" else "12" // 3=第一学期, 12=第二学期
+            examTermKey = "$xnm-${if (xqm == "3") 1 else 2}"
 
             CourseApiClient.getInstance().fetchExamSchedule(school, xnm, xqm, object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -302,6 +324,7 @@ fun GradesRoute() {
                         examIsLoading = false
                         examList = items
                         examsLoaded = true
+                        armExamReminders(items)
                     }
                 }
             })
@@ -335,6 +358,27 @@ fun GradesRoute() {
         overallIsLoading = overallIsLoading,
         examList = examList,
         examIsLoading = examIsLoading,
+        onExportExams = { items ->
+            runCatching { ICalExporter.exportExamsAndShare(context, examCalendarPlan(items)) }
+                .onSuccess { GlassToaster.show(it) }
+                .onFailure { GlassToaster.show("导出失败：${it.message}") }
+        },
+        examReminderEnabled = examReminderOn,
+        examReminderNote = when {
+            !examReminderOn -> ""
+            examList.isEmpty() -> "先刷新考试安排，才能设提醒"
+            !reminderScheduler.permissions().available -> "需要允许通知和精确闹钟，否则不会响"
+            else -> ""
+        },
+        onExamReminderToggle = { enabled ->
+            if (enabled && examTermKey.isBlank()) GlassToaster.show("先刷新考试安排，才能设提醒")
+            else {
+                examReminderOn = enabled
+                reminderScheduler.setExamRemindersEnabled(examAccount,
+                    examTermKey, enabled, examCalendarPlan(examList).events)
+            }
+        },
+        examToolsVisible = !isDemoMode,
         onRefresh = {
             when (currentTab) {
                 0 -> loadSemesterGrades()
