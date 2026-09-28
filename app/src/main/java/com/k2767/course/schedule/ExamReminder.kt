@@ -1,8 +1,6 @@
 package com.k2767.course.schedule
 
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 import java.util.TimeZone
 
 /** 考前一晚提醒的钟点：晚自习结束前，还来得及查路线和收证件。 */
@@ -33,19 +31,17 @@ data class ExamAlarm(
  */
 fun examDayAlarms(account: String, term: String, events: List<ExamCalendarEvent>, now: Long,
                   zone: TimeZone = TimeZone.getDefault()): List<ExamAlarm> {
-    val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply { timeZone = zone }
-    val timeFormat = SimpleDateFormat("HH:mm", Locale.ROOT).apply { timeZone = zone }
     val grouped = events.map { event ->
-        val start = event.timing.startsAt
         val line = buildString {
             append(event.title)
-            append(if (event.timing.allDay) " 时间见教务" else " ${timeFormat.format(start.time)}")
+            append(event.timing.time?.let { " $it" } ?: " 时间见教务")
             if (event.location.isNotBlank()) append(" · ${event.location}")
         }
-        dayFormat.format(start.time) to line
+        event.timing.date to line
     }.groupBy({ it.first }, { it.second })
 
     return grouped.mapNotNull { (date, lines) ->
+        // 日历写墙上时间，闹钟按设备本地时间响——两件事，不共用一次换算。
         examEveTrigger(date, zone)?.takeIf { it > now }?.let {
             ExamAlarm(account, term, date, lines.distinct().sorted(), it)
         }

@@ -158,7 +158,7 @@ fun examCalendarPlan(items: List<ExamItemUi>): ExamCalendarPlan {
             },
             timing = timing,
         )
-    }.sortedBy { it.timing.startsAt.timeInMillis }
+    }.sortedBy { it.timing.date }
     return ExamCalendarPlan(items.size, events, items.count { parseExamTiming(it.examTime) == null })
 }
 

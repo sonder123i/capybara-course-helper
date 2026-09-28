@@ -1,10 +1,17 @@
 package com.k2767.course.schedule
 
 import java.util.Calendar
-import java.util.TimeZone
+import java.util.Locale
 
-/** 一场考试的开始时刻。[allDay] 为真表示教务只给了日期，没给能认出的时刻。 */
-data class ExamTiming(val startsAt: Calendar, val allDay: Boolean)
+/**
+ * 一场考试的墙上时间：教务写的是什么就是什么，不含任何时区换算。
+ *
+ * 这里刻意不放 Instant/Calendar——考试永远发生在学校那一边，
+ * 日历文件也已经声明 TZID=Asia/Shanghai，中间任何一次按设备时区换算都会把时间推偏。
+ */
+data class ExamTiming(val date: String, val time: String?) {
+    val allDay: Boolean get() = time == null
+}
 
 /** 一条能进日历的考试。字段全是中性类型，导出器不认识 UI。 */
 data class ExamCalendarEvent(
@@ -37,12 +44,11 @@ private val timeShape = Regex("""^\s*([01]\d|2[0-3]):([0-5]\d)""")
 fun parseExamTiming(raw: String): ExamTiming? {
     val text = raw.trim()
     if (text.isEmpty()) return null
-    val zone = TimeZone.getDefault()
     for (shape in dateShapes) {
         val match = shape.find(text) ?: continue
         val parts = match.groupValues.drop(1).map { it.toInt() }
         if (parts[1] !in 1..12 || parts[2] !in 1..31) continue
-        val calendar = Calendar.getInstance(zone).apply {
+        val calendar = Calendar.getInstance().apply {
             clear(); isLenient = false
             set(parts[0], parts[1] - 1, parts[2])
         }
@@ -51,13 +57,8 @@ fun parseExamTiming(raw: String): ExamTiming? {
         if (calendar.get(Calendar.MONTH) != parts[1] - 1 || calendar.get(Calendar.DAY_OF_MONTH) != parts[2]) continue
 
         val time = timeShape.find(text.substring(match.value.length))
-        if (time != null) {
-            calendar.set(Calendar.HOUR_OF_DAY, time.groupValues[1].toInt())
-            calendar.set(Calendar.MINUTE, time.groupValues[2].toInt())
-            calendar.set(Calendar.SECOND, 0)
-            return ExamTiming(calendar, allDay = false)
-        }
-        return ExamTiming(calendar, allDay = true)
+        return ExamTiming("%04d-%02d-%02d".format(Locale.ROOT, parts[0], parts[1], parts[2]),
+            time?.let { "${it.groupValues[1]}:${it.groupValues[2]}" })
     }
     return null
 }

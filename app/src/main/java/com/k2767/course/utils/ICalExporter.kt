@@ -208,23 +208,22 @@ object ICalExporter {
         sb.appendLine("END:STANDARD")
         sb.appendLine("END:VTIMEZONE")
 
-        val zone = TimeZone.getTimeZone("Asia/Shanghai")
-        val dayFormat = SimpleDateFormat("yyyyMMdd", Locale.ROOT).apply { timeZone = zone }
-        val momentFormat = SimpleDateFormat("'T'HHmmss", Locale.ROOT).apply { timeZone = zone }
         val stamp = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.ROOT).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date())
 
         events.forEach { event ->
-            val start = event.timing.startsAt
+            val day = event.timing.date.replace("-", "")
+            val time = event.timing.time?.replace(":", "")
             sb.appendLine("BEGIN:VEVENT")
             sb.appendLine("UID:${event.uid}")
             sb.appendLine("DTSTAMP:$stamp")
-            if (event.timing.allDay) {
-                sb.appendLine("DTSTART;VALUE=DATE:${dayFormat.format(start.time)}")
+            if (time == null) {
+                sb.appendLine("DTSTART;VALUE=DATE:$day")
             } else {
+                // 墙上时间直接拼，不经过设备时区：文件已经声明了 TZID=Asia/Shanghai。
                 // 没有 DTEND：教务没给结束时间，就不拿节次表反推时长。
-                sb.appendLine("DTSTART;TZID=Asia/Shanghai:${dayFormat.format(start.time)}${momentFormat.format(start.time)}")
+                sb.appendLine("DTSTART;TZID=Asia/Shanghai:${day}T${time}00")
             }
             sb.appendLine("SUMMARY:${escapeText(event.title)}")
             if (event.location.isNotEmpty()) sb.appendLine("LOCATION:${escapeText(event.location)}")

@@ -8,7 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Calendar
 import java.util.TimeZone
 
 class ExamCalendarTest {
@@ -21,18 +20,24 @@ class ExamCalendarTest {
     @Test fun datedShapesWithYearAreAccepted() {
         listOf("2026-06-30 09:00", "2026年6月30日 09:00", "2026/6/30 09:00").forEach { raw ->
             val timing = timingOf(raw)
+            assertEquals("$raw 的日期", "2026-06-30", timing.date)
+            assertEquals("$raw 的时刻", "09:00", timing.time)
             assertFalse("$raw 应该带时刻", timing.allDay)
-            assertEquals(2026, timing.startsAt.get(Calendar.YEAR))
-            assertEquals(Calendar.JUNE, timing.startsAt.get(Calendar.MONTH))
-            assertEquals(30, timing.startsAt.get(Calendar.DAY_OF_MONTH))
-            assertEquals(9, timing.startsAt.get(Calendar.HOUR_OF_DAY))
         }
+    }
+
+    /** CI 的 runner 是 UTC，设备是东八区：墙上时间一旦经过时区换算就会整体推偏。 */
+    @Test fun parsingDoesNotDependOnTheDeviceZone() {
+        val timing = timingOf("2026-06-30 09:00-10:30")
+        assertEquals("2026-06-30", timing.date)
+        assertEquals("09:00", timing.time)
     }
 
     @Test fun aDateWithoutATimeBecomesAnAllDayEvent() {
         val timing = timingOf("2026年6月30日 第1-2节")
+        assertEquals("2026-06-30", timing.date)
+        assertNull(timing.time)
         assertTrue(timing.allDay)
-        assertEquals(30, timing.startsAt.get(Calendar.DAY_OF_MONTH))
     }
 
     /** 猜错年份会把考试排到过去，用户带着一个不响的闹钟去考场。 */
@@ -82,10 +87,24 @@ class ExamCalendarTest {
         assertEquals("还没有考试安排，没有导出", examExportSummary(examCalendarPlan(emptyList())))
     }
 
-    @Test fun parsingUsesTheDeviceZoneAndNotAnInventedSemesterAnchor() {
-        val zone = TimeZone.getDefault()
-        val parsed = timingOf("2026-06-30 09:00").startsAt
-        assertEquals(zone.getOffset(parsed.timeInMillis), parsed.timeZone.getOffset(parsed.timeInMillis))
-        assertEquals(9, Calendar.getInstance(zone).apply { timeInMillis = parsed.timeInMillis }.get(Calendar.HOUR_OF_DAY))
+    /** 考试自带年份，导出因此完全不碰开学锚点，也不碰设备时区。 */
+    @Test fun anExamDateNeedsNoSemesterAnchor() {
+        val ics = ICalExporter.generateExamCalendarContent(
+            examCalendarPlan(listOf(exam(time = "2027-01-08 14:00"))).events)
+        assertTrue(ics.contains("DTSTART;TZID=Asia/Shanghai:20270108T140000"))
+    }
+
+    /** 开发机是东八区、CI 是 UTC，所以只有换着时区跑才能证明"不换算"这件事真的成立。 */
+    @Test fun theExportedTimeIsTheSchoolsWallClockInAnyDeviceZone() {
+        val saved = TimeZone.getDefault()
+        try {
+            listOf("UTC", "America/Los_Angeles", "Asia/Shanghai").forEach { id ->
+                TimeZone.setDefault(TimeZone.getTimeZone(id))
+                val ics = ICalExporter.generateExamCalendarContent(examCalendarPlan(listOf(exam())).events)
+                assertTrue("$id 下时间被推偏了", ics.contains("DTSTART;TZID=Asia/Shanghai:20260630T090000"))
+            }
+        } finally {
+            TimeZone.setDefault(saved)
+        }
     }
 }
