@@ -43,6 +43,7 @@ class ScheduleReminderScheduler private constructor(private val context: Context
     companion object {
         const val ACTION = "com.k2767.course.action.COURSE_REMINDER"
         const val ACTION_EXAM = "com.k2767.course.action.EXAM_REMINDER"
+        const val EXTRA_EXAM_DATE = "exam_reminder_date"
         const val CHANNEL = "course_reminders"
         const val EXTRA_REMINDER_ID = "course_reminder_id"
         const val EXTRA_REVISION = "course_reminder_revision"
@@ -355,6 +356,8 @@ class ScheduleReminderScheduler private constructor(private val context: Context
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "课程与考试提醒", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            data = Uri.Builder().scheme("exam-reminder").authority("open").appendPath(alarm.date).build()
+            putExtra(EXTRA_EXAM_DATE, alarm.date)
         }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_course_reminder)
             .setContentTitle("明天有考试")

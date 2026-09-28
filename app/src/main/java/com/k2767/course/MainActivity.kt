@@ -163,7 +163,10 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         UserManager.getInstance().init(this)
-        if (savedInstanceState == null) com.k2767.course.schedule.CourseReminderNavigation.accept(intent)
+        if (savedInstanceState == null) {
+            com.k2767.course.schedule.CourseReminderNavigation.accept(intent)
+            com.k2767.course.schedule.ExamReminderNavigation.accept(intent)
+        }
 
         val userManager = UserManager.getInstance()
         if (BuildConfig.UI_PREVIEW) {
@@ -222,6 +225,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         com.k2767.course.schedule.CourseReminderNavigation.accept(intent)
+        com.k2767.course.schedule.ExamReminderNavigation.accept(intent)
     }
 }
 
@@ -306,6 +310,11 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 com.k2767.course.schedule.CourseReminderNavigation.consume()
             }
         }
+    }
+    val examRequest = com.k2767.course.schedule.ExamReminderNavigation.requestedDate
+    LaunchedEffect(examRequest) {
+        // 内层 tab 交给成绩页自己切：它才有那个状态，冷启动时这条路由还没装配。
+        if (examRequest != null) selectedTab = items.indexOf(BottomNavItem.Grades)
     }
     val dialogHostState = key(currentAccountStorageKey) { rememberDialogHostState() }
     val density = LocalDensity.current

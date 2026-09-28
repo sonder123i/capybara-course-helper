@@ -49,6 +49,13 @@ fun AcademicGradesRoute(school: SchoolConfig) {
     var examLoading by remember(account) { mutableStateOf(false) }
     var examError by remember(account) { mutableStateOf("") }
     var examRevision by remember(account) { mutableIntStateOf(0) }
+    val examDeepLink = com.k2767.course.schedule.ExamReminderNavigation.requestedDate
+    LaunchedEffect(examDeepLink) {
+        if (examDeepLink != null) {
+            tab = 2
+            com.k2767.course.schedule.ExamReminderNavigation.consume()
+        }
+    }
     val semesters = remember(report) { AcademicStudyBridge.semesters(report.grades).ifEmpty { listOf(AcademicStudyReader.calendarTerm().id) } }
     val semesterGrades = remember(report, semester) { report.grades.filter { it.term == semester }.map(AcademicStudyBridge::grade) }
     val overallGrades = remember(report) { report.grades.map(AcademicStudyBridge::grade) }
