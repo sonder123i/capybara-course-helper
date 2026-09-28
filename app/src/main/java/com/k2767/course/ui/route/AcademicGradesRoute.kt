@@ -26,6 +26,8 @@ import com.k2767.course.schedule.ScheduleBaseline
 import com.k2767.course.schedule.ScheduleChangeReport
 import com.k2767.course.schedule.scheduleBaseline
 import com.k2767.course.ui.screen.examDiffRows
+import com.k2767.course.ui.screen.examCalendarPlan
+import com.k2767.course.utils.ICalExporter
 import com.k2767.course.ui.system.LocalScheduleChangeNotice
 
 @Composable
@@ -73,6 +75,9 @@ fun AcademicGradesRoute(school: SchoolConfig) {
         finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) loading = false }
     }
     val changeNotice = LocalScheduleChangeNotice.current
+    val reminderScheduler = remember(context) { com.k2767.course.schedule.ScheduleReminderScheduler.get(context) }
+    var examReminderOn by remember(account) { mutableStateOf(reminderScheduler.examRemindersEnabled(account)) }
+    var examTermId by remember(account) { mutableStateOf("") }
     val examCache = remember(context) {
         com.k2767.course.schedule.ScheduleCacheStore(
             context.getSharedPreferences("schedule_cache", android.content.Context.MODE_PRIVATE))
@@ -82,6 +87,8 @@ fun AcademicGradesRoute(school: SchoolConfig) {
 
     fun publishExamChanges(term: com.k2767.course.academic.AcademicTerm, items: List<ExamItemUi>) {
         val current = examDiffRows(items)
+        examTermId = term.id
+        if (examReminderOn) reminderScheduler.setExamRemindersEnabled(account, term.id, true, examCalendarPlan(items).events)
         val user = UserManager.getInstance()
         when (val decision = scheduleBaseline(examCache.examSeenRows(account, school.id, term), current,
             comparable = !user.isLocalViewMode && !user.isDemoMode, table = ExamTable)) {
@@ -138,7 +145,26 @@ fun AcademicGradesRoute(school: SchoolConfig) {
         examChangeLines = examChanges?.linesById().orEmpty(),
         onRefresh = { if (tab == 2) { examsLoaded = false; examRevision++ } else revision++ },
         semesterError = error, overallError = error, examError = examError,
-        onExportGrades = { exportAcademicGrades(context, it) })
+        onExportGrades = { exportAcademicGrades(context, it) },
+        onExportExams = { items ->
+            runCatching { ICalExporter.exportExamsAndShare(context, examCalendarPlan(items)) }
+                .onSuccess { GlassToaster.show(it) }
+                .onFailure { GlassToaster.show("导出失败：${it.message}") }
+        },
+        examReminderEnabled = examReminderOn,
+        examReminderNote = when {
+            !examReminderOn -> ""
+            exams.isEmpty() -> "先刷新考试安排，才能设提醒"
+            !reminderScheduler.permissions().available -> "需要允许通知和精确闹钟，否则不会响"
+            else -> ""
+        },
+        onExamReminderToggle = { enabled ->
+            if (enabled && examTermId.isBlank()) GlassToaster.show("先刷新考试安排，才能设提醒")
+            else {
+                examReminderOn = enabled
+                reminderScheduler.setExamRemindersEnabled(account, examTermId, enabled, examCalendarPlan(exams).events)
+            }
+        })
 }
 
 private fun exportAcademicGrades(context: Context, grades: List<GradeItemUi>) {

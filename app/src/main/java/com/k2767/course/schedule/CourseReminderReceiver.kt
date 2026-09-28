@@ -13,6 +13,10 @@ class CourseReminderReceiver : BroadcastReceiver() {
             scheduler.receive(intent.getStringExtra(ScheduleReminderScheduler.EXTRA_REMINDER_ID).orEmpty(),
                 intent.getLongExtra(ScheduleReminderScheduler.EXTRA_REVISION, -1),
                 intent.getLongExtra(ScheduleReminderScheduler.EXTRA_TRIGGER, -1))
+        } else if (intent.action == ScheduleReminderScheduler.ACTION_EXAM) {
+            scheduler.receiveExam(intent.getStringExtra(ScheduleReminderScheduler.EXTRA_REMINDER_ID).orEmpty(),
+                intent.getLongExtra(ScheduleReminderScheduler.EXTRA_REVISION, -1),
+                intent.getLongExtra(ScheduleReminderScheduler.EXTRA_TRIGGER, -1))
         } else scheduler.reconcile(resetAlarms = true)
     }
 }

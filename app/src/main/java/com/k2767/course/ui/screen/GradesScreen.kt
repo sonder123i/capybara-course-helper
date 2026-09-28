@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,6 +57,10 @@ import com.k2767.course.ui.system.SystemLoadingState
 import com.k2767.course.ui.system.SystemSectionHeader
 import com.k2767.course.ui.system.SystemStatStrip
 import com.k2767.course.ui.system.SystemStatusBadge
+import com.k2767.course.schedule.ExamCalendarEvent
+import com.k2767.course.schedule.ExamCalendarPlan
+import com.k2767.course.schedule.examEventUid
+import com.k2767.course.schedule.parseExamTiming
 import com.k2767.course.ui.system.SystemTone
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -138,6 +143,25 @@ private fun examPairKey(exam: ExamItemUi) = "${examText(exam.courseName)}\u001f$
 
 private fun examText(value: String) = com.k2767.course.schedule.ScheduleIdentity.normalize(value)
 
+/** 认得出日期的才进日历；认不出的只计数，交给话术说出来，不静默丢。 */
+fun examCalendarPlan(items: List<ExamItemUi>): ExamCalendarPlan {
+    val events = items.mapNotNull { exam ->
+        val timing = parseExamTiming(exam.examTime) ?: return@mapNotNull null
+        ExamCalendarEvent(
+            uid = examEventUid(examPairKey(exam)),
+            title = listOf(exam.courseName, exam.examName).filter(String::isNotBlank).joinToString(" "),
+            location = exam.location,
+            description = buildString {
+                append("教务原文: ${exam.examTime.ifBlank { "未提供" }}")
+                if (exam.seatNumber.isNotBlank()) append(" · 座位 ${exam.seatNumber}")
+                if (exam.teacher.isNotBlank()) append(" · ${exam.teacher}")
+            },
+            timing = timing,
+        )
+    }.sortedBy { it.timing.startsAt.timeInMillis }
+    return ExamCalendarPlan(items.size, events, items.count { parseExamTiming(it.examTime) == null })
+}
+
 internal fun semesterAverageGpa(grades: List<GradeItemUi>): String {
     val graded = grades.mapNotNull { grade ->
         val credit = grade.credits.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
@@ -191,6 +215,10 @@ fun GradesScreen(
     examChangeLines: Map<String, List<String>> = emptyMap(),
     onRefresh: () -> Unit,
     onExportGrades: (List<GradeItemUi>) -> Unit = {},
+    onExportExams: (List<ExamItemUi>) -> Unit = {},
+    examReminderEnabled: Boolean = false,
+    examReminderNote: String = "",
+    onExamReminderToggle: (Boolean) -> Unit = {},
     semesterError: String = "",
     overallError: String = "",
     examError: String = ""
@@ -263,13 +291,17 @@ fun GradesScreen(
                     shareEnabled = when (currentTab) {
                         0 -> semesterGrades.isNotEmpty()
                         1 -> overallGrades.isNotEmpty()
-                        else -> false
+                        else -> examList.isNotEmpty()
                     },
-                    showShare = currentTab != 2,
+                    showShare = true,
                     isRefreshing = isRefreshing,
                     onShare = {
-                        val grades = if (currentTab == 0) semesterGrades else overallGrades
-                        if (grades.isNotEmpty()) onExportGrades(grades)
+                        // 同一个分享位：考试那半导出的是 .ics，不是成绩 CSV。
+                        if (currentTab == 2) { if (examList.isNotEmpty()) onExportExams(examList) }
+                        else {
+                            val grades = if (currentTab == 0) semesterGrades else overallGrades
+                            if (grades.isNotEmpty()) onExportGrades(grades)
+                        }
                     },
                     onRefresh = onRefresh
                 )
@@ -320,6 +352,9 @@ fun GradesScreen(
                     else -> ExamScheduleContent(
                         exams = examList,
                         changeLines = examChangeLines,
+                        reminderEnabled = examReminderEnabled,
+                        reminderNote = examReminderNote,
+                        onReminderToggle = onExamReminderToggle,
                         isLoading = examIsLoading,
                         error = examError,
                         listState = examListState,
@@ -813,7 +848,10 @@ private fun ExamScheduleContent(
     listState: LazyListState,
     topInset: Dp,
     bottomInset: Dp,
-    changeLines: Map<String, List<String>>
+    changeLines: Map<String, List<String>>,
+    reminderEnabled: Boolean,
+    reminderNote: String,
+    onReminderToggle: (Boolean) -> Unit
 ) {
     when {
         isLoading && exams.isEmpty() -> {
@@ -862,6 +900,11 @@ private fun ExamScheduleContent(
                             title = "考试列表",
                             subtitle = "按时间顺序展示"
                         )
+                        ExamReminderToggle(
+                            enabled = reminderEnabled,
+                            note = reminderNote,
+                            onToggle = onReminderToggle
+                        )
                     }
                 }
 
@@ -871,6 +914,25 @@ private fun ExamScheduleContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ExamReminderToggle(enabled: Boolean, note: String, onToggle: (Boolean) -> Unit) {
+    SystemCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("考前一晚提醒我", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text(note.ifBlank { "考试前一天 20:00 提醒；同一天几场合并成一条通知" },
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(checked = enabled, onCheckedChange = onToggle)
         }
     }
 }

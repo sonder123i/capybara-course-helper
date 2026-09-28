@@ -42,6 +42,7 @@ class ScheduleReminderScheduler private constructor(private val context: Context
 
     companion object {
         const val ACTION = "com.k2767.course.action.COURSE_REMINDER"
+        const val ACTION_EXAM = "com.k2767.course.action.EXAM_REMINDER"
         const val CHANNEL = "course_reminders"
         const val EXTRA_REMINDER_ID = "course_reminder_id"
         const val EXTRA_REVISION = "course_reminder_revision"
@@ -207,12 +208,17 @@ class ScheduleReminderScheduler private constructor(private val context: Context
 
     @Synchronized
     fun reconcile(resetAlarms: Boolean = false) {
-        if (resetAlarms) scheduledPlans().values.forEach { alarms.cancel(it.reminder.key) }
+        if (resetAlarms) {
+            scheduledPlans().values.forEach { alarms.cancel(it.reminder.key) }
+            examSnapshots().forEach { cancelExamAlarm(it) }
+        }
         val permission = permissions()
         try {
             reconcileCourseReminders(records(), activeAccount(), { timeBase(it.account, it.term) }, permission, System.currentTimeMillis(), alarms)
+            reconcileExam(permission)
         } catch (_: SecurityException) {
             scheduledPlans().values.forEach { alarms.cancel(it.reminder.key) }
+            examSnapshots().forEach { cancelExamAlarm(it) }
         }
         revision++
     }
@@ -248,6 +254,116 @@ class ScheduleReminderScheduler private constructor(private val context: Context
     }
 
     fun findById(id: String): CourseReminder? = records().firstOrNull { it.key.storageId == id && it.key.account == activeAccount() }
+
+    // ============ 考试提醒：一天一条，前一天晚上 ============
+    /** 快照落本地：开机重排时没有网络，也不能靠成绩页再去拉一次教务。 */
+    private fun examSnapshots(): List<ExamAlarm> = runCatching {
+        val array = JSONArray(preferences.getString("exam_alarms", "[]"))
+        (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val lines = item.optJSONArray("lines") ?: return@mapNotNull null
+            ExamAlarm(item.getString("account"), item.getString("term"), item.getString("date"),
+                (0 until lines.length()).map { lines.getString(it) }, item.getLong("trigger"))
+        }
+    }.getOrDefault(emptyList())
+
+    private fun saveExamSnapshots(alarms: List<ExamAlarm>) {
+        preferences.edit().putString("exam_alarms", JSONArray().apply {
+            alarms.forEach { put(JSONObject().put("account", it.account).put("term", it.term).put("date", it.date)
+                .put("lines", JSONArray(it.lines)).put("trigger", it.triggerAt)) }
+        }.toString()).apply()
+        revision++
+    }
+
+    fun examRemindersEnabled(account: String): Boolean =
+        account.isNotBlank() && preferences.getBoolean("exam_reminders_on_$account", false)
+
+    /** 关掉开关要连已排的闹钟一起撤，不能只把快照留下次再算。 */
+    @Synchronized
+    fun setExamRemindersEnabled(account: String, term: String, enabled: Boolean, events: List<ExamCalendarEvent>) {
+        if (account.isBlank() || term.isBlank()) return
+        preferences.edit().putBoolean("exam_reminders_on_$account", enabled).apply()
+        val scoped = examSnapshots().filter { it.account == account && it.term == term }
+        scoped.forEach { cancelExamAlarm(it) }
+        saveExamSnapshots(examSnapshots().filterNot { it in scoped } +
+            if (enabled) examDayAlarms(account, term, events, System.currentTimeMillis()) else emptyList())
+        reconcile()
+    }
+
+    private fun examIntent(alarm: ExamAlarm) = Intent(context, CourseReminderReceiver::class.java).apply {
+        action = ACTION_EXAM
+        data = Uri.Builder().scheme("exam-reminder").authority("alarm").appendPath(alarm.storageId).build()
+        putExtra(EXTRA_REMINDER_ID, alarm.storageId)
+        putExtra(EXTRA_REVISION, alarm.revision)
+        putExtra(EXTRA_TRIGGER, alarm.triggerAt)
+    }
+
+    private fun cancelExamAlarm(alarm: ExamAlarm) {
+        PendingIntent.getBroadcast(context, 0, examIntent(alarm), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
+            alarmManager.cancel(it); it.cancel()
+        }
+    }
+
+    @Synchronized
+    fun reconcileExam(permission: ReminderPermissions) {
+        val account = activeAccount()
+        val now = System.currentTimeMillis()
+        val stored = examSnapshots()
+        // 过期的就地丢弃，否则它会一直躺在表里被每次 reconcile 重看一遍。
+        val live = stored.filter { it.triggerAt > now }
+        if (live != stored) saveExamSnapshots(live)
+        stored.filter { it.triggerAt <= now }.forEach { cancelExamAlarm(it) }
+        val mine = live.filter { it.account == account && it.lines.isNotEmpty() }
+        if (account.isBlank() || !permission.available || !examRemindersEnabled(account)) {
+            mine.forEach { cancelExamAlarm(it) }; return
+        }
+        mine.forEach { alarm ->
+            // 内容变了 revision 就变了：只判"排着没排"会留下一个带着旧 revision 的闹钟，
+            // 触发时被 staleness 校验挡掉，于是永远不响。
+            if (armedRevision(alarm) == alarm.revision && examAlarmPending(alarm)) return@forEach
+            val pending = PendingIntent.getBroadcast(context, 0, examIntent(alarm),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.triggerAt, pending)
+            rememberArmed(alarm)
+        }
+    }
+
+    private fun armedExams(): JSONObject = runCatching {
+        JSONObject(preferences.getString("exam_armed", "{}"))
+    }.getOrDefault(JSONObject())
+
+    private fun armedRevision(alarm: ExamAlarm): Long =
+        runCatching { armedExams().getLong(alarm.storageId) }.getOrDefault(-1L)
+
+    private fun rememberArmed(alarm: ExamAlarm) {
+        preferences.edit().putString("exam_armed", armedExams().put(alarm.storageId, alarm.revision).toString()).apply()
+    }
+
+    private fun examAlarmPending(alarm: ExamAlarm) =
+        PendingIntent.getBroadcast(context, 0, examIntent(alarm), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE) != null
+
+    @Synchronized
+    fun receiveExam(id: String, expectedRevision: Long, expectedTrigger: Long) {
+        val alarm = examSnapshots().firstOrNull { it.storageId == id } ?: return
+        if (alarm.revision != expectedRevision || alarm.triggerAt != expectedTrigger) return
+        if (System.currentTimeMillis() < alarm.triggerAt) return
+        // 响过就从快照摘掉：重启后不该把同一句"明天有考试"再排一遍。
+        saveExamSnapshots(examSnapshots().filterNot { it.storageId == id })
+        if (alarm.account != activeAccount()) { reconcile(); return }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 26)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, "课程与考试提醒", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_course_reminder)
+            .setContentTitle("明天有考试")
+            .setContentText(examDayNotification(alarm.lines))
+            .setStyle(NotificationCompat.InboxStyle().also { style -> alarm.lines.forEach { style.addLine(it) } })
+            .setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).build()
+        try { NotificationManagerCompat.from(context).notify(id, 2, notification) } catch (_: SecurityException) { }
+        reconcile()
+    }
     override fun onActivityResumed(activity: Activity) { reconcile() }
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
     override fun onActivityStarted(activity: Activity) = Unit

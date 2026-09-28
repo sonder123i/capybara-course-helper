@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.k2767.course.schedule.ExamCalendarEvent
+import com.k2767.course.schedule.ExamCalendarPlan
+import com.k2767.course.schedule.examExportSummary
 import com.k2767.course.ui.screen.ScheduleCourseUi
 import java.io.File
 import java.io.FileOutputStream
@@ -179,5 +182,85 @@ object ICalExporter {
             android.util.Log.e("ICalExporter", "导出失败: ${e.message}")
             throw e
         }
+    }
+
+    /**
+     * 考试单独一份日历。
+     *
+     * 不跟课表合成一份是因为两者对开学锚点的依赖不同：课程缺锚点时会兜底成
+     * 「9 月第一个周一」那种假日期，而考试的时间自带年份，压根不需要锚点。
+     */
+    fun generateExamCalendarContent(events: List<ExamCalendarEvent>): String {
+        val sb = StringBuilder()
+        sb.appendLine("BEGIN:VCALENDAR")
+        sb.appendLine("VERSION:2.0")
+        sb.appendLine("PRODID:-//Zhengfang Course Assistant//CN")
+        sb.appendLine("CALSCALE:GREGORIAN")
+        sb.appendLine("METHOD:PUBLISH")
+        sb.appendLine("X-WR-CALNAME:考试安排")
+        sb.appendLine("X-WR-TIMEZONE:Asia/Shanghai")
+        sb.appendLine("BEGIN:VTIMEZONE")
+        sb.appendLine("TZID:Asia/Shanghai")
+        sb.appendLine("BEGIN:STANDARD")
+        sb.appendLine("DTSTART:19700101T000000")
+        sb.appendLine("TZOFFSETFROM:+0800")
+        sb.appendLine("TZOFFSETTO:+0800")
+        sb.appendLine("END:STANDARD")
+        sb.appendLine("END:VTIMEZONE")
+
+        val zone = TimeZone.getTimeZone("Asia/Shanghai")
+        val dayFormat = SimpleDateFormat("yyyyMMdd", Locale.ROOT).apply { timeZone = zone }
+        val momentFormat = SimpleDateFormat("'T'HHmmss", Locale.ROOT).apply { timeZone = zone }
+        val stamp = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.ROOT).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date())
+
+        events.forEach { event ->
+            val start = event.timing.startsAt
+            sb.appendLine("BEGIN:VEVENT")
+            sb.appendLine("UID:${event.uid}")
+            sb.appendLine("DTSTAMP:$stamp")
+            if (event.timing.allDay) {
+                sb.appendLine("DTSTART;VALUE=DATE:${dayFormat.format(start.time)}")
+            } else {
+                // 没有 DTEND：教务没给结束时间，就不拿节次表反推时长。
+                sb.appendLine("DTSTART;TZID=Asia/Shanghai:${dayFormat.format(start.time)}${momentFormat.format(start.time)}")
+            }
+            sb.appendLine("SUMMARY:${escapeText(event.title)}")
+            if (event.location.isNotEmpty()) sb.appendLine("LOCATION:${escapeText(event.location)}")
+            sb.appendLine("DESCRIPTION:${escapeText(event.description)}")
+            if (!event.timing.allDay) {
+                // 各家日历对导入文件里的 VALARM 实现不一，能弹是白捡，不作为提醒依据。
+                sb.appendLine("BEGIN:VALARM")
+                sb.appendLine("TRIGGER:-PT30M")
+                sb.appendLine("ACTION:DISPLAY")
+                sb.appendLine("DESCRIPTION:${escapeText(event.title)}")
+                sb.appendLine("END:VALARM")
+            }
+            sb.appendLine("END:VEVENT")
+        }
+        sb.appendLine("END:VCALENDAR")
+        return sb.toString()
+    }
+
+    /** 返回导出结果那句话，让调用方 toast 出来——降级和丢弃都必须被说出来。 */
+    fun exportExamsAndShare(context: Context, plan: ExamCalendarPlan): String {
+        if (plan.events.isNotEmpty()) {
+            try {
+                val fileName = "考试安排_${SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())}.ics"
+                val file = File(context.cacheDir, fileName)
+                FileOutputStream(file).use { it.write(generateExamCalendarContent(plan.events).toByteArray()) }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/calendar"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }, "导出考试安排到..."))
+            } catch (e: Exception) {
+                android.util.Log.e("ICalExporter", "考试导出失败: ${e.message}")
+                throw e
+            }
+        }
+        return examExportSummary(plan)
     }
 }
