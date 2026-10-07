@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.net.URLDecoder
@@ -20,7 +21,8 @@ import java.util.concurrent.TimeUnit
  * 1. 入口页无 queryCourse 调用的 first* 变体（如河北传媒学院）也能构造出分类 scope；
  * 2. 列表请求只提交 zzxkYzb.js requestMap 的字段——全量隐藏域会被这类学校判为异常请求，
  *    返回"教务返回了无法识别的列表"；
- * 3. 既有 queryCourse 入口页行为保持不变。
+ * 3. 既有 queryCourse 入口页行为保持不变；
+ * 4. 入口页既无分类也无学年学期时，教务原文说未开放交回空 scopes，其余情况仍按页面未适配报错。
  */
 class ZfAcademicAdapterCourseTest {
     private lateinit var server: MockWebServer
@@ -160,6 +162,22 @@ class ZfAcademicAdapterCourseTest {
         val displayFields = fields(display)
         assertEquals("01", displayFields["kklxdm"])
         assertEquals("XKKZ-REG", displayFields["xkkz_id"])
+    }
+
+    @Test fun closedSelectionIndexYieldsNoScopesAndNoListRequest() = runBlocking {
+        server.enqueue(html("<html><head><title>正方教务系统</title></head><body><div class=\"tips\">选课未开放</div></body></html>"))
+
+        val context = adapter.loadCourseContext()
+        assertTrue("教务说未开放时应交回空轮次", context.scopes.isEmpty())
+        assertTrue(adapter.listCourses(context, CourseQuery()).isEmpty())
+        assertEquals("未开放时不允许再打列表请求", 1, server.requestCount)
+    }
+
+    @Test fun maintenanceIndexIsNotReportedAsClosedSelection() = runBlocking {
+        server.enqueue(html("<html><head><title>正方教务系统</title></head><body><div class=\"tips\">系统维护中</div></body></html>"))
+
+        try { adapter.loadCourseContext(); fail("一个维护页不能变成空的选课轮次") }
+        catch (e: AcademicException) { assertEquals(AcademicStatus.PAGE_CHANGED, e.status) }
     }
 
     @Test fun selectedAcceptsEmptyRootArray() = runBlocking {

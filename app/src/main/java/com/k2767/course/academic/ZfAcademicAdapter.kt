@@ -212,6 +212,14 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
                 indexFields["firstNjdmId"].orEmpty().ifBlank { indexFields["njdm_id"].orEmpty() },
                 indexFields["firstZyhId"].orEmpty().ifBlank { indexFields["zyh_id"].orEmpty() })) else emptyList()
         }
+        // 连学年学期都没有时这不是一个有轮次可开的选课入口页：教务原文说未开放就交回空 scopes，
+        // 让界面走「选课未开放」；其余情况按页面未适配报错，不把维护页演成未开放。
+        if (categoryRows.isEmpty() && indexFields["xkxnm"].isNullOrBlank()) {
+            if (AcademicJson.status(indexResponse.text) == AcademicStatus.ROUND_CLOSED) {
+                return@serial CourseContext(session.epoch, emptyList())
+            }
+            throw AcademicException(AcademicStatus.PAGE_CHANGED, "未找到选课入口参数，请确认已进入学校选课页面")
+        }
         val contexts = if (categoryRows.isEmpty()) listOf(indexFields) else categoryRows.map { m ->
             val fields = indexFields.toMutableMap()
             fields["kklxdm"] = m[1]; fields["xkkz_id"] = m[2]

@@ -209,7 +209,7 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                     }
                 } else if (!loading && categories.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        SystemEmptyState(title = "当前暂无选课轮次", message = "学校开放选课后，可在这里刷新查看。已选课程、课表和成绩仍可正常查询。") {
+                        SystemEmptyState(title = "选课未开放", message = "选课未开放，暂时读不到可选课程。学校开放后请刷新；课表、已选和成绩仍可查询。") {
                             SystemSecondaryButton(text = "刷新轮次", onClick = { revision++ })
                         }
                     }
