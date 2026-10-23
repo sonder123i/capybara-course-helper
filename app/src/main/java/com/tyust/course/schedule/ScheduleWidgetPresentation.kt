@@ -3,6 +3,7 @@ package com.tyust.course.schedule
 import android.app.PendingIntent
 import android.content.Context
 import android.content.res.Configuration
+import android.os.SystemClock
 import android.view.View
 import android.widget.RemoteViews
 import com.tyust.course.R
@@ -33,7 +34,12 @@ internal data class ScheduleWidgetState(
     val primary: ScheduleWidgetCourse?, val secondary: ScheduleWidgetCourse?,
     val message: String?, val actionLabel: String, val action: ScheduleWidgetAction, val summary: String,
     /** Base instant for the countdown style: the next boundary (class start or class end). */
-    val countdownAt: Long? = null, val countdownLabel: String = ""
+    val countdownAt: Long? = null, val countdownLabel: String = "",
+    /** 明日课程：只有打开“显示明日课表”外观点才会渲染，默认不展示。 */
+    val tomorrow: List<ScheduleWidgetCourse> = emptyList(), val tomorrowDate: String = "",
+    val tomorrowSummary: String = "",
+    /** 当天课表状态有效（缓存/开学日期/周次/节次时间都没问题），可以安全展示明日课程。 */
+    val allowTomorrow: Boolean = false
 ) {
     val title get() = primary?.name ?: message.orEmpty()
     companion object {
@@ -46,6 +52,29 @@ internal data class ScheduleWidgetState(
             val agenda = ScheduleAgenda.calculate(snapshot.courses, snapshot.timeBase, now, zone)
             if (!snapshot.hasCache && snapshot.courses.isEmpty()) return empty("还没有本地课表", "同步课表", ScheduleWidgetAction.Sync, agenda)
             if (agenda.needsCalendar) return empty("请设置开学日期", "去设置", ScheduleWidgetAction.Calendar, agenda)
+            val dayStart = Calendar.getInstance(zone).apply {
+                timeInMillis = now
+                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            }
+            val tomorrowCalendar = (dayStart.clone() as Calendar).apply { add(Calendar.DATE, 1) }
+            val tomorrowStart = tomorrowCalendar.timeInMillis
+            val dayAfterStart = (tomorrowCalendar.clone() as Calendar).apply { add(Calendar.DATE, 1) }.timeInMillis
+            val tomorrowDate = format("M月d日 E", tomorrowStart)
+            fun row(item: ScheduleOccurrence, status: String): ScheduleWidgetCourse {
+                val dateLabel = when (format("yyyy-MM-dd", item.startsAt)) {
+                    format("yyyy-MM-dd", now) -> ""
+                    format("yyyy-MM-dd", tomorrowStart) -> "明天"
+                    else -> format("M/d", item.startsAt)
+                }
+                return ScheduleWidgetCourse(item, status, item.course.name, item.course.location.ifBlank { "教室待定" },
+                    "${format("HH:mm", item.startsAt)}–${format("HH:mm", item.endsAt)}", dateLabel)
+            }
+            // Only real expanded occurrences, never guessed teaching weeks; rendered only when the
+            // per-widget “显示明日课表” option is on.
+            val tomorrowRows = agenda.upcoming
+                .filter { it.startsAt >= tomorrowStart && it.startsAt < dayAfterStart }
+                .map { row(it, "明天") }
+            val tomorrowSummary = if (tomorrowRows.isEmpty()) "明日无课" else "明日 ${tomorrowRows.size} 堂"
             // A daily widget must not fill an empty slot with another day's lesson.
             // Keep the agenda's cross-day prediction for other consumers and refresh at midnight.
             val upcomingToday = agenda.today.filter { it.startsAt > now }
@@ -57,17 +86,13 @@ internal data class ScheduleWidgetState(
                 val hasMissingTime = snapshot.courses.any { snapshot.timeBase.periodStarts[it.startPeriod].isNullOrBlank() ||
                     snapshot.timeBase.periodEnds[it.endPeriod].isNullOrBlank() }
                 if (hasMissingTime) return empty("请补全节次时间", "去设置", ScheduleWidgetAction.Calendar, agenda)
-                return empty(if (agenda.today.isEmpty()) "今天没有课程" else "今日课程已结束", "查看课表", ScheduleWidgetAction.Today, agenda)
-            }
-            val tomorrow = Calendar.getInstance(zone).apply { timeInMillis = now; add(Calendar.DATE, 1) }.timeInMillis
-            fun row(item: ScheduleOccurrence, status: String): ScheduleWidgetCourse {
-                val dateLabel = when (format("yyyy-MM-dd", item.startsAt)) {
-                    format("yyyy-MM-dd", now) -> ""
-                    format("yyyy-MM-dd", tomorrow) -> "明天"
-                    else -> format("M/d", item.startsAt)
-                }
-                return ScheduleWidgetCourse(item, status, item.course.name, item.course.location.ifBlank { "教室待定" },
-                    "${format("HH:mm", item.startsAt)}–${format("HH:mm", item.endsAt)}", dateLabel)
+                return ScheduleWidgetState(snapshot, agenda, now,
+                    if (agenda.today.isEmpty()) "今天无课" else "今日已结束", date, null, null,
+                    if (agenda.today.isEmpty()) "今天没有课程" else "今日课程已结束",
+                    "查看课表", ScheduleWidgetAction.Today,
+                    if (agenda.today.isEmpty()) "" else "今日 ${agenda.today.size} 堂 · 全部结束",
+                    tomorrow = tomorrowRows, tomorrowDate = tomorrowDate, tomorrowSummary = tomorrowSummary,
+                    allowTomorrow = true)
             }
             val secondary = if (current != null) upcomingToday.firstOrNull() else upcomingToday.getOrNull(1)
             val heading = when {
@@ -81,7 +106,9 @@ internal data class ScheduleWidgetState(
                 null, "查看课表", ScheduleWidgetAction.Today,
                 "今日 ${agenda.today.size} 堂 · 还剩 ${agenda.remaining(now)} 堂",
                 countdownAt = current?.endsAt ?: primary.startsAt,
-                countdownLabel = if (current != null) "距下课" else "距上课")
+                countdownLabel = if (current != null) "距下课" else "距上课",
+                tomorrow = tomorrowRows, tomorrowDate = tomorrowDate, tomorrowSummary = tomorrowSummary,
+                allowTomorrow = true)
         }
     }
 }
@@ -90,6 +117,22 @@ internal object ScheduleWidgetRenderer {
     private val courseColors = listOf(0xFF5C6BC0, 0xFF42A5F5, 0xFF66BB6A, 0xFFFFA726,
         0xFFAB47BC, 0xFFEF5350, 0xFF26C6DA, 0xFF8D6E63).map { it.toInt() }
     private fun courseColor(id: String) = courseColors[ScheduleIdentity.colorIndex(id, courseColors.size)]
+
+    /** 今日课程结束/无课时，“显示明日课表”选项把主信息切到明日课程。 */
+    private data class WidgetDisplay(
+        val primary: ScheduleWidgetCourse?, val secondary: ScheduleWidgetCourse?,
+        val heading: String, val date: String, val message: String?, val summary: String,
+        val tomorrowMode: Boolean
+    )
+
+    private fun display(state: ScheduleWidgetState, appearance: ScheduleWidgetAppearance): WidgetDisplay {
+        if (!appearance.tomorrow || !state.allowTomorrow || state.primary != null)
+            return WidgetDisplay(state.primary, state.secondary, state.heading, state.date, state.message, state.summary, false)
+        val first = state.tomorrow.firstOrNull()
+        return WidgetDisplay(first, state.tomorrow.getOrNull(1), "今日课程结束", state.tomorrowDate,
+            if (first == null) "今日课程结束 · 明日无课" else null, state.tomorrowSummary, true)
+    }
+
     /** Use the launcher's actual size alternatives, including both legacy orientations. */
     fun responsiveViews(context: Context, state: ScheduleWidgetState, options: android.os.Bundle,
                         style: ScheduleWidgetStyle, appearance: ScheduleWidgetAppearance = ScheduleWidgetAppearance()): RemoteViews {
@@ -117,10 +160,11 @@ internal object ScheduleWidgetRenderer {
         val accentColor = if (dark) 0xFF88BFFF.toInt() else 0xFF0069D9.toInt()
         val scale = config.fontScale.coerceAtLeast(1f)
         if (style == ScheduleWidgetStyle.Timeline)
-            return timeline(context, state, width, height, scale, dark, primaryColor, secondaryColor, accentColor).also { applyAppearance(context, it, appearance, dark) }
+            return timeline(context, state, width, height, scale, dark, primaryColor, secondaryColor, accentColor, appearance).also { applyAppearance(context, it, appearance, dark) }
         if (style == ScheduleWidgetStyle.Countdown)
-            return countdown(context, state, width, height, scale, dark, primaryColor, secondaryColor, accentColor).also { applyAppearance(context, it, appearance, dark) }
+            return countdown(context, state, width, height, scale, dark, primaryColor, secondaryColor, accentColor, appearance).also { applyAppearance(context, it, appearance, dark) }
         val views = RemoteViews(context.packageName, if (style == ScheduleWidgetStyle.Single) R.layout.schedule_widget_single else R.layout.schedule_widget)
+        val shown = display(state, appearance)
         val two = style == ScheduleWidgetStyle.Double
         val padding = if (height < 100 || width < 100) 6 else 10
         val density = context.resources.displayMetrics.density
@@ -135,8 +179,8 @@ internal object ScheduleWidgetRenderer {
         }
         val showTeacher = height >= 120 && columnWidth >= 100
         val fitter = ScheduleWidgetTextFitter(context, (columnWidth - 14).coerceAtLeast(1f) * density)
-        val headerHeight = fitter.height(listOf(ScheduleWidgetText(state.heading, 12f, bold = true))) + fitter.dp(2f)
-        val footerHeight = fitter.height(listOf(ScheduleWidgetText(state.summary, 12f))) + fitter.dp(6f)
+        val headerHeight = fitter.height(listOf(ScheduleWidgetText(shown.heading, 12f, bold = true))) + fitter.dp(2f)
+        val footerHeight = fitter.height(listOf(ScheduleWidgetText(shown.summary, 12f))) + fitter.dp(6f)
         val compactTime = columnWidth + cardPadding * 2 < 116 * scale
         fun fields(item: ScheduleWidgetCourse?): List<ScheduleWidgetText> {
             val time = when {
@@ -152,9 +196,9 @@ internal object ScheduleWidgetRenderer {
                 ScheduleWidgetText(room, 11f, margin = 2f)
             )
         }
-        val required = listOfNotNull(state.primary, state.secondary.takeIf { two }).map(::fields)
+        val required = listOfNotNull(shown.primary, shown.secondary.takeIf { two }).map(::fields)
         var showHeader = height >= 154 * scale && width >= 150 * scale
-        var showFooter = state.primary != null && height >= 232 * scale && width >= 160 * scale
+        var showFooter = shown.primary != null && height >= 232 * scale && width >= 160 * scale
         fun bodyPixels() = fitter.dp((height - padding * 2 - cardPadding * 2).toFloat()) -
             (if (showHeader) headerHeight else 0) - (if (showFooter) footerHeight else 0)
         // Optional labels yield their space before any required text is made smaller.
@@ -162,20 +206,20 @@ internal object ScheduleWidgetRenderer {
         if (required.any { !fitter.fits(it, bodyPixels()) }) showHeader = false
         val bodyHeight = bodyPixels()
         val separateTargets = two
-        views.setTextViewText(R.id.widget_heading, state.heading)
-        views.setTextViewText(R.id.widget_date, state.date)
+        views.setTextViewText(R.id.widget_heading, shown.heading)
+        views.setTextViewText(R.id.widget_date, shown.date)
         views.visible(R.id.widget_header, showHeader)
         views.visible(R.id.widget_date, width >= 260 * scale)
-        views.visible(R.id.widget_courses, state.primary != null)
-        views.visible(R.id.widget_empty, state.primary == null)
+        views.visible(R.id.widget_courses, shown.primary != null)
+        views.visible(R.id.widget_empty, shown.primary == null)
         views.visible(R.id.widget_next, two)
         views.visible(R.id.widget_separator, two)
         views.visible(R.id.widget_footer, showFooter)
-        views.setTextViewText(R.id.widget_footer, state.summary)
-        views.setTextViewText(R.id.widget_message, state.message)
+        views.setTextViewText(R.id.widget_footer, shown.summary)
+        views.setTextViewText(R.id.widget_message, shown.message)
         views.setTextViewText(R.id.widget_action, state.actionLabel)
         val showAction = bodyHeight >= fitter.dp(44f)
-        val emptyFields = listOf(ScheduleWidgetText(state.message.orEmpty(), 14f, bold = true),
+        val emptyFields = listOf(ScheduleWidgetText(shown.message.orEmpty(), 14f, bold = true),
             ScheduleWidgetText(if (showAction) state.actionLabel else "", 12f, margin = 4f))
         val emptyScale = ScheduleWidgetTextFitter(context, (width - padding * 2) * density).scale(emptyFields, bodyHeight)
         views.setInt(R.id.widget_message, "setMaxLines", Int.MAX_VALUE)
@@ -206,22 +250,22 @@ internal object ScheduleWidgetRenderer {
             views.setContentDescription(container, item?.let { "${it.dateLabel} ${it.status}，${it.name}，${it.course.teacher.ifBlank { "教师待定" }}，${it.time}，${it.location}" }
                 ?: "暂无后续课程，查看完整课表")
         }
-        row(state.primary, R.id.widget_course, R.id.widget_name, R.id.widget_teacher, R.id.widget_location, R.id.widget_time, R.id.widget_status)
-        row(state.secondary, R.id.widget_next, R.id.widget_next_name, R.id.widget_next_teacher, R.id.widget_next_location, R.id.widget_next_time, R.id.widget_next_status)
-        for ((id, item) in listOf(R.id.widget_course_dot to state.primary, R.id.widget_next_dot to state.secondary)) {
+        row(shown.primary, R.id.widget_course, R.id.widget_name, R.id.widget_teacher, R.id.widget_location, R.id.widget_time, R.id.widget_status)
+        row(shown.secondary, R.id.widget_next, R.id.widget_next_name, R.id.widget_next_teacher, R.id.widget_next_location, R.id.widget_next_time, R.id.widget_next_status)
+        for ((id, item) in listOf(R.id.widget_course_dot to shown.primary, R.id.widget_next_dot to shown.secondary)) {
             views.visible(id, item != null)
             item?.let { views.setTextColor(id, courseColor(it.course.id)) }
         }
-        val rootIntent = pending(context, state, if (style == ScheduleWidgetStyle.Single) state.primary?.occurrence else null,
-            if (state.primary == null) state.action else ScheduleWidgetAction.Today)
+        val rootIntent = pending(context, state, if (style == ScheduleWidgetStyle.Single) shown.primary?.occurrence else null,
+            if (shown.primary == null) state.action else ScheduleWidgetAction.Today)
         views.setOnClickPendingIntent(R.id.widget_root, rootIntent)
         views.setOnClickPendingIntent(R.id.widget_header, rootIntent)
-        views.setOnClickPendingIntent(R.id.widget_course, if (style == ScheduleWidgetStyle.Single || separateTargets) pending(context, state, state.primary?.occurrence) else rootIntent)
-        views.setOnClickPendingIntent(R.id.widget_next, if (separateTargets) pending(context, state, state.secondary?.occurrence) else rootIntent)
+        views.setOnClickPendingIntent(R.id.widget_course, if (style == ScheduleWidgetStyle.Single || separateTargets) pending(context, state, shown.primary?.occurrence) else rootIntent)
+        views.setOnClickPendingIntent(R.id.widget_next, if (separateTargets) pending(context, state, shown.secondary?.occurrence) else rootIntent)
         views.setOnClickPendingIntent(R.id.widget_empty, pending(context, state, action = state.action))
         views.setOnClickPendingIntent(R.id.widget_action, pending(context, state, action = state.action))
         // The entire empty panel performs the same action as its label.
-        views.setContentDescription(R.id.widget_empty, "${state.message}，${state.actionLabel}")
+        views.setContentDescription(R.id.widget_empty, "${shown.message}，${state.actionLabel}")
         applyAppearance(context, views, appearance, dark)
         return views
     }
@@ -231,9 +275,11 @@ internal object ScheduleWidgetRenderer {
      * between the app's inexact boundary refreshes. Only local cache reads happen here.
      */
     private fun countdown(context: Context, state: ScheduleWidgetState, width: Int, height: Int, scale: Float,
-                          dark: Boolean, primary: Int, secondary: Int, accent: Int): RemoteViews {
+                          dark: Boolean, primary: Int, secondary: Int, accent: Int,
+                          appearance: ScheduleWidgetAppearance): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.schedule_widget_countdown)
         val density = context.resources.displayMetrics.density
+        val shown = display(state, appearance)
         val padding = if (height < 100 || width < 100) 6 else 10
         val px = (padding * density).toInt()
         views.setViewPadding(R.id.widget_root, px, px, px, px)
@@ -245,18 +291,26 @@ internal object ScheduleWidgetRenderer {
         val columnWidth = (width - padding * 2 - cardPadding * 2).toFloat()
         val showTeacher = height >= 120 && columnWidth >= 100
         val fitter = ScheduleWidgetTextFitter(context, (columnWidth - 14).coerceAtLeast(1f) * density)
-        val headerHeight = fitter.height(listOf(ScheduleWidgetText(state.heading, 12f, bold = true))) + fitter.dp(2f)
-        val footerHeight = fitter.height(listOf(ScheduleWidgetText(state.summary, 12f))) + fitter.dp(6f)
-        val item = state.primary
+        val headerHeight = fitter.height(listOf(ScheduleWidgetText(shown.heading, 12f, bold = true))) + fitter.dp(2f)
+        val footerHeight = fitter.height(listOf(ScheduleWidgetText(shown.summary, 12f))) + fitter.dp(6f)
+        val item = shown.primary
         val compactTime = columnWidth + cardPadding * 2 < 116 * scale
         val time = when {
             item == null -> "查看课表"
             compactTime -> listOf(item.dateLabel, item.time.substringBefore('–')).filter(String::isNotBlank).joinToString(" ")
             else -> listOf(item.dateLabel, item.time).filter(String::isNotBlank).joinToString(" ")
         }
+        // 明日模式倒计时到明日第一节课；课中按小节模式则按小节拆分。
+        val target = when {
+            item == null -> null
+            shown.tomorrowMode -> ScheduleWidgetCountdownTarget(item.occurrence.startsAt, ScheduleWidgetCountdown.TOMORROW_CLASS)
+            item.status == "正在上课" -> ScheduleWidgetCountdown.resolve(state, appearance.segmented)
+            else -> ScheduleWidgetCountdown.wholeCourse(state)
+        }
+        val timerText = target?.label ?: state.countdownLabel.ifBlank { ScheduleWidgetCountdown.TO_CLASS }
+        val progress = ScheduleWidgetCountdown.progress(state, target)
         // The host renders the Chronometer text itself; measure its widest shape so scaling stays valid.
         val timerShape = "00:00:00"
-        val timerText = state.countdownLabel.ifBlank { "距上课" }
         var showHeader = height >= 154 * scale && width >= 150 * scale
         var showFooter = item != null && height >= 232 * scale && width >= 160 * scale
         fun bodyPixels() = fitter.dp((height - padding * 2 - cardPadding * 2).toFloat()) -
@@ -270,7 +324,7 @@ internal object ScheduleWidgetRenderer {
             ScheduleWidgetText(time, 11f, margin = 3f, singleLine = true),
             ScheduleWidgetText(item?.location.orEmpty(), 11f, margin = 2f)
         )
-        fun emptyFields() = listOf(ScheduleWidgetText(state.message.orEmpty(), 14f, bold = true),
+        fun emptyFields() = listOf(ScheduleWidgetText(shown.message.orEmpty(), 14f, bold = true),
             ScheduleWidgetText(if (showActionNow()) state.actionLabel else "", 12f, margin = 4f))
         fun required() = if (item != null) courseFields() else emptyFields()
         // Optional labels yield their space before any required text is made smaller.
@@ -279,16 +333,18 @@ internal object ScheduleWidgetRenderer {
         val bodyHeight = bodyPixels()
         val showAction = item == null && showActionNow()
         val fit = fitter.scale(required(), bodyHeight)
-        views.setTextViewText(R.id.widget_heading, state.heading)
-        views.setTextViewText(R.id.widget_date, state.date)
+        views.setTextViewText(R.id.widget_heading, shown.heading)
+        views.setTextViewText(R.id.widget_date, shown.date)
         views.visible(R.id.widget_header, showHeader)
         views.visible(R.id.widget_date, width >= 260 * scale)
         views.visible(R.id.widget_courses, item != null)
-        views.visible(R.id.widget_countdown_box, item != null && state.countdownAt != null)
+        views.visible(R.id.widget_countdown_box, item != null && target != null)
+        views.visible(R.id.widget_countdown_progress, progress != null)
+        progress?.let { views.setProgressBar(R.id.widget_countdown_progress, 1000, (it * 1000).toInt().coerceIn(0, 1000), false) }
         views.visible(R.id.widget_empty, item == null)
         views.visible(R.id.widget_footer, showFooter)
-        views.setTextViewText(R.id.widget_footer, state.summary)
-        views.setTextViewText(R.id.widget_message, state.message)
+        views.setTextViewText(R.id.widget_footer, shown.summary)
+        views.setTextViewText(R.id.widget_message, shown.message)
         views.setTextViewText(R.id.widget_action, state.actionLabel)
         views.visible(R.id.widget_action, showAction)
         if (item == null) {
@@ -310,13 +366,18 @@ internal object ScheduleWidgetRenderer {
             views.setTextViewText(R.id.widget_location, item.location)
             views.setTextViewTextSize(R.id.widget_location, android.util.TypedValue.COMPLEX_UNIT_SP, 11f * fit)
             views.visible(R.id.widget_location, true)
-            state.countdownAt?.let { target ->
-                // Chronometer 的 base 走 SystemClock.elapsedRealtime() 时间轴（开机起算），
-                // 直接塞墙上时钟毫秒会变成几十万小时。这里换算到开机时间轴，之后由宿主自己走秒。
-                // 边界、开机、改时间/时区时都会重新渲染，所以只需在渲染时换算一次。
-                val uptimeBase = target - System.currentTimeMillis() + android.os.SystemClock.elapsedRealtime()
-                views.setChronometer(R.id.widget_countdown, uptimeBase, "%s", true)
-                views.setChronometerCountDown(R.id.widget_countdown, true)
+            target?.let { deadline ->
+                // Chronometer 的 base 必须换算到开机时间轴。目标已经过去时不要再启动宿主计时器：
+                // 框架的 Chronometer 越过 base 后会显示 -00:01，而 RemoteViews 没有在两次刷新之间
+                // 改写宿主文字的接口，所以这里直接静态渲染 00:00，等边界刷新再切换卡片状态。
+                if (deadline.at - System.currentTimeMillis() > 1_000L) {
+                    val uptimeBase = deadline.at - System.currentTimeMillis() + SystemClock.elapsedRealtime()
+                    views.setChronometer(R.id.widget_countdown, uptimeBase, "%s", true)
+                    views.setChronometerCountDown(R.id.widget_countdown, true)
+                } else {
+                    views.setChronometer(R.id.widget_countdown, SystemClock.elapsedRealtime(), "%s", false)
+                    views.setTextViewText(R.id.widget_countdown, "00:00")
+                }
             }
         }
         views.setTextColor(R.id.widget_heading, primary)
@@ -334,7 +395,7 @@ internal object ScheduleWidgetRenderer {
         views.setContentDescription(R.id.widget_course, item?.let {
             "$timerText，${it.name}，${it.course.teacher.ifBlank { "教师待定" }}，${it.time}，${it.location}"
         } ?: "暂无课程，查看完整课表")
-        views.setContentDescription(R.id.widget_empty, "${state.message}，${state.actionLabel}")
+        views.setContentDescription(R.id.widget_empty, "${shown.message}，${state.actionLabel}")
         return views
     }
 
@@ -346,11 +407,14 @@ internal object ScheduleWidgetRenderer {
     }
 
     private fun timeline(context: Context, state: ScheduleWidgetState, width: Int, height: Int, scale: Float,
-                         dark: Boolean, primary: Int, secondary: Int, accent: Int): RemoteViews {
+                         dark: Boolean, primary: Int, secondary: Int, accent: Int,
+                         appearance: ScheduleWidgetAppearance): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.schedule_widget_timeline)
+        val shown = display(state, appearance)
+        val tomorrowMode = shown.tomorrowMode
         views.setInt(R.id.widget_root, "setBackgroundResource", if (dark) R.drawable.schedule_widget_dark else R.drawable.schedule_widget_light)
-        views.setTextViewText(R.id.widget_heading, "今日时间轴")
-        views.setTextViewText(R.id.widget_date, state.date)
+        views.setTextViewText(R.id.widget_heading, if (tomorrowMode) "今日课程结束" else "今日时间轴")
+        views.setTextViewText(R.id.widget_date, if (tomorrowMode) state.tomorrowDate else state.date)
         views.visible(R.id.widget_date, width >= 280 * scale)
         views.setTextColor(R.id.widget_heading, primary)
         views.setTextColor(R.id.widget_date, secondary)
@@ -359,12 +423,23 @@ internal object ScheduleWidgetRenderer {
         val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(state.now))
         val next = state.agenda?.upcoming?.firstOrNull()
         val fitter = ScheduleWidgetTextFitter(context, (width - 42) * context.resources.displayMetrics.density)
-        val headerHeight = fitter.height(listOf(ScheduleWidgetText("今日时间轴", 12f, bold = true))) + fitter.dp(6f)
+        val headerHeight = fitter.height(listOf(ScheduleWidgetText(if (tomorrowMode) "今日课程结束" else "今日时间轴", 12f, bold = true))) + fitter.dp(6f)
         val footerHeight = fitter.height(listOf(ScheduleWidgetText("课表", 12f))) + fitter.dp(6f)
         var showHeader = height >= 100 * scale
         var showFooter = height >= 232 * scale
         val showStatus = width >= 320 * scale
+        val tomorrowOccurrences = if (tomorrowMode) state.tomorrow.map { it.occurrence } else emptyList()
+        // 段标题行实际是 12sp/14sp 两行文字加卡片内边距；按固定 40dp 预留，字体放大后会算少，
+        // 行高合计超过可用高度，最后一行（地点）就会被裁掉。这里按真实文本测量。
+        val sectionHeight = if (tomorrowMode) {
+            fitter.height(listOf(
+                ScheduleWidgetText("今日课程结束", 12f, singleLine = true),
+                ScheduleWidgetText("明日课表", 14f, margin = 2f)
+            )) + fitter.dp(10f)
+        } else 0
+        var showSection = tomorrowMode
         fun status(item: ScheduleOccurrence) = when {
+            tomorrowMode -> "明天"
             state.now in item.startsAt until item.endsAt -> "进行中"
             next != null && item.course.id == next.course.id && item.startsAt == next.startsAt -> "下一节"
             item.endsAt <= state.now -> "已结束"
@@ -390,13 +465,14 @@ internal object ScheduleWidgetRenderer {
             if (index == 0 && showStatus) field.copy(text = "${field.text}  ${status(item)}") else field
         }
         fun available() = fitter.dp((height - 16).toFloat()) - (if (showHeader) headerHeight else 0) -
-            (if (showFooter) footerHeight else 0)
+            (if (showFooter) footerHeight else 0) - (if (showSection) sectionHeight else 0)
         fun rowHeight(item: ScheduleOccurrence) = maxOf(fitter.dp(48f), fitter.height(measuredFields(item)) + fitter.dp(8f))
+        fun candidates(limit: Int) = if (tomorrowMode) tomorrowOccurrences.take(limit) else timelineItems(state, limit)
         fun fittingRows(): List<ScheduleOccurrence>? {
             for (limit in 6 downTo 1) {
-                val candidates = timelineItems(state, limit)
-                if (candidates.sumOf(::rowHeight) <= available() &&
-                    candidates.all { fitter.fits(measuredFields(it), Int.MAX_VALUE) }) return candidates
+                val items = candidates(limit)
+                if (items.isNotEmpty() && items.sumOf(::rowHeight) <= available() &&
+                    items.all { fitter.fits(measuredFields(it), Int.MAX_VALUE) }) return items
             }
             return null
         }
@@ -405,12 +481,15 @@ internal object ScheduleWidgetRenderer {
         var fitting = fittingRows()
         if (fitting == null) { showFooter = false; fitting = fittingRows() }
         if (fitting == null) { showHeader = false; fitting = fittingRows() }
-        val rows = fitting ?: timelineItems(state, 1)
+        // 小尺寸下如果段标题和课程行仍然放不下，宁可省掉段标题，也不让课程行被裁掉。
+        if (fitting == null) { showSection = false; fitting = fittingRows() }
+        val rows = fitting ?: candidates(1)
         views.visible(R.id.widget_header, showHeader)
         views.visible(R.id.widget_footer, showFooter)
-        if (rows.firstOrNull()?.let { SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(it.startsAt)) != todayDate } == true)
+        if (!tomorrowMode && rows.firstOrNull()?.let { SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(it.startsAt)) != todayDate } == true)
             views.setTextViewText(R.id.widget_heading, "接下来的课程")
-        views.setOnClickPendingIntent(R.id.widget_root, pending(context, state, action = if (rows.isEmpty()) state.action else ScheduleWidgetAction.Today))
+        if (showSection && rows.isNotEmpty()) views.addView(R.id.widget_timeline_rows, timelineSectionRow(context, dark, primary, secondary))
+        views.setOnClickPendingIntent(R.id.widget_root, pending(context, state, action = if (rows.isEmpty() && !tomorrowMode) state.action else ScheduleWidgetAction.Today))
         views.setOnClickPendingIntent(R.id.widget_header, pending(context, state))
         for (item in rows) {
             val row = RemoteViews(context.packageName, R.layout.schedule_widget_timeline_row)
@@ -443,17 +522,43 @@ internal object ScheduleWidgetRenderer {
         }
         views.visible(R.id.widget_timeline_rows, rows.isNotEmpty())
         views.visible(R.id.widget_empty, rows.isEmpty())
-        views.setTextViewText(R.id.widget_message, state.message ?: "今天没有课程")
+        val emptyMessage = if (tomorrowMode) "今日课程结束 · 明日无课" else state.message ?: "今天没有课程"
+        views.setTextViewText(R.id.widget_message, emptyMessage)
         views.setTextViewText(R.id.widget_action, state.actionLabel)
         views.visible(R.id.widget_action, height >= 82 * scale)
         views.setTextColor(R.id.widget_message, primary)
         views.setTextColor(R.id.widget_action, accent)
         views.setOnClickPendingIntent(R.id.widget_empty, pending(context, state, action = state.action))
         views.setOnClickPendingIntent(R.id.widget_action, pending(context, state, action = state.action))
-        views.setContentDescription(R.id.widget_empty, "${state.message ?: "今天没有课程"}，${state.actionLabel}")
+        views.setContentDescription(R.id.widget_empty, "$emptyMessage，${state.actionLabel}")
         val total = state.agenda?.today?.size ?: 0
-        views.setTextViewText(R.id.widget_footer, if (total > rows.size) "今日 $total 堂 · 点按查看全部" else state.summary.ifBlank { "点按查看课表" })
+        views.setTextViewText(R.id.widget_footer, when {
+            tomorrowMode && state.tomorrow.isNotEmpty() -> "明日 ${state.tomorrow.size} 堂 · 点按查看全部"
+            tomorrowMode -> "今日课程结束 · 明日无课"
+            total > rows.size -> "今日 $total 堂 · 点按查看全部"
+            else -> state.summary.ifBlank { "点按查看课表" }
+        })
         return views
+    }
+
+    /** 明日课表的段标题：让“今日课程结束”在时间轴上始终可见，即使头部被小尺寸隐藏。 */
+    private fun timelineSectionRow(context: Context, dark: Boolean, primary: Int, secondary: Int): RemoteViews {
+        val row = RemoteViews(context.packageName, R.layout.schedule_widget_timeline_row)
+        row.setInt(R.id.widget_course, "setBackgroundResource", if (dark) R.drawable.schedule_widget_card_dark else R.drawable.schedule_widget_card_light)
+        val pad = (4 * context.resources.displayMetrics.density).toInt()
+        row.setViewPadding(R.id.widget_course, pad, pad, pad, pad)
+        row.setTextViewText(R.id.widget_timeline_time, "今日课程结束")
+        row.setTextViewTextSize(R.id.widget_timeline_time, android.util.TypedValue.COMPLEX_UNIT_SP, 12f)
+        row.setTextColor(R.id.widget_timeline_time, secondary)
+        row.setTextViewText(R.id.widget_name, "明日课表")
+        row.setTextViewTextSize(R.id.widget_name, android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
+        row.setTextColor(R.id.widget_name, primary)
+        row.visible(R.id.widget_teacher, false)
+        row.visible(R.id.widget_location, false)
+        row.visible(R.id.widget_status, false)
+        row.visible(R.id.widget_timeline_dot, false)
+        row.setInt(R.id.widget_course, "setMinimumHeight", 0)
+        return row
     }
 
     private fun applyAppearance(context: Context, views: RemoteViews, appearance: ScheduleWidgetAppearance, dark: Boolean) {

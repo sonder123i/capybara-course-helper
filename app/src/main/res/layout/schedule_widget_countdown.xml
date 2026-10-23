@@ -19,14 +19,20 @@
         android:layout_weight="1" android:orientation="horizontal" android:baselineAligned="false">
         <LinearLayout android:id="@+id/widget_course" android:layout_width="0dp" android:layout_height="match_parent"
             android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
-            <LinearLayout android:id="@+id/widget_countdown_box" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            <LinearLayout android:id="@+id/widget_countdown_box" android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:paddingBottom="2dp">
                 <TextView android:id="@+id/widget_countdown_label" style="@style/ScheduleWidgetMetadata" android:textColor="#345DC4"
                     android:text="@string/schedule_widget_countdown_label" />
-                <Chronometer android:id="@+id/widget_countdown" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                <Chronometer android:id="@+id/widget_countdown"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:textSize="20sp" android:textStyle="bold" android:textColor="#0069D9"
-                    android:includeFontPadding="false" android:importantForAccessibility="no" />
+                    android:includeFontPadding="false" android:importantForAccessibility="no"
+                    android:text="00:00" />
             </LinearLayout>
+            <ProgressBar android:id="@+id/widget_countdown_progress" style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="2dp"
+                android:layout_marginBottom="2dp" android:max="1000" android:progress="0"
+                android:progressTint="#0069D9" android:visibility="gone" />
             <TextView android:id="@+id/widget_name" style="@style/ScheduleWidgetCourseName"
                 android:layout_width="match_parent" android:text="@string/schedule_widget_preview" />
             <TextView android:id="@+id/widget_teacher" style="@style/ScheduleWidgetFullText" android:layout_marginTop="2dp"

@@ -15,3 +15,4 @@
 # We only display the map; positioning uses Android, and SDK location is disabled.
 # Keep this exception exact so other missing runtime dependencies still fail R8.
 -dontwarn com.amap.ams.gnss.GnssSoftLocator
+

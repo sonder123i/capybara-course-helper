@@ -13,7 +13,15 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-data class ScheduleWidgetAppearance(val image: String = "", val opacity: Int = 90, val blur: Int = 0)
+data class ScheduleWidgetAppearance(
+    val image: String = "",
+    val opacity: Int = 90,
+    val blur: Int = 0,
+    /** 倒计时样式：把连上的大课按小节拆开倒计时，课间单独显示“课间休息”。 */
+    val segmented: Boolean = false,
+    /** 今日课程结束后，组件改为显示明日课表。 */
+    val tomorrow: Boolean = false
+)
 
 object ScheduleWidgetAppearances {
     const val PREFS = "schedule_widget_appearance"
@@ -23,14 +31,16 @@ object ScheduleWidgetAppearances {
     fun read(context: Context, id: Int): ScheduleWidgetAppearance = runCatching {
         val json = JSONObject(context.getSharedPreferences(PREFS, 0).getString(id.toString(), "{}")!!)
         ScheduleWidgetAppearance(json.optString("image").takeIf { it.matches(Regex("[a-f0-9]{32}")) }.orEmpty(),
-            json.optInt("opacity", 90).coerceIn(0, 100), json.optInt("blur").coerceIn(0, 32))
+            json.optInt("opacity", 90).coerceIn(0, 100), json.optInt("blur").coerceIn(0, 32),
+            json.optBoolean("segmented", false), json.optBoolean("tomorrow", false))
     }.getOrDefault(ScheduleWidgetAppearance())
     fun save(context: Context, id: Int, value: ScheduleWidgetAppearance) {
         require(id > 0 && value.opacity in 0..100 && value.blur in 0..32 &&
             (value.image.isEmpty() || value.image.matches(Regex("[a-f0-9]{32}"))))
         val previous = read(context, id)
         context.getSharedPreferences(PREFS, 0).edit().putString(id.toString(), JSONObject().put("image", value.image)
-            .put("opacity", value.opacity).put("blur", value.blur).toString()).apply()
+            .put("opacity", value.opacity).put("blur", value.blur)
+            .put("segmented", value.segmented).put("tomorrow", value.tomorrow).toString()).apply()
         if (previous.image != value.image) discardImage(context, previous.image)
         ScheduleWidgetUpdater.update(context)
     }
@@ -62,7 +72,8 @@ object ScheduleWidgetAppearances {
         discardImage(context, old.image)
     }
     fun bitmap(context: Context, value: ScheduleWidgetAppearance, dark: Boolean): Bitmap {
-        val key = value.toString() + dark
+        // 倒计时/明日课表这些开关不影响背景图，缓存键只取真正决定像素的字段。
+        val key = "${value.image}|${value.opacity}|${value.blur}|$dark"
         cache.get(key)?.let { return it }
         val raw = value.image.takeIf { it.isNotBlank() }?.let { WallpaperImageStore.loadSharp(imageContext(context, it)) }
         val background = if (raw == null) Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply {

@@ -26,7 +26,10 @@ import com.tyust.course.ui.theme.CourseSelectorTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class ScheduleWidgetAppearanceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,10 +45,12 @@ class ScheduleWidgetAppearanceActivity : ComponentActivity() {
             var image by rememberSaveable { mutableStateOf(saved.image) }
             var opacity by rememberSaveable { mutableIntStateOf(saved.opacity) }
             var blur by rememberSaveable { mutableIntStateOf(saved.blur) }
+            var segmented by rememberSaveable { mutableStateOf(saved.segmented) }
+            var tomorrow by rememberSaveable { mutableStateOf(saved.tomorrow) }
             var busy by remember { mutableStateOf(false) }
             var error by remember { mutableStateOf("") }
             val scope = rememberCoroutineScope()
-            val appearance = ScheduleWidgetAppearance(image, opacity, blur)
+            val appearance = ScheduleWidgetAppearance(image, opacity, blur, segmented, tomorrow)
             val latestImage by rememberUpdatedState(image)
             DisposableEffect(Unit) { onDispose {
                 if (isFinishing && latestImage != saved.image) ScheduleWidgetAppearances.discardImage(this@ScheduleWidgetAppearanceActivity, latestImage)
@@ -93,6 +98,20 @@ class ScheduleWidgetAppearanceActivity : ComponentActivity() {
                     LiquidSlider({ opacity.toFloat() }, { opacity = it.toInt() }, valueRange = 0f..100f)
                     Text("图片模糊 " + blur, Modifier.fillMaxWidth())
                     LiquidSlider({ blur.toFloat() }, { blur = it.toInt() }, valueRange = 0f..32f, enabled = image.isNotBlank(), steps = 31)
+                    if (style == ScheduleWidgetStyle.Countdown) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("大课按小节倒计时", Modifier.weight(1f))
+                            Switch(checked = segmented, onCheckedChange = { segmented = it })
+                        }
+                        Text("倒计时到每个小节下课；课间显示“课间休息 · 距上课”，只有最后一节结束才显示“距下课”。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("今日课后显示明日课表", Modifier.weight(1f))
+                        Switch(checked = tomorrow, onCheckedChange = { tomorrow = it })
+                    }
+                    Text("今日课程全部结束后，组件显示“今日课程结束”并列出明日课程；明日没有课时显示“明日无课”。",
+                        style = MaterialTheme.typography.bodySmall)
                     if (busy) PageLoadingIcon("app.schedule")
                     if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
                     SystemDialogButton(primary = true, enabled = !busy, onClick = {
@@ -109,11 +128,18 @@ class ScheduleWidgetAppearanceActivity : ComponentActivity() {
 }
 
 private fun widgetAppearancePreview(): ScheduleWidgetState {
-    val monday = ScheduleDates.mondayOfWeek(System.currentTimeMillis())
-    val now = (monday.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, 8); set(Calendar.MINUTE, 10) }.timeInMillis
-    val base = ScheduleTimeBase(ScheduleTimeBase.dateFromMillis(monday.timeInMillis), mapOf(1 to "08:00", 3 to "10:00", 5 to "14:00"), mapOf(2 to "09:40", 4 to "11:40", 6 to "15:40"))
-    val courses = listOf(ScheduleCourseRecord("a", "高等数学", "张老师", "博学楼 A205", 1, 1, 2, "1-16"),
-        ScheduleCourseRecord("b", "计算机网络", "李老师", "明理楼 B302", 1, 3, 4, "1-16"),
-        ScheduleCourseRecord("c", "大学英语", "陈老师", "博学楼 A102", 1, 5, 6, "1-16"))
+    val now = System.currentTimeMillis()
+    val monday = ScheduleDates.mondayOfWeek(now)
+    val calendar = Calendar.getInstance().apply { timeInMillis = now }
+    val day = ((calendar.get(Calendar.DAY_OF_WEEK) + 5) % 7) + 1
+    fun clock(offsetMinutes: Long) = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(now + offsetMinutes * 60_000L))
+    // 示例课程时间相对“现在”生成：倒计时预览会真的走动，不会一打开就停在 00:00。
+    // 每节单独给出起止时间，分段倒计时的预览才能看出课间与最后一节的区别。
+    val base = ScheduleTimeBase(ScheduleTimeBase.dateFromMillis(monday.timeInMillis),
+        mapOf(1 to clock(-15), 2 to clock(35), 3 to clock(95), 4 to clock(145), 5 to clock(215), 6 to clock(265)),
+        mapOf(1 to clock(25), 2 to clock(75), 3 to clock(135), 4 to clock(185), 5 to clock(255), 6 to clock(305)))
+    val courses = listOf(ScheduleCourseRecord("a", "高等数学", "张老师", "博学楼 A205", day, 1, 2, "1-16"),
+        ScheduleCourseRecord("b", "计算机网络", "李老师", "明理楼 B302", day, 3, 4, "1-16"),
+        ScheduleCourseRecord("c", "大学英语", "陈老师", "博学楼 A102", day, 5, 6, "1-16"))
     return ScheduleWidgetState.from(ScheduleSnapshot("", "", "", courses, base, now, true), now)
 }

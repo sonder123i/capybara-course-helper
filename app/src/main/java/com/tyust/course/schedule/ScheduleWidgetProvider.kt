@@ -49,7 +49,7 @@ enum class ScheduleWidgetStyle(val title: String, val description: String, val p
     Countdown("倒计时", "2×1 · 距上课与下课还有多久，实时走动", ScheduleCountdownWidgetProvider::class.java)
 }
 
-/** Local cache reads and a non-wakeup boundary alarm; never performs authentication. */
+/** Local cache reads and a wakeup boundary alarm; never performs authentication or network work. */
 object ScheduleWidgetUpdater {
     const val ACTION_REFRESH = "com.tyust.course.action.REFRESH_SCHEDULE_WIDGET"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -98,13 +98,22 @@ object ScheduleWidgetUpdater {
         if (ids.isEmpty()) { cancel(context); ScheduleBackgroundRefresh.sync(context); return }
         val now = System.currentTimeMillis()
         val state = ScheduleWidgetState.from(activeSnapshot(context), now)
+        var nextRefresh = state.agenda?.nextChangeAt
         ids.forEach { (id, style) ->
+            val appearance = ScheduleWidgetAppearances.read(context, id)
+            if (style == ScheduleWidgetStyle.Countdown && appearance.segmented) {
+                // 按小节倒计时的目标（课间结束、下一小节上课）可能早于整门课的结束；不一起排闹钟，
+                // 边界闹钟会跳过课间，Chronometer 越过 0 后就会显示负数。
+                nextRefresh = listOfNotNull(nextRefresh,
+                    ScheduleWidgetCountdown.nextRefreshAt(state, segmented = true)).minOrNull()
+            }
             val options = manager.getAppWidgetOptions(id)
-            manager.updateAppWidget(id, ScheduleWidgetRenderer.responsiveViews(context, state, options, style, ScheduleWidgetAppearances.read(context, id)))
+            manager.updateAppWidget(id, ScheduleWidgetRenderer.responsiveViews(context, state, options, style, appearance))
         }
         cancel(context)
-        state.agenda?.let { agenda ->
-            ScheduleWidgetBoundaryAlarm.schedule(context, agenda.nextChangeAt.coerceAtLeast(now + 1_000), alarm(context))
+        nextRefresh?.let { at ->
+            // 边界允许短暂唤醒设备：否则上下课后组件不刷新，倒计时会变成负数。
+            ScheduleWidgetBoundaryAlarm.schedule(context, at.coerceAtLeast(now + 1_000), alarm(context), wake = true)
         }
         ScheduleBackgroundRefresh.sync(context)
     }

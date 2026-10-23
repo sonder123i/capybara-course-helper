@@ -51,13 +51,20 @@ class ScheduleRefreshJobService : JobService() {
 }
 
 internal object ScheduleWidgetBoundaryAlarm {
-    fun schedule(context: Context, at: Long, pending: PendingIntent) {
+    /**
+     * 小组件的上下课边界默认不再“不唤醒设备”：不唤醒时闹钟可能被压到很久以后，倒计时会越过
+     * 00:00 继续走、课表停在上一节。这里只在每次上下课边界短暂唤醒一次，一天只有几次；
+     * 没有精确闹钟权限时仍然退化为不精确的 allow-while-idle 闹钟，不静默丢失刷新。
+     */
+    fun schedule(context: Context, at: Long, pending: PendingIntent, wake: Boolean = false) {
         val alarms = context.getSystemService(AlarmManager::class.java)
+        val type = if (wake) AlarmManager.RTC_WAKEUP else AlarmManager.RTC
         if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
-            try { alarms.setExact(AlarmManager.RTC, at, pending); return }
-            catch (_: SecurityException) { /* Permission can change after the check. */ }
+            try {
+                if (wake) alarms.setExactAndAllowWhileIdle(type, at, pending) else alarms.setExact(type, at, pending)
+                return
+            } catch (_: SecurityException) { /* Permission can change after the check. */ }
         }
-        // The widget does not wake a sleeping device, and missing exact permission is allowed.
-        alarms.setAndAllowWhileIdle(AlarmManager.RTC, at, pending)
+        alarms.setAndAllowWhileIdle(type, at, pending)
     }
 }

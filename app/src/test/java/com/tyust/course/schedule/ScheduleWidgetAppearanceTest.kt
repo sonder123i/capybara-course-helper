@@ -50,6 +50,19 @@ class ScheduleWidgetAppearanceTest {
         assertEquals(65, ScheduleWidgetAppearances.read(app, 52).opacity)
     }
 
+    @Test fun perWidgetDisplayOptionsDefaultOffAndSurviveReads() {
+        // 新选项只属于单个组件，旧数据保持关闭，不改变已添加组件的既有行为。
+        ScheduleWidgetAppearances.save(app, 61, ScheduleWidgetAppearance(opacity = 70, segmented = true, tomorrow = true))
+        val enabled = ScheduleWidgetAppearances.read(app, 61)
+        assertEquals(70, enabled.opacity)
+        assertTrue(enabled.segmented)
+        assertTrue(enabled.tomorrow)
+        ScheduleWidgetAppearances.save(app, 62, ScheduleWidgetAppearance())
+        val legacy = ScheduleWidgetAppearances.read(app, 62)
+        assertFalse(legacy.segmented)
+        assertFalse(legacy.tomorrow)
+    }
+
     @Test fun transparencyAffectsOnlyTheBackgroundBitmap() {
         for (dark in listOf(false, true)) {
             val transparent = ScheduleWidgetAppearances.bitmap(app, ScheduleWidgetAppearance(opacity = 0), dark)
