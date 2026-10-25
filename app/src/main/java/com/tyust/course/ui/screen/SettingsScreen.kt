@@ -373,7 +373,7 @@ fun SettingsScreen(
             }
 
             WallpaperCaption(
-                text = "教务助手 · $currentVersion",
+                text = "卡皮巴拉教务助手 · $currentVersion",
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )

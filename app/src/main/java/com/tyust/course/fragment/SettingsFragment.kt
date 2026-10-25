@@ -195,9 +195,11 @@ class SettingsFragment : Fragment() {
                 "• Jsoup (HTML 解析库)\n" +
                 "• Material Design 3\n" +
                 "• AndroidLiquidGlass 动效库\n\n" +
-                "关于作者\n" +
-                "• 作者：znjhahaha\n" +
-                "• GitHub 仓库：https://github.com/znjhahaha/zhengfang-apk\n\n" +
+                "关于项目\n" +
+                "• 本应用基于开源项目「教务助手」二次开发\n" +
+                "• 原作者：znjhahaha · GPL-3.0\n" +
+                "• 上游项目：https://github.com/znjhahaha/zhengfang-apk\n" +
+                "• 本项目：https://github.com/sonder123i/capybara-course-helper\n\n" +
                 "本软件为开源免费项目，仅供个人学习与技术交流使用，严禁用于任何商业目的与倒卖。"
             )
             .setPositiveButton("我知道了", null)

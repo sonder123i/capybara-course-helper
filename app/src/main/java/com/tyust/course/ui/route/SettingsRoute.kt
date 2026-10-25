@@ -569,14 +569,16 @@ fun SettingsRoute(
                 com.tyust.course.ui.system.SystemDivider()
 
                 Text(
-                    text = "关于作者",
+                    text = "关于项目",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "作者：znjhahaha\n" +
-                            "GitHub 仓库：https://github.com/znjhahaha/zhengfang-apk",
+                    text = "本应用基于开源项目「教务助手」二次开发\n" +
+                            "原作者：znjhahaha · GPL-3.0\n" +
+                            "上游项目：https://github.com/znjhahaha/zhengfang-apk\n" +
+                            "本项目：https://github.com/sonder123i/capybara-course-helper",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 20.sp

@@ -25,7 +25,7 @@ class UpdateDownloadService : Service() {
     private fun notification(state: UpdateManager.State): Notification {
         val open = PendingIntent.getActivity(this, 9801, Intent(this, UpdateDownloadActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = NotificationCompat.Builder(this, "app_updates").setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(if (state.phase == UpdateManager.Phase.READY) "更新已下载，点击安装" else "正在更新教务助手")
+            .setContentTitle(if (state.phase == UpdateManager.Phase.READY) "更新已下载，点击安装" else "正在更新卡皮巴拉教务助手")
             .setContentText(state.message).setContentIntent(open).setOnlyAlertOnce(true).setOngoing(state.active)
         if (state.active) {
             builder.setProgress(100, state.progress, state.phase != UpdateManager.Phase.DOWNLOADING)

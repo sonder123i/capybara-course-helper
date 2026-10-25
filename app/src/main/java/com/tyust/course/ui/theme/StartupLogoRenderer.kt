@@ -16,7 +16,7 @@ import kotlin.math.sin
 
 /** Native splash and application overlay use the same safe-area vectors. */
 class StartupLogoRenderer(context: Context) {
-    private val cap = requireNotNull(ContextCompat.getDrawable(context, R.drawable.ic_startup_cap)).mutate()
+    private val cap = requireNotNull(ContextCompat.getDrawable(context, R.drawable.ic_startup_logo)).mutate()
     private val bolt = requireNotNull(ContextCompat.getDrawable(context, R.drawable.ic_startup_bolt)).mutate()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val boltPath = requireNotNull(PathParser.createPathFromPathData(

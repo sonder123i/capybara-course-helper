@@ -35,7 +35,7 @@ fun ClassQuietSettingsDialog(onDismiss: () -> Unit) {
     fun openSettings(intent: Intent, fallback: Intent) {
         if (runCatching { context.startActivity(intent) }.isFailure &&
             runCatching { context.startActivity(fallback) }.isFailure) {
-            GlassToaster.show("请在系统设置中为教务助手开启相应权限")
+            GlassToaster.show("请在系统设置中为卡皮巴拉教务助手开启相应权限")
         }
     }
     SystemDialog(onDismissRequest = onDismiss, title = { Text("上课自动静音") },
