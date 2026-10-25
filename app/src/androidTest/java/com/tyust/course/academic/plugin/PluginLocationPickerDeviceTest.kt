@@ -42,6 +42,9 @@ class PluginLocationPickerDeviceTest {
     }
 
     @Test fun mapCanSelectCloseAndReopenWithoutLosingTheSavedPoint() = runBlocking {
+        // 本发行版切断地图后端（SelfHostConfig.ENABLE_MAP_SERVICE=false），真实地图路径
+        // 只在开启该能力时执行；关闭态行为由 coordinateFallback… 用例锁定。
+        org.junit.Assume.assumeTrue(com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE)
         fun prompt(initial: JSONObject) = PluginVisualPrompt("device.location.pick", JSONObject().put("initial", initial), emptyList())
         val first = prompt(JSONObject().put("latitude", 37.85).put("longitude", 112.5)
             .put("address", "合成选点测试").put("coordinateSystem", "WGS84"))
@@ -77,5 +80,23 @@ class PluginLocationPickerDeviceTest {
         assertEquals(selected.getDouble("latitude"), unchanged.getDouble("latitude"), 1e-7)
         assertEquals(selected.getDouble("longitude"), unchanged.getDouble("longitude"), 1e-7)
         compose.runOnIdle { visible.value = null }
+    }
+
+    /** 地图后端关闭时：兜底 UI 可见，初始坐标点可直接确认完成选点（v2 发行版锁定行为）。 */
+    @Test fun coordinateFallbackCompletesWithTheInitialPointWhenMapServiceDisabled() = runBlocking {
+        org.junit.Assume.assumeTrue(!com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE)
+        val prompt = PluginVisualPrompt("device.location.pick", JSONObject()
+            .put("initial", JSONObject().put("latitude", 37.85).put("longitude", 112.5)
+                .put("address", "合成选点测试").put("coordinateSystem", "WGS84")), emptyList())
+        compose.setContent { CourseSelectorTheme { LocationPrompt(prompt) } }
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("地图服务未启用").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("使用此地点").performClick()
+        compose.waitUntil(5_000) { prompt.result.isCompleted }
+        val selected = requireNotNull(prompt.result.await())
+        assertEquals(37.85, selected.getDouble("latitude"), 1e-6)
+        assertEquals(112.5, selected.getDouble("longitude"), 1e-6)
+        assertEquals("WGS84", selected.getString("coordinateSystem"))
     }
 }
