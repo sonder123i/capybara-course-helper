@@ -254,7 +254,26 @@ fun ScheduleRoute(isActive: Boolean = true) {
             }
         }
     }
-    
+
+    // 桌面小组件（今日课程/今日明日/今日时间轴，1.x 延续下来的 Glance 体系）：
+    // 课表数据变化时同步一份快照，组件自己按日期与周次算「今天上什么」，
+    // 这样 App 几天没打开也能靠系统定时刷新跟上日期翻页。
+    LaunchedEffect(courses, periodTimes, displayedTimeBase?.firstWeekDate, routeAccountKey) {
+        if (courses.isEmpty()) return@LaunchedEffect
+        com.k2767.course.widget.WidgetSnapshotWriter.write(
+            context = context,
+            schoolName = UserManager.getInstance().currentSchool?.name.orEmpty(),
+            timeBase = displayedTimeBase,
+            periods = periodTimes.map {
+                com.k2767.course.widget.WidgetPeriodTime(it.period, it.startTime, it.endTime)
+            },
+            courses = courses.map {
+                com.tyust.course.schedule.ScheduleCourseRecord(
+                    it.id, it.name, it.teacher, it.location, it.day, it.startPeriod, it.endPeriod, it.weeks)
+            }
+        )
+    }
+
     // Colors
     val courseColors = remember {
         listOf(

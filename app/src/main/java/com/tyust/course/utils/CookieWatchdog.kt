@@ -45,6 +45,9 @@ object CookieWatchdog {
         }
         context = ctx.applicationContext
         this.intervalMs = intervalMs
+        // 惰性过期模式：不主动巡检（见 SelfHostConfig.LAZY_SESSION_EXPIRY 注释）。
+        // 过期由真实请求路径判定，MainActivity/抢课服务会自动触发一次恢复。
+        if (com.tyust.course.SelfHostConfig.LAZY_SESSION_EXPIRY) return@onMain
         loop.start(user.sessionState.token, intervalMs)
     }
 

@@ -39,6 +39,14 @@ object SelfHostConfig {
     /** 油猴脚本下载（经作者服务代理 GreasyFork）：关闭后脚本类插件不可下载新脚本。 */
     const val ENABLE_USERSCRIPT_DOWNLOAD = false
 
+    /**
+     * 会话惰性过期（B5-X 自有增强）：不启动 30 秒首查/周期巡检的 CookieWatchdog，
+     * 只在真实业务请求失败时判定过期并自动恢复一次。教务会话普遍短命，
+     * 主动巡检会让「正在恢复登录状态」频繁出现；惰性判定下不发起请求就不会发现过期，
+     * 也就不必等待恢复。抢课服务与页面请求各自带有独立的恢复触发，不受影响。
+     */
+    const val LAZY_SESSION_EXPIRY = true
+
     /** 更新清单来源：GitHub Pages 主 + Gitee 仓库 raw 备。channel 为 stable/test。 */
     fun updateManifestSources(channel: String): List<String> = listOf(
         "https://sonder123i.github.io/capybara-course-helper/update/$channel.json",

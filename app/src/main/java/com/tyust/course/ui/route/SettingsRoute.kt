@@ -279,6 +279,10 @@ fun SettingsRoute(
                         result.message.ifBlank { when (result.reason) {
                             com.tyust.course.utils.RecoveryFailure.Network -> "暂时无法连接，请稍后重试"
                             com.tyust.course.utils.RecoveryFailure.Login -> "登录处理失败，请重试或使用网页登录"
+                            com.tyust.course.utils.RecoveryFailure.AccountUnavailable ->
+                                "学校已禁用或锁定该账号" + result.message.take(80).takeIf(String::isNotBlank)?.let { "：$it" }.orEmpty()
+                            com.tyust.course.utils.RecoveryFailure.CredentialsRejected ->
+                                "本机保存的密码已被教务拒绝，请重新登录一次；反复自动重试会让学校锁定账号"
                             com.tyust.course.utils.RecoveryFailure.Storage -> "保存失败，请重试"
                             else -> "需要重新登录以更新登录状态"
                         } }

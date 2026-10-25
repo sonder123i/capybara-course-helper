@@ -88,8 +88,13 @@ internal class ZfAcademicAdapter(school: SchoolConfig, session: AcademicSession,
         }
         val error = ZhengfangCasProtocol.errorMessage(html)
         return when {
+            // 账号状态类失败必须带原文走 VALIDATION_FAILED：静默续期靠这段文字认出
+            // 「永久失败、别再重试」（classifyRecoveryFailure → AccountUnavailable.terminal）。
+            AcademicHtml.isAccountUnavailableMessage(error) || AcademicHtml.isAccountUnavailableMessage(html) ->
+                finishCasLogin(LoginResult(AcademicStatus.VALIDATION_FAILED,
+                    message = error.ifBlank { "学校已禁用或锁定该账号，请联系教务管理员" }))
             ZhengfangCasProtocol.indicatesInvalidCredentials(error) || ZhengfangCasProtocol.indicatesInvalidCredentials(html) ->
-                finishCasLogin(LoginResult(AcademicStatus.INVALID_CREDENTIALS))
+                finishCasLogin(LoginResult(AcademicStatus.INVALID_CREDENTIALS, message = error))
             ZhengfangCasProtocol.indicatesCaptchaProblem(error) || ZhengfangCasProtocol.indicatesCaptchaProblem(html) -> {
                 // 按应用约定：验证码被拒时返回不带图片的 CAPTCHA_REQUIRED → 上层提示验证码错误，
                 // UI 随后通过 refreshCaptcha 主动获取新图

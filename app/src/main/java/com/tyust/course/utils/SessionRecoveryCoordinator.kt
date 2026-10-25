@@ -5,7 +5,25 @@ import com.tyust.course.manager.SessionToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class RecoveryFailure { NoPassword, VerificationRequired, CredentialsRejected, Network, Login, Cooldown, Storage }
+enum class RecoveryFailure { NoPassword, VerificationRequired, CredentialsRejected, AccountUnavailable, Network, Login, Cooldown, Storage }
+
+/** 永久性失败：再试一次只会再失败一次，正方还会累加失败计数直到锁定账号。 */
+internal val RecoveryFailure.terminal: Boolean
+    get() = this == RecoveryFailure.CredentialsRejected || this == RecoveryFailure.AccountUnavailable
+
+/**
+ * 把教务返回的原文分级。只认账号状态类词（禁用/锁定/冻结/停用/注销）——
+ * 「过期」一类词会撞上「会话已过期」，那是可恢复的，不能算永久失败。
+ */
+internal fun classifyRecoveryFailure(message: String): RecoveryFailure {
+    val text = message.trim()
+    return when {
+        com.tyust.course.academic.AcademicHtml.isAccountUnavailableMessage(text) -> RecoveryFailure.AccountUnavailable
+        com.tyust.course.academic.AcademicHtml.isBadCredentialsMessage(text) -> RecoveryFailure.CredentialsRejected
+        text.contains("验证码") -> RecoveryFailure.VerificationRequired
+        else -> RecoveryFailure.Network
+    }
+}
 sealed interface SessionRecoveryResult {
     data class Recovered(val token: SessionToken) : SessionRecoveryResult
     data class NeedsLogin(val reason: RecoveryFailure, val message: String = "") : SessionRecoveryResult
@@ -31,13 +49,20 @@ class SessionRecoveryCoordinator(
         var cancel: (() -> Unit)? = null
     }
     private val pending = mutableMapOf<SessionToken, Operation>()
-    private val failures = mutableMapOf<SessionToken, Long>()
+    private data class Attempt(val at: Long, val reason: RecoveryFailure, val message: String)
+    private val failures = mutableMapOf<SessionToken, Attempt>()
     private val mutableState = MutableStateFlow(SessionRecoveryState(sessions.token, RecoveryPhase.Idle))
     val state = mutableState.asStateFlow()
 
-    @Synchronized fun canAttempt(token: SessionToken): Boolean =
-        sessions.isCurrent(token) && (pending.containsKey(token) ||
-            (canRestore() && failures[token]?.let { now() - it < cooldownMs } != true))
+    @Synchronized fun canAttempt(token: SessionToken): Boolean {
+        if (!sessions.isCurrent(token)) return false
+        if (pending.containsKey(token)) return true
+        if (!canRestore()) return false
+        val attempt = failures[token] ?: return true
+        // 永久性失败对本会话不再重试；换账号/重新登录会清掉记录（见 sessionChanged）。
+        if (attempt.reason.terminal) return false
+        return now() - attempt.at >= cooldownMs
+    }
 
     @Synchronized fun sessionChanged() {
         val current = sessions.token
@@ -59,14 +84,19 @@ class SessionRecoveryCoordinator(
         sessionChanged()
         if (!sessions.isCurrent(expected)) { onDone(SessionRecoveryResult.Superseded); return }
         pending[expected]?.let { it.listeners += onDone; return }
-        val unavailable = when {
-            !canRestore() -> RecoveryFailure.NoPassword
-            !manual && failures[expected]?.let { now() - it < cooldownMs } == true -> RecoveryFailure.Cooldown
-            else -> null
+        val refusal: Pair<RecoveryFailure, String>? = when {
+            !canRestore() -> RecoveryFailure.NoPassword to ""
+            manual -> null
+            else -> failures[expected]?.let { attempt -> when {
+                attempt.reason.terminal -> attempt.reason to attempt.message
+                now() - attempt.at < cooldownMs -> RecoveryFailure.Cooldown to ""
+                else -> null
+            } }
         }
-        if (unavailable != null) {
-            mutableState.value = SessionRecoveryState(expected, RecoveryPhase.NeedsLogin, unavailable)
-            onDone(SessionRecoveryResult.NeedsLogin(unavailable))
+        if (refusal != null) {
+            val (reason, message) = refusal
+            mutableState.value = SessionRecoveryState(expected, RecoveryPhase.NeedsLogin, reason)
+            onDone(SessionRecoveryResult.NeedsLogin(reason, message))
             return
         }
         val operation = Operation(mutableListOf(onDone))
@@ -101,7 +131,7 @@ class SessionRecoveryCoordinator(
                 mutableState.value = SessionRecoveryState(result.token, RecoveryPhase.Idle)
             }
             is SessionRecoveryResult.NeedsLogin -> {
-                failures[expected] = now()
+                failures[expected] = Attempt(now(), result.reason, result.message)
                 mutableState.value = SessionRecoveryState(expected, RecoveryPhase.NeedsLogin, result.reason)
             }
             SessionRecoveryResult.Superseded -> Unit

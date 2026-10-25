@@ -20,6 +20,34 @@ class SessionRecoveryCoordinatorTest {
             })
         fun succeed(index: Int = requests.lastIndex, value: String = "fresh") = requests[index](LoginRecoveryOutcome.Cookie(value))
         fun fail(index: Int = requests.lastIndex) = requests[index](LoginRecoveryOutcome.Failure(RecoveryFailure.Network))
+        fun failWith(reason: RecoveryFailure, message: String = "", index: Int = requests.lastIndex) =
+            requests[index](LoginRecoveryOutcome.Failure(reason, message))
+    }
+
+    @Test fun aDisabledAccountStopsAutomaticRetryButStillHonoursAManualOne() {
+        val f = Fixture()
+        f.coordinator.request(f.sessions.token)
+        f.failWith(RecoveryFailure.AccountUnavailable, "该用户已被禁用，请联系管理员")
+        f.clock = 600_000
+        assertFalse("永久性失败不能一直重试", f.coordinator.canAttempt(f.sessions.token))
+        val results = mutableListOf<SessionRecoveryResult>()
+        f.coordinator.request(f.sessions.token, onDone = results::add)
+        assertEquals(1, f.requests.size)
+        assertEquals(SessionRecoveryResult.NeedsLogin(RecoveryFailure.AccountUnavailable, "该用户已被禁用，请联系管理员"), results.single())
+        f.coordinator.request(f.sessions.token, manual = true, onDone = results::add)
+        assertEquals("用户主动点重试还是要放行", 2, f.requests.size)
+    }
+
+    @Test fun aRejectedStoredPasswordIsNotRetriedEither() {
+        val f = Fixture()
+        f.coordinator.request(f.sessions.token)
+        f.failWith(RecoveryFailure.CredentialsRejected, "用户名或密码错误")
+        f.clock = 600_000
+        assertFalse(f.coordinator.canAttempt(f.sessions.token))
+        f.coordinator.request(f.sessions.token) { result ->
+            assertEquals(SessionRecoveryResult.NeedsLogin(RecoveryFailure.CredentialsRejected, "用户名或密码错误"), result)
+        }
+        assertEquals(1, f.requests.size)
     }
 
     @Test fun automaticAndManualRecoveryShareOneLoginAndPublishNewVersion() {
