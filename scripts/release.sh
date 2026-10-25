@@ -44,13 +44,37 @@ esac
 
 TAG="v${VERSION}"
 
-# versionCode = patch 位。1.0.x 这 68 个版本一直是这么编的，沿用它对用户端无感。
-# 下面那道单调性检查会在这个方案不再成立时（比如真发 1.1.0，patch 归零）当场喊停。
-REST="${VERSION#*.}"
-CODE="${REST#*.}"
+# ── versionCode 编码：major*10000 + minor*100 + patch ────────────────
+#
+# 别再改成「patch 位」或「独立递增序号」了，这里踩过一次事故，记下来：
+#
+# 1.0.x 时代 versionCode 恰好等于 patch 位（1.0.74 -> 74），看起来能推算。
+# 进了 1.1.x 之后实际改成了独立递增序号（1.1.3->14、1.1.4->15、1.1.5->16），
+# 但脚本仍按 patch 位推算，于是 v1.1.6 算出 6 —— 比上一版的 16 倒退了 10。
+# 后果是连锁的：应用内 16 > 6 不成立，永远提示「已是最新」；Android 也不允许
+# 低 versionCode 覆盖安装，用户连手动升级都做不到。
+#
+# 根因是「用文件名推导一个语义无关的整数值」。语义化编码把这个自由度消掉：
+# 版本号本身决定 code，不存在「忘了递增」的可能。
+#   1.1.6  -> 10106
+#   1.1.7  -> 10107
+#   1.2.0  -> 10200
+#   2.0.0  -> 20000
+#
+# 上界是 2100000000（Android 的 MAX_VERSION_CODE）。major 到 2100 才溢出，
+# 这辈子用不到。下面那道检查仍保留，用于拦住「有人把版本号写错」。
+IFS=. read -r V_MAJOR V_MINOR V_PATCH <<< "$VERSION"
+for part in "$V_MAJOR" "$V_MINOR" "$V_PATCH"; do
+    case "$part" in
+        ''|*[!0-9]*) die "版本号 ${VERSION} 含非数字段: '$part'" ;;
+    esac
+done
+[ "$V_MINOR" -lt 100 ] || die "minor 位 ${V_MINOR} 超过 99，语义化编码放不下。需要换更宽的编码。"
+[ "$V_PATCH" -lt 100 ] || die "patch 位 ${V_PATCH} 超过 99，语义化编码放不下。需要换更宽的编码。"
+
+CODE=$(( V_MAJOR * 10000 + V_MINOR * 100 + V_PATCH ))
 
 NOTES_FILE="release-notes/${TAG}.md"
-ANNOUNCEMENT_FILE="release-notes/${TAG}-announcement.json"
 VERSION_FILE="app/version.properties"
 CHANGELOG="CHANGELOG.md"
 
@@ -79,21 +103,38 @@ if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; t
 fi
 
 # ── 3. versionCode 必须单调递增 ──────────────────────────────────────
-# 应用内比较的是 versionCode。它一旦不增，用户会收到一个永远"更新不掉"的提示。
-PREV_VERSION="$(
-    git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-        | sed 's/^v//' \
-        | sort -t. -k1,1n -k2,2n -k3,3n \
-        | tail -1
-)"
-if [ -n "$PREV_VERSION" ]; then
-    PREV_CODE="${PREV_VERSION##*.}"
-    if [ "$CODE" -le "$PREV_CODE" ]; then
-        die "versionCode 不增：${TAG} 算出 ${CODE}，而上一个 tag v${PREV_VERSION} 是 ${PREV_CODE}。
-       versionCode = patch 位这个方案在这里失效了（跨 minor/major 时 patch 会归零）。
-       改成 major*10000+minor*100+patch，并同步修改 release.yml 的 Resolve Version From Tag。"
+# 应用内比较的是 versionCode。它一旦不增，用户会收到一个永远"更新不掉"的提示，
+# 而且 Android 会直接拒绝低 code 的包覆盖安装。
+#
+# 基准取「历史上真实打出过的最大 versionCode」，而不是从上一个 tag 名推算——
+# 旧脚本正是栽在这里：v1.1.5 的 tag 名看起来是 5，实际发出去的 code 是 16。
+# CI 把每次的 code 写进 version.properties，从 tag 里读它才是可信的。
+#
+# 排除本项目要打的这个 tag：虽然第 2 步已确认它不存在，但若有人在打过 tag 之后
+# 重跑脚本做校验，不排除就会「跟自己比」而误判成不增。
+MAX_CODE=0
+MAX_TAG=""
+while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    [ "$t" = "$TAG" ] && continue
+    c="$(git show "${t}:app/version.properties" 2>/dev/null \
+        | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
+    case "$c" in
+        ''|*[!0-9]*) continue ;;
+    esac
+    if [ "$c" -gt "$MAX_CODE" ]; then
+        MAX_CODE="$c"
+        MAX_TAG="$t"
     fi
-    note "上一个版本 v${PREV_VERSION}（code ${PREV_CODE}）→ ${TAG}（code ${CODE}）"
+done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
+
+if [ "$MAX_CODE" -gt 0 ]; then
+    if [ "$CODE" -le "$MAX_CODE" ]; then
+        die "versionCode 不增：${TAG} 算出 ${CODE}，而历史上最大的 ${MAX_TAG} 是 ${MAX_CODE}。
+       语义化编码是 major*10000+minor*100+patch，正常不会倒退。
+       请检查版本号是否写错（例如把 ${VERSION} 写成了更小的号）。"
+    fi
+    note "历史最大 ${MAX_TAG}（code ${MAX_CODE}）→ ${TAG}（code ${CODE}）"
 fi
 
 # ── 4. 更新日志：没有就生成骨架并停下 ────────────────────────────────
@@ -166,18 +207,44 @@ fi
 
 note "更新日志 $(printf '%s\n' "$NOTES" | wc -l | tr -d ' ') 行，来自 ${NOTES_FILE}"
 
-# CI requires this archive before it starts Gradle. Validate the same input before
-# changing version files or creating an immutable release tag.
-[ -f "$ANNOUNCEMENT_FILE" ] || die "缺少 ${ANNOUNCEMENT_FILE}。请先编写发布公告；CI 会校验此文件。"
-RELEASE_PYTHON=""
-for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; sys.exit(sys.version_info.major != 3)' >/dev/null 2>&1; then
-        RELEASE_PYTHON="$candidate"
+# ── 4b. 应用内公告：有就顺手校验，没有就跳过 ─────────────────────────
+# 2026-09-20 从「缺就 die」降级为提示。原因是客户端根本读不到它：
+# SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT 为 false，且 announcement 包里的
+# AnnouncementDialog / AnnouncementHistoryScreen 在全仓库没有任何调用点。
+# 一道没人消费的产物不该反过来挡住发布（v1.1.7 就为它白跑过一整轮流水线）。
+# 真要做公告界面时，把这里的 note 换回 die 就行。
+#
+# 校验仍然走 python 调库而不是在 bash 里重写规则：CI 与本地共用同一个
+# validate_announcement，不会各写各的然后悄悄分叉。
+ANNOUNCEMENT_FILE="release-notes/${TAG}-announcement.json"
+
+PYTHON_BIN=""
+for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        PYTHON_BIN="$candidate"
         break
     fi
 done
-[ -n "$RELEASE_PYTHON" ] || die "发布公告校验需要 Python 3。"
-"$RELEASE_PYTHON" scripts/publish_announcement.py --tag "$TAG" --validate-only
+
+if [ ! -f "$ANNOUNCEMENT_FILE" ]; then
+    note "提示：没有 ${ANNOUNCEMENT_FILE}，跳过公告校验"
+elif [ -z "$PYTHON_BIN" ]; then
+    note "警告：未找到 python，跳过公告校验（CI 仍会检查）"
+else
+    "$PYTHON_BIN" - "$TAG" "$ANNOUNCEMENT_FILE" <<'PYCHECK' || note "警告：${ANNOUNCEMENT_FILE} 不合规，本版公告不会发布"
+import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path("scripts").resolve()))
+from publish_announcement import validate_announcement
+tag, path = sys.argv[1], sys.argv[2]
+try:
+    validate_announcement(json.loads(Path(path).read_text(encoding="utf-8")), tag)
+except (ValueError, json.JSONDecodeError) as exc:
+    print(f"WARNING: {path} 不合规: {exc}", file=sys.stderr)
+    sys.exit(1)
+print(f"  公告 {Path(path).name} 校验通过")
+PYCHECK
+fi
 
 # ── 5. 写 version.properties ─────────────────────────────────────────
 cat > "$VERSION_FILE" <<PROPS
@@ -216,7 +283,12 @@ else
 fi
 
 # ── 7. 提交并打 tag ──────────────────────────────────────────────────
-git add "$VERSION_FILE" "$NOTES_FILE" "$CHANGELOG" 2>/dev/null || git add "$VERSION_FILE" "$NOTES_FILE"
+# 公告文件按第 4b 步的口径处理：存在才纳入提交，缺了不算错。
+ADD_PATHS=("$VERSION_FILE" "$NOTES_FILE")
+if [ -f "$ANNOUNCEMENT_FILE" ]; then
+    ADD_PATHS+=("$ANNOUNCEMENT_FILE")
+fi
+git add "${ADD_PATHS[@]}" "$CHANGELOG" 2>/dev/null || git add "${ADD_PATHS[@]}"
 git commit -q -m "release: ${VERSION}" -m "$(printf '%s\n' "$NOTES")"
 git tag -a "$TAG" -m "Release ${TAG}"
 note "已提交并打好 tag ${TAG}"

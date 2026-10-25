@@ -1,138 +1,266 @@
-name: Android Test Build
-run-name: Android test · ${{ inputs.tag }}
+name: Android Release Build
+
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: '测试版本号；不创建正式 tag 或 Release'
-        required: true
-        default: 'v1.0.98'
-      reuse_run_id:
-        description: '仅补传：复用此运行的成功构建，留空才构建 APK'
+        description: '要发布的版本号，如 v1.0.67。留空则沿用当前 ref（从 tag 页面手动触发时可留空）'
         required: false
         default: ''
-      repair_stable_tag:
-        description: '只修复此既有正式版的默认更新通道；不构建、不改旧版迁移提示'
+      release_notes:
+        description: '更新日志（每行一条）。留空则读 release-notes/<tag>.md'
         required: false
         default: ''
-      repair_stable_metadata_only:
-        description: '默认通道镜像已成功时，仅补传 Gitee 签名小文件'
-        type: boolean
-        default: false
-      legacy_test_bridge:
-        description: '明确向旧客户端推送此次迁移测试包，仅更新兼容 version.json'
-        type: boolean
-        default: false
-      sync_test_gitee:
-        description: '同时将同一测试 APK 发布为 Gitee 测试附件，不改正式提示'
-        type: boolean
-        default: false
-      preflight_only:
-        description: '只核对既有官方包与部署凭据，不构建、不发布'
-        type: boolean
-        default: false
-      deploy_test_mirror:
-        description: '同步免费测试镜像并做三轮上传及完整下载校验'
-        type: boolean
-        required: true
-        default: true
+
 permissions:
-  contents: read
-  actions: read
+  contents: write
+
 jobs:
-  preflight:
-    if: inputs.preflight_only
-    runs-on: ubuntu-latest
-    timeout-minutes: 4
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: temurin
-      - name: Check official APK verification output and CF read access
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: python3 scripts/distribution_preflight.py
   build:
-    if: ${{ !inputs.preflight_only && inputs.repair_stable_tag == '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      version_code: ${{ steps.version.outputs.version_code }}
+      version_name: ${{ steps.version.outputs.version_name }}
+      release_notes: ${{ steps.notes.outputs.release_notes }}
+      release_tag: ${{ steps.target.outputs.tag }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
+          # 需要完整历史与 tag 列表，后面要判断目标 tag 是否已存在。
           fetch-depth: 0
-      - uses: actions/setup-java@v4
+
+      # 发布目标 tag 是一个显式概念，不再从 github.ref 隐式推断。
+      #
+      # 三种触发方式统一到同一个 tag 上：
+      #   1. push tag            → github.ref_name 就是 tag
+      #   2. 从 tag 页面手动触发  → 同上，inputs.tag 可留空
+      #   3. 从分支手动触发      → 必须给 inputs.tag，随后由本工作流建 tag
+      #
+      # 没有 tag 就不能发布：Gitee 的下载地址是按 tag 拼的，缺 tag 会产出死链。
+      - name: Resolve Release Target
+        id: target
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            echo "Trigger: ref is a tag -> $TAG"
+          elif [ -n "${INPUT_TAG:-}" ]; then
+            TAG="${INPUT_TAG}"
+            echo "Trigger: manual dispatch from ${GITHUB_REF_NAME} -> $TAG"
+          else
+            echo "ERROR: 从分支手动触发时必须填写 tag 输入（如 v1.0.67）。"
+            echo "       Gitee 下载地址按 tag 拼接，缺 tag 只会产出死链。"
+            exit 1
+          fi
+
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "ERROR: tag 形如 vX.Y.Z，收到: $TAG"; exit 1 ;;
+          esac
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      # 更新日志的唯一数据源是 release-notes/<tag>.md 的 "## notes" 区块。
+      # 手动触发（workflow_dispatch）时 inputs.release_notes 优先，用于补发或临时改文案。
+      #
+      # 这一步同时替掉了原先的死锁：release_notes 只在 workflow_dispatch 有值，
+      # 而写 Gitee 的 job 又要求 ref 是 tag，两条路径互斥，于是文案永远写不进去。
+      - name: Resolve Release Notes
+        id: notes
+        env:
+          # 经 env 传入而不是把 ${{ }} 直接插值进脚本：后者会让输入里的引号
+          # 或换行改变脚本本身的结构。
+          MANUAL_NOTES: ${{ github.event.inputs.release_notes }}
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          NOTES_FILE="release-notes/${TAG}.md"
+
+          if [ -n "${MANUAL_NOTES:-}" ]; then
+            echo "Source: workflow_dispatch input"
+            NOTES="$MANUAL_NOTES"
+          elif [ -f "$NOTES_FILE" ]; then
+            echo "Source: $NOTES_FILE"
+            # 取 "## notes" 与下一个 "## " 之间的内容，去掉 HTML 注释与空行。
+            #
+            # 注释剥离分两步。只写 /^<!--/,/-->$/d 会把单行注释 <!-- x --> 当成
+            # 区间开头，而 sed 的区间结束模式只从下一行开始找，于是一路删到文件
+            # 末尾。notes 区块里目前没有注释所以没炸过，但 scripts/release.sh 用
+            # 同一条管线取 '## changelog'，那一段正好以单行注释开头，整段会消失。
+            # 两边必须是同一份写法，否则本地过了 CI 还会挂。
+            NOTES=$(awk '
+              /^## notes[[:space:]]*$/ { inside = 1; next }
+              /^## / { inside = 0 }
+              inside { print }
+            ' "$NOTES_FILE" \
+              | sed -e '/^[[:space:]]*<!--.*-->[[:space:]]*$/d' -e '/^[[:space:]]*<!--/,/-->/d' \
+              | sed '/^[[:space:]]*$/d')
+          else
+            # 这里不再回落到套话。缺日志就是发布准备没做完，
+            # 与其静默发一版"自动构建发布"给所有用户，不如让流水线停下。
+            echo "ERROR: 找不到 $NOTES_FILE，且没有手动输入。"
+            echo "       请先补 release-notes/${TAG}.md 的 '## notes' 区块，或在手动触发时填写更新日志。"
+            exit 1
+          fi
+
+          if [ -z "$NOTES" ]; then
+            echo "ERROR: 解析出的更新日志为空（检查 '## notes' 区块是否有内容）"
+            exit 1
+          fi
+
+          echo "--- resolved release notes ---"
+          echo "$NOTES"
+
+          # 多行值必须走 heredoc 形式的 GITHUB_OUTPUT，单行 echo 会在第一个换行处截断。
+          {
+            echo 'release_notes<<RELEASE_NOTES_EOF'
+            echo "$NOTES"
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # 版本号的唯一权威是 tag，不是 app/version.properties。
+      #
+      # 这里原先是反过来的：文件是权威，CI 只做一致性校验，而那个校验还排在
+      # assembleRelease 之后。于是"打了 tag 但忘了改文件"每次都要等编译完一整轮
+      # 才报错，而这个仓库的规矩是已推送的 tag 不移动（见 CHANGELOG 里 1.0.67
+      # 那条），一次手滑就得跳一个版本号。
+      #
+      # 改成从 tag 反写之后，"版本与 tag 不一致"在结构上不可能发生——tag 是用户
+      # 下载的东西，也就是唯一有意义的权威。校验没了，只剩推导。
+      # scripts/release.sh 负责让仓库里的文件与 tag 同步；这一步是兜底，
+      # 保证手动打 tag 也发不出版本号与 tag 不符的包。
+      - name: Resolve Version From Tag
+        id: version
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          VN="${TAG#v}"
+
+          # ── versionCode 编码：major*10000 + minor*100 + patch ──────────
+          # 曾经的实现是「patch 位」= versionCode（1.0.74 -> 74），进了 1.1.x
+          # 之后实际改成独立递增序号（1.1.3->14 … 1.1.5->16），但算法没跟着改，
+          # 于是 v1.1.6 算出 6，比上一版倒退 10。后果：应用内 16 > 6 不成立，
+          # 永远显示「已是最新」；Android 也拒绝低 code 覆盖安装。
+          # 语义化编码让版本号本身决定 code，不留「忘了递增」的空间。
+          IFS=. read -r V_MAJOR V_MINOR V_PATCH <<< "$VN"
+          for part in "$V_MAJOR" "$V_MINOR" "$V_PATCH"; do
+            case "$part" in
+              ''|*[!0-9]*) echo "ERROR: 版本号 ${VN} 含非数字段: '$part'"; exit 1 ;;
+            esac
+          done
+          if [ "$V_MINOR" -ge 100 ] || [ "$V_PATCH" -ge 100 ]; then
+            echo "ERROR: ${VN} 的 minor/patch 超过 99，语义化编码放不下。"
+            exit 1
+          fi
+          VC=$(( V_MAJOR * 10000 + V_MINOR * 100 + V_PATCH ))
+
+          # 单调性检查的基准取「历史上真实打出过的最大 versionCode」，从各 tag 的
+          # version.properties 里读，而不是从 tag 名推算——旧实现正是栽在这里：
+          # v1.1.5 的 tag 名看着是 5，实际发出去的 code 是 16。
+          #
+          # 必须排除当前 tag：CI 跑在 tag 已推送之后，把它算进来会变成「跟自己比」，
+          # 10107 <= 10107 直接判失败。重跑同一版本时也要靠这个跳过。
+          MAX_CODE=0
+          MAX_TAG=""
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            [ "$t" = "$TAG" ] && continue
+            c="$(git show "${t}:app/version.properties" 2>/dev/null \
+              | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
+            case "$c" in
+              ''|*[!0-9]*) continue ;;
+            esac
+            if [ "$c" -gt "$MAX_CODE" ]; then
+              MAX_CODE="$c"
+              MAX_TAG="$t"
+            fi
+          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*')
+
+          if [ "$MAX_CODE" -gt 0 ]; then
+            if [ "$VC" -le "$MAX_CODE" ]; then
+              echo "ERROR: versionCode 不增：${TAG} 算出 ${VC}，而历史上最大的 ${MAX_TAG} 是 ${MAX_CODE}。"
+              echo "       语义化编码是 major*10000+minor*100+patch，正常不会倒退。"
+              echo "       请检查版本号是否写错。"
+              exit 1
+            fi
+            echo "历史最大 ${MAX_TAG}（code ${MAX_CODE}）-> ${TAG}（code ${VC}）"
+          fi
+
+          # 仓库里的文件与 tag 不一致不再是错误，只是信息：手动打 tag 时它会落后，
+          # 而构建用的是下面写进去的这份。
+          REPO_VN=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' app/version.properties | tr -d '[:space:]' || true)
+          if [ "${REPO_VN:-}" != "$VN" ]; then
+            echo "NOTE: 仓库里的 version.properties 是 ${REPO_VN:-<空>}，按 tag 覆盖为 ${VN}。"
+            echo "      下次用 scripts/release.sh ${VN} 发版可以让文件一起对齐。"
+          fi
+
+          cat > app/version.properties <<PROPS
+          #Release version. 唯一权威是 git tag：本文件由 CI 从 tag 反写
+          #（.github/workflows/release.yml 的 Resolve Version From Tag）。
+          #不要手改：跑 scripts/release.sh X.Y.Z，它会连更新日志和 tag 一起对齐。
+          VERSION_NAME=${VN}
+          VERSION_CODE=${VC}
+          PROPS
+
+          cat app/version.properties
+
+          echo "version_code=${VC}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VN}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Release Announcement
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          # 单测守住的是投递与合并逻辑，这些代码真的会跑，失败就该停。
+          python3 -m unittest discover -s scripts/tests -p 'test_publish_announcement.py'
+          # 公告本身只报 warning：客户端还没接这条通道
+          # （SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT=false，announcement 包无调用点），
+          # 一份没人读的产物不该挡住发版。要与 release.sh 第 4b 步保持同一口径。
+          if [ ! -f "release-notes/${TAG}-announcement.json" ]; then
+            echo "::warning::缺少 release-notes/${TAG}-announcement.json，跳过公告校验"
+          elif ! python3 scripts/publish_announcement.py --tag "$TAG" --validate-only; then
+            echo "::warning::${TAG} 的公告不合规，本次不发布它（不影响发版）"
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: temurin
+          distribution: 'temurin'
           cache: gradle
-      - name: Reuse successful original build
-        if: inputs.reuse_run_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REUSE_RUN: ${{ inputs.reuse_run_id }}
-          TAG: ${{ inputs.tag }}
-        run: python3 scripts/reuse_test_artifact.py --run-id "$REUSE_RUN"
-      - name: Validate release scripts and select test version
-        if: inputs.reuse_run_id == ''
-        env:
-          TAG: ${{ inputs.tag }}
+
+      - name: Decode Keystore
         run: |
-          python3 -m unittest discover -s scripts/tests
-          python3 scripts/prepare_test_release.py
-      - name: Decode signing key
-        if: inputs.reuse_run_id == ''
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          umask 077
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > app/release-key.jks
-      - name: Test and build signed APK
-        if: inputs.reuse_run_id == ''
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release-key.jks
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Check App and Build APKs
         env:
           RELEASE_SIGNING_CONFIG_FILE: release-key.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-          MAP_CONFIG_CLIENT_SECRET: ${{ secrets.MAP_CONFIG_CLIENT_SECRET }}
-        run: |
-          chmod +x gradlew
-          test -n "$MAP_CONFIG_CLIENT_SECRET" || { echo "Missing map configuration release credential"; exit 1; }
-          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug :app:assembleRelease --no-parallel --max-workers=2 --console=plain
-          python3 scripts/check_onnx_jni.py app/build/outputs/mapping/release/mapping.txt
-      - name: Bind artifact to source and check reports
-        if: inputs.reuse_run_id == ''
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          BUILD_ID: ${{ github.run_id }}
-        run: |
-          mkdir -p delivery
-          cp app/build/outputs/apk/release/app-universal-release.apk delivery/app-release.apk
-          cp app/build/outputs/apk/release/app-arm64-v8a-release.apk delivery/
-          cp app/build/outputs/apk/release/app-armeabi-v7a-release.apk delivery/
-          cp release-notes.txt delivery/release-notes.txt
-          python3 scripts/release_distribution.py receipt --apk delivery/app-release.apk --tests app/build/test-results/testDebugUnitTest --source "$SOURCE_SHA" --build-id "$BUILD_ID" --output delivery/receipt.json
-      - name: Upload signed test artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: delivery/
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
-      - name: Preserve failed receipt diagnostics for repair
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-build-diagnostics
-          path: delivery/
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: ignore
-      - name: Upload check reports
-        if: always() && inputs.reuse_run_id == ''
+        run: >-
+          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+          :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleUiPreview
+          --no-parallel --max-workers=2 --console=plain
+
+
+      - name: Upload Check Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-check-reports
@@ -140,188 +268,325 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
           retention-days: 7
-      - name: Remove signing key
-        if: always()
-        run: rm -f app/release-key.jks
-      - name: Summarize test build
-        run: |
-          echo 'Signed test APK ready. Main, formal tags, stable metadata and Gitee are unchanged.' >> "$GITHUB_STEP_SUMMARY"
-  test-mirror:
-    if: inputs.deploy_test_mirror
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    concurrency:
-      group: app-updates-test
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: distribution/package-lock.json
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: temurin
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-apk
-          path: delivery
-      - name: Install fixed deployment CLI
-        working-directory: distribution
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Test APK storage and streaming delivery
-        run: |
-          python3 -m unittest discover -s scripts/tests
-          npm --prefix distribution test
-      - name: Verify three uploads and publish test manifest
-        timeout-minutes: 16
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          APP_UPDATE_SIGNING_KEY: ${{ secrets.APP_UPDATE_SIGNING_KEY }}
-        run: python3 scripts/release_distribution.py deploy --apk delivery/app-release.apk --receipt delivery/receipt.json --channel test --notes delivery/release-notes.txt --rounds 3 --output delivery/test-mirror.json
-      - name: Summarize individual delivery targets
-        if: always()
-        run: python3 scripts/delivery_summary.py delivery/test-mirror.json
-      - name: Upload mirror evidence
-        if: always()
+
+      - name: Upload version.properties
         uses: actions/upload-artifact@v4
         with:
-          name: test-mirror-report
-          path: |
-            delivery/test-mirror.json
-            delivery/test-mirror.json.timings.json
-          retention-days: 7
-      - name: Summarize mirror state
-        if: always()
+          name: version-info
+          path: app/version.properties
+          retention-days: 3
+
+      # 从分支手动触发时 tag 还不存在，而 Gitee 的下载地址按 tag 拼接，
+      # 所以必须在发布前把 tag 建出来，否则产出的是死链。
+      # 已存在则跳过：重跑同一版本是常见操作（补发、上次 Gitee 上传失败），不该因此报错。
+      - name: Ensure Tag Exists
         env:
-          RESULT: ${{ job.status }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
-          echo "Test mirror: $RESULT. https://dl-test.hidisiwa.xyz" >> "$GITHUB_STEP_SUMMARY"
-          echo 'A mirror failure can be retried as this job only; do not rebuild the APK.' >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
 
-  gitee-test:
-    if: inputs.sync_test_gitee && !inputs.preflight_only
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: gitee-test-attachment
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: temurin
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-apk
-          path: delivery
-      - name: Upload and verify the same test APK on Gitee
-        timeout-minutes: 3
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: python3 scripts/sync_gitee_test.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gitee-test-report
-          path: delivery/gitee-test.json
-          retention-days: 7
-      - if: always()
-        env:
-          RESULT: ${{ job.status }}
-        run: echo "Gitee test attachment · $RESULT. Stable version.json, announcements and source main unchanged." >> "$GITHUB_STEP_SUMMARY"
-
-  legacy-test-bridge:
-    if: inputs.legacy_test_bridge && !inputs.preflight_only
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: app-updates-stable
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: temurin
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-apk
-          path: delivery
-      - name: Publish explicitly requested legacy migration update
-        timeout-minutes: 3
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: python3 scripts/bridge_legacy_test.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: legacy-test-bridge-report
-          path: delivery/legacy-test-bridge.json
-          retention-days: 7
-      - if: always()
-        env:
-          RESULT: ${{ job.status }}
-        run: echo "Legacy test update prompt · $RESULT. Ordinary optional update; formal tag, GitHub Release and stable signed channel unchanged." >> "$GITHUB_STEP_SUMMARY"
-
-  repair-stable:
-    if: inputs.repair_stable_tag != '' && !inputs.preflight_only
-    runs-on: ubuntu-latest
-    timeout-minutes: 9
-    permissions:
-      contents: write
-    concurrency:
-      group: app-updates-stable
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: temurin
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: distribution/package-lock.json
-      - working-directory: distribution
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Repair default signed channel from an existing official release
-        timeout-minutes: 8
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          APP_UPDATE_SIGNING_KEY: ${{ secrets.APP_UPDATE_SIGNING_KEY }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          STABLE_TAG: ${{ inputs.repair_stable_tag }}
-          METADATA_ONLY: ${{ inputs.repair_stable_metadata_only }}
-        run: |
-          if [ "$METADATA_ONLY" = true ]; then
-            python3 scripts/bootstrap_stable_channel.py --tag "$STABLE_TAG" --metadata-only
-          else
-            python3 scripts/bootstrap_stable_channel.py --tag "$STABLE_TAG"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} 已存在于仓库，跳过创建"
+            exit 0
           fi
-      - uses: actions/upload-artifact@v4
-        if: always()
+
+          echo "Tag ${TAG} 不存在，基于 ${GITHUB_SHA} 创建"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}"
+          echo "Tag ${TAG} 已推送"
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          name: stable-channel-repair
-          path: |
-            repair/stable-bootstrap.json
-            repair/stable-mirror.json
-          retention-days: 7
-      - if: always()
+          # 显式给 tag：手动触发时 github.ref 是分支，不指定会把 Release 挂错位置。
+          tag_name: ${{ steps.target.outputs.tag }}
+          files: app/build/outputs/apk/release/*.apk
+          draft: false
+          prerelease: false
+          name: Release ${{ steps.target.outputs.tag }}
+          body: |
+            感谢使用卡皮巴拉教务助手！
+
+            **更新日志：**
+            ${{ steps.notes.outputs.release_notes }}
         env:
-          RESULT: ${{ job.status }}
-        run: echo "Default signed channel · $RESULT. Existing APK reused; legacy prompt and formal releases unchanged." >> "$GITHUB_STEP_SUMMARY"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 3
+
+  sync-to-gitee:
+    needs: build
+    runs-on: ubuntu-latest
+    # 不再按 github.ref 判断。上游已保证 tag 存在，无论触发方式如何都要同步，
+    # 否则手动触发只编译不发布，用户侧永远收不到更新。
+    steps:
+      - name: Checkout Code (for version.properties)
+        uses: actions/checkout@v4
+        with:
+          # 这一步只用来读 version.properties。给分支名是为了下面还要往 main 提交
+          # docs/version.json —— 明确检出 main 分支，就不用处理 detached HEAD。
+          ref: main
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: release-apk
+          path: ./apk
+
+      - name: Download Version Info
+        uses: actions/download-artifact@v4
+        with:
+          name: version-info
+          path: ./version
+
+      - name: Sync to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          # 从 build job 承接，与 GitHub Release 用的是同一份文案和同一个 tag。
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -e
+
+          APK_FILE=$(find ./apk -name "*.apk" | head -1)
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: APK file not found in artifact"
+            exit 1
+          fi
+
+          if [ -z "${RELEASE_NOTES:-}" ]; then
+            echo "ERROR: 上游未传出更新日志，中止同步（不写空文案覆盖线上 version.json）"
+            exit 1
+          fi
+
+          # 从构建产物 version.properties 读取真实版本号。
+          # 与 build job 用同一种锚定写法：文件里有注释行，子串 grep 会把注释
+          # 一起收进来，而 cut 对不含 '=' 的行会吐回整行。
+          VERSION_CODE=$(sed -n 's/^VERSION_CODE=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "ERROR: 无法从产物解析版本号（VC='${VERSION_CODE}' VN='${VERSION_NAME}'）"
+            exit 1
+          fi
+
+          echo "=== Syncing to Gitee ==="
+          echo "TAG: $TAG"
+          echo "VERSION_NAME: $VERSION_NAME"
+          echo "VERSION_CODE: $VERSION_CODE"
+          echo "APK: $APK_FILE ($(du -h "$APK_FILE" | cut -f1))"
+
+          # 1. 创建或复用 Gitee Release
+          echo ""
+          echo "--- Step 1: Gitee Release ---"
+
+          # 先检查是否已存在
+          EXISTING_RELEASE=$(curl -s "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases?access_token=${GITEE_TOKEN}&per_page=50" | \
+            jq -r "[.[] | select(.tag_name==\"${TAG}\")] | .[0].id // empty")
+
+          if [ -n "$EXISTING_RELEASE" ]; then
+            echo "Release already exists (ID: $EXISTING_RELEASE), will upload APK to it"
+            RELEASE_ID="$EXISTING_RELEASE"
+          else
+            echo "Creating new release..."
+            RELEASE_RESPONSE=$(curl -s -X POST \
+              "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases" \
+              -F "access_token=${GITEE_TOKEN}" \
+              -F "tag_name=${TAG}" \
+              -F "name=Release ${TAG}" \
+              -F "target_commitish=main" \
+              -F "body=${RELEASE_NOTES}" \
+              -F "prerelease=false")
+            RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id // empty')
+            if [ -z "$RELEASE_ID" ]; then
+              echo "WARNING: Failed to create release:"
+              echo "$RELEASE_RESPONSE" | jq .
+            else
+              echo "Release created (ID: $RELEASE_ID)"
+            fi
+          fi
+
+          # 2. 上传 APK 到 Release
+          echo ""
+          echo "--- Step 2: Upload APK ---"
+
+          if [ -n "$RELEASE_ID" ]; then
+            # 检查是否已有同名附件
+            EXISTING_ASSET=$(curl -s "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" | \
+              jq -r '[.[] | select(.name=="app-release.apk")] | .[0].id // empty')
+
+            if [ -n "$EXISTING_ASSET" ]; then
+              echo "APK asset already exists (ID: $EXISTING_ASSET), skipping upload"
+            else
+              echo "Uploading APK..."
+              UPLOAD_RESPONSE=$(curl -s -X POST \
+                "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files" \
+                -F "access_token=${GITEE_TOKEN}" \
+                -F "file=@${APK_FILE}")
+              UPLOAD_URL=$(echo "$UPLOAD_RESPONSE" | jq -r '.browser_download_url // empty')
+              if [ -n "$UPLOAD_URL" ]; then
+                echo "APK uploaded: $UPLOAD_URL"
+              else
+                echo "WARNING: Upload response:"
+                echo "$UPLOAD_RESPONSE" | jq .
+              fi
+            fi
+          else
+            echo "ERROR: No release ID, cannot upload APK"
+          fi
+
+          # 3. 更新 version.json
+          echo ""
+          echo "--- Step 3: Update version.json ---"
+
+          DOWNLOAD_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+
+          VERSION_JSON=$(jq -n \
+            --argjson vc "$VERSION_CODE" \
+            --arg vn "$VERSION_NAME" \
+            --arg rn "${RELEASE_NOTES}" \
+            --arg du "$DOWNLOAD_URL" \
+            '{
+              versionCode: ($vc | tonumber),
+              versionName: $vn,
+              releaseNotes: $rn,
+              downloadUrl: $du,
+              forceUpdate: true
+            }')
+
+          echo "version.json content:"
+          echo "$VERSION_JSON" | jq .
+
+          VERSION_B64=$(echo -n "$VERSION_JSON" | base64 -w 0)
+
+          # 检查是否已存在
+          EXISTING_FILE=$(curl -s "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/contents/version.json?access_token=${GITEE_TOKEN}" 2>/dev/null)
+
+          if echo "$EXISTING_FILE" | jq -e '.sha' > /dev/null 2>&1; then
+            OLD_SHA=$(echo "$EXISTING_FILE" | jq -r '.sha')
+            echo "Updating existing version.json (sha: $OLD_SHA)"
+            RESULT=$(curl -s -X PUT \
+              "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/contents/version.json" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n \
+                --arg token "$GITEE_TOKEN" \
+                --arg msg "release: ${TAG}" \
+                --arg content "$VERSION_B64" \
+                --arg sha "$OLD_SHA" \
+                '{access_token: $token, message: $msg, content: $content, sha: $sha}')")
+            echo "Result: $(echo "$RESULT" | jq -r '.content.name // .message // "updated"')"
+          else
+            echo "Creating new version.json"
+            RESULT=$(curl -s -X POST \
+              "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/contents/version.json" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n \
+                --arg token "$GITEE_TOKEN" \
+                --arg msg "release: ${TAG}" \
+                --arg content "$VERSION_B64" \
+                '{access_token: $token, message: $msg, content: $content, branch: "main"}')")
+            echo "Result: $(echo "$RESULT" | jq -r '.content.name // .message // "created"')"
+          fi
+
+          echo ""
+          echo "=== Gitee sync complete ==="
+
+      # App 的 UpdateManager 读的是 GitHub Pages 上那份 version.json（docs/version.json），
+      # 不是 Gitee 这份。两份曾经各自手工维护，结果长期漂移：Pages 停在 v1.1.5 而
+      # Gitee 已经是 v1.1.6，用户点「检查更新」看到的其实是旧数据。
+      # 现在把 Pages 那份也纳入流水线，与 Gitee 同源同值，消除人工同步。
+      - name: Sync version.json to Pages
+        env:
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -e
+
+          VERSION_CODE=$(sed -n 's/^VERSION_CODE=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "ERROR: 无法从产物解析版本号（VC='${VERSION_CODE}' VN='${VERSION_NAME}'）"
+            exit 1
+          fi
+          if [ -z "${RELEASE_NOTES:-}" ]; then
+            echo "ERROR: 更新日志为空，中止写入（不拿空文案覆盖线上 version.json）"
+            exit 1
+          fi
+
+          DOWNLOAD_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+
+          # 与 Gitee 那份用同一个 jq 表达式，保证两个源内容完全一致。
+          # forceUpdate 在 Pages 这份留 false：Gitee 那份是给直连下载用的强提示，
+          # Pages 这份是用户日常检查更新的入口，强制弹窗会打断正常使用。
+          jq -n \
+            --argjson vc "$VERSION_CODE" \
+            --arg vn "$VERSION_NAME" \
+            --arg rn "${RELEASE_NOTES}" \
+            --arg du "$DOWNLOAD_URL" \
+            '{
+              versionCode: ($vc | tonumber),
+              versionName: $vn,
+              releaseNotes: $rn,
+              downloadUrl: $du,
+              forceUpdate: false
+            }' > docs/version.json
+
+          echo "docs/version.json:"
+          cat docs/version.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/version.json
+
+          if git diff --cached --quiet; then
+            echo "docs/version.json 无变化，跳过提交"
+            exit 0
+          fi
+
+          git commit -m "release: 同步 version.json 到 ${VERSION_NAME} (${VERSION_CODE})"
+
+          # 这一步是往共享分支写。若期间有人推了 main，直接 push 会被拒；
+          # 自动 rebase 后重试，避免整条发版流水线因为这种竞态变红。
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "已推送，Pages 将自动重新部署"
+              exit 0
+            fi
+            echo "push 被拒（第 ${attempt} 次），rebase 后重试..."
+            git pull --rebase origin main
+          done
+
+          echo "ERROR: 连续 3 次推送失败，请检查 main 分支状态"
+          exit 1
+
+      # 投递校验是硬门禁：线上 version.json 与 Gitee 附件必须对本次 tag 真实可用。
+      - name: Verify Gitee Delivery
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: >-
+          python3 -c 'import os, sys; sys.path.insert(0, "scripts");
+          import publish_announcement as p;
+          p.verify_delivery(p.Gitee(os.environ["GITEE_TOKEN"]), os.environ["TAG"], os.environ["RELEASE_NOTES"])'
+
+      # 公告发布是尽力而为：客户端还没接这条通道，失败只标黄，不把发版判死。
+      - name: Publish Release Announcement
+        continue-on-error: true
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: python3 scripts/publish_announcement.py --tag "$TAG"

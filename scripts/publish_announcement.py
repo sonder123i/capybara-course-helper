@@ -11,9 +11,20 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-API_ROOT = "https://gitee.com/api/v5/repos/znj12345/zhengfang"
-DOWNLOAD_ROOT = "https://gitee.com/znj12345/zhengfang/releases/download"
+API_ROOT = "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper"
+DOWNLOAD_ROOT = "https://gitee.com/sonder123i/capybara-course-helper/releases/download"
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def version_code(tag):
+    """把 vX.Y.Z 换算成 versionCode：major*10000 + minor*100 + patch。
+
+    必须与 scripts/release.sh 和 release.yml 的 Resolve Version From Tag 保持一致。
+    不要退回「取 patch 位」的老写法：v1.1.7 的真实 code 是 10107 而非 7，
+    按 patch 位推算会把一次正常发布判成「与版本不符」，卡住公告发布。
+    """
+    major, minor, patch = (int(part) for part in tag[1:].split("."))
+    return major * 10000 + minor * 100 + patch
 
 
 def validate_announcement(announcement, tag):
@@ -82,28 +93,24 @@ class Gitee:
 
     def read_json_file(self, name, allow_missing=False):
         metadata = self.request("GET", f"contents/{name}?ref=main", allow_missing=allow_missing)
-        if metadata is None:
-            return None, None
+        # Gitee 与 GitHub 不同：文件不存在时它返回 HTTP 200 + 空数组 []，而不是 404。
+        # 只认 None 会把「首次创建该文件」这一步误判成响应格式错误。
+        if metadata is None or metadata == []:
+            if allow_missing:
+                return None, None
+            raise RuntimeError(f"Gitee file {name} does not exist")
         if not isinstance(metadata, dict) or metadata.get("encoding") != "base64":
             raise RuntimeError(f"Invalid Gitee file response for {name}")
         content = base64.b64decode(metadata["content"]).decode("utf-8-sig")
         return metadata, json.loads(content)
 
 
-def verify_delivery(client, tag, notes, envelope=None):
+def verify_delivery(client, tag, notes):
     _, version = client.read_json_file("version.json")
-    if envelope is not None:
-        from release_distribution import verify_manifest
-        manifest = verify_manifest(envelope, 'stable')
-        if manifest['versionName'] != tag[1:] or manifest['releaseNotes'].strip() != notes.strip():
-            raise RuntimeError('Signed manifest does not match release')
-        if not isinstance(version, dict) or version.get('versionCode') != manifest['versionCode'] or version.get('sha256') != manifest['sha256'] or version.get('downloadUrl') not in [m['url'] for m in manifest['mirrors']]:
-            raise RuntimeError('Legacy metadata does not match signed delivery')
-        return
     expected_url = f"{DOWNLOAD_ROOT}/{tag}/app-release.apk"
     if not isinstance(version, dict) or (
         version.get("versionName") != tag[1:]
-        or version.get("versionCode") != int(tag.rsplit(".", 1)[1])
+        or version.get("versionCode") != version_code(tag)
         or version.get("downloadUrl") != expected_url
         or str(version.get("releaseNotes", "")).strip() != notes.strip()
     ):
@@ -115,11 +122,11 @@ def verify_delivery(client, tag, notes, envelope=None):
         raise RuntimeError("Gitee release APK is missing; announcement was not published")
 
 
-def publish_release(client, tag, announcement, notes, envelope=None):
+def publish_release(client, tag, announcement, notes):
     validate_announcement(announcement, tag)
     if not notes.strip():
         raise ValueError("Release notes must not be empty")
-    verify_delivery(client, tag, notes, envelope)
+    verify_delivery(client, tag, notes)
     metadata, existing = client.read_json_file("announcement.json", allow_missing=True)
     merged = merge_announcements(existing, announcement)
     if merged == existing:

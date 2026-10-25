@@ -1,231 +1,238 @@
-<div align="center">
+<p align="center">
+  <img src="pic/v1.1.2/01-timetable.jpg" width="170"/>
+  <img src="pic/v1.1.2/02-courses-optional.jpg" width="170"/>
+  <img src="pic/v1.1.2/04-grab-queue.jpg" width="170"/>
+  <img src="pic/v1.1.2/05-grades-term.jpg" width="170"/>
+</p>
 
-<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="88" alt="教务助手图标" />
+<h1 align="center">卡皮巴拉教务助手</h1>
 
-# 教务助手
+> **本项目是 [教务助手](https://github.com/znjhahaha/zhengfang-apk) 的二次开发版本（fork）。**
+>
+> 原项目由 [@znjhahaha](https://github.com/znjhahaha) 开发，以 GPL-3.0 开源，原始版权归原作者所有。
+> 本 fork 沿同一许可发布，具体改动见文末「与原项目的关系」。
 
-**简体中文 · [English](README.en.md)**
+<p align="center">
+  <strong>开源 · 免费 · 安全</strong><br/>
+  Android 教务客户端，支持新正方、旧正方、新强智、旧强智<br/>
+  选课、抢课、课表、成绩，UI 是一整套液态玻璃
+</p>
 
-在手机上看课表、查成绩、处理选课。
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"/></a>
+  <a href="https://github.com/znjhahaha/zhengfang-apk"><img src="https://img.shields.io/badge/upstream-znjhahaha%2Fzhengfang--apk-blueviolet?style=flat-square" alt="Upstream"/></a>
+</p>
 
-支持新正方、旧正方、新强智和旧强智。金智、乘方提供可供多校复用的通用教务协议，学校差异通过配置或校园插件扩展。
+---
 
-[![最新版](https://img.shields.io/github/v/release/znjhahaha/zhengfang-apk?style=flat-square&color=2563eb&label=Release)](https://github.com/znjhahaha/zhengfang-apk/releases/latest)
-[![Android 7.0+](https://img.shields.io/badge/Android-7.0%2B-34a853?style=flat-square&logo=android&logoColor=white)](https://github.com/znjhahaha/zhengfang-apk/releases/latest)
-[![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose-7c3aed?style=flat-square)](https://developer.android.com/compose)
-[![GPL v3](https://img.shields.io/badge/License-GPL%20v3-64748b?style=flat-square)](LICENSE)
+## 这版有什么
 
-**[下载 APK](https://github.com/znjhahaha/zhengfang-apk/releases/latest) · [插件商店](https://plugins.hidisiwa.xyz) · [反馈问题](https://plugins.hidisiwa.xyz/feedback) · [更新记录](CHANGELOG.md)**
+界面全套换成了液态玻璃。折射、色散、高光都是实时算的，按下去会形变，松手弹回来，不是贴一层半透明白糊上去。
 
-[界面预览](#界面预览) · [桌面课表](#桌面课表) · [开始使用](#开始使用) · [校园插件](#校园插件) · [从源码构建](#从源码构建)
+- **背景可以自己换**：预设渐变、纯色、或者直接用相册里的图
+- **图片背景能调**：模糊和蒙版两根滑条，自己拧到舒服为止
+- **配色跟着背景走**：浅色底自动配深字，深色底配浅字，不用手动切
+- **顶栏随滚动收起**：往下翻的时候一屏能多看一节多的内容
+- **筛选改成浮层**：收起来之后列表不会跳回顶部
+- **小屏不再被挡**：16:9 这类短屏幕上，弹窗按钮和列表末项以前会被导航栏压住
+- **圆形抢课入口**：玻璃圆钮轻点执行，长按展开带模糊背景的扇形菜单；六个操作沿紧凑的单层圆弧排列，支持滑动选择、松手执行和 SVG 图标反馈
+- **图片壁纸顶栏**：修复课表、成绩顶部边缘的白雾和接缝，图片背景保持连贯
 
-</div>
+老设备跑不动实时模糊会自动回退到透镜采样，不会直接卡死。
 
-## 界面预览
+---
 
-以下为本机预览留存的真实界面，使用演示课程和本地测试插件，点按图片可查看大图。图片用于展示界面，最新功能以源码说明和对应 [Release](https://github.com/znjhahaha/zhengfang-apk/releases) 为准。
+## 功能
+
+选课抢课：
+
+- 按关键词搜、按类别筛，余量和教师都显示
+- 即时执行 — 有空位，拼手速
+- 定时任务 — 设好开抢时间，到点自动发包
+- 捡漏 — 盯着满员的课，有人退立刻顶上
+
+抢课使用前台服务，定时启动使用 AlarmManager。通知、精确闹钟权限和系统后台限制会影响运行与触发时间；学校仍决定选课窗口、名额、学分和冲突规则。
+
+课表成绩：
+
+- 课表周视图，课程自动配色，可导出 `.ics` 到系统日历
+- 成绩按学期查，GPA 自动算，另外还有总体成绩和考试安排
+
+杂项：
+
+- 应用内更新，启动检测新版，下载完直接装
+- 公告与用户反馈已随上游服务一并关闭（见文末「与原项目的关系」），反馈内容不出本机
+- 可添加不同学校，所有版本跨学校合计最多使用 3 个学生账号
+
+---
+
+## 教务系统与限制
+
+当前源码接入以下四类教务。学校地址可自行添加；应用内「设置 → 教务支持与限制」可查看当前学校对应的规则。
+
+| 教务 | 登录 | 执行与数据限制 |
+| --- | --- | --- |
+| 新正方 | 账密、图片验证码、网页登录；保留原有兼容流程 | 串行或最多 2 门并行；筛选与查询以学校返回内容为准 |
+| 旧正方 | 标准 RSA 账密登录、图片验证码获取与刷新 | App 按账号串行保护表单状态；体育课与选退课使用学校当前控件 |
+| 新强智 | 直接账密登录；额外的人机验证或统一认证可转网页登录 | App 按账号串行保护轮次上下文；无开放轮次时仍可查询已选、课表和成绩 |
+| 旧强智 | 账密登录、图片验证码获取与刷新 | App 按账号串行保护轮次上下文；开放分类及操作权限由学校决定 |
+
+四类教务共用单门/批量选课、退课、队列排序、精确目标、智能匹配和定时任务入口，以及课表、成绩、考试和导出功能。旧正方、新强智、旧强智的筛选使用已加载的学校数据，未公布的容量不会当作有空位。智能匹配限定同一轮次和课程，可更换教师或时段；手动填写的教师与时间仍作为约束。
+
+验证码、选课声明、结果待确认或登录失效时需要人工处理；应用不会绕过学校限制。定制认证、无法识别的操作控件可能仍需网页登录，这属于适配范围，不等同于学校不支持该功能。可在「设置 → 统一登录适配」申请适配。
+
+实网账密登录及查询已验证山东农业大学（新强智）、广州松田职业学院（旧强智）、黑龙江工程学院（旧正方）；原有浙江工业大学统一身份认证流程保留。验证没有向真实学校提交选课或退课。详见[账密验证记录](internal/testing/2026-09-08-password-login-validation.md)及[功能对齐记录](internal/testing/2026-09-08-four-system-parity.md)。
+
+---
+
+## 密码存哪了
+
+支持账号密码登录，学校要求图片验证码时由用户填写；定制登录保留网页登录入口。
+
+密码走 Android KeyStore 的 AES/GCM 加密，仅保存在本机，并在登录时提交到所选学校的教务或认证地址。已保存账密时，App 会在会话过期后尝试续期；学校要求验证码或二次确认时需手动完成。加密或读取失败时按「未保存凭据」处理，不会明文写盘。
+
+不信可以自己翻 `CredentialStore.kt` 和 `SessionRenewer.kt`。
+
+---
+
+## 匿名使用统计
+
+**本应用已关闭匿名统计上报，不采集也不上传任何使用数据。**
+
+上游版本会采集随机安装标识与应用版本并上报到作者自建服务。本 fork 通过
+`SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS` 关闭了这条通道——开关加在装配层
+（`UsageStatsManager` 的 `eligibleBuild`），因此 `UsageReporter` 的通用逻辑与它的
+单元测试都保持原样，不会有任何统计请求发出。
+
+---
+
+## 截图
 
 <table>
   <tr>
-    <th>一周课程，集中查看</th>
-    <th>当天安排，按时间展开</th>
-    <th>按学校发现校园插件</th>
+    <td align="center"><img src="pic/v1.1.2/01-timetable.jpg" width="170"/><br/><sub>周视图课表</sub></td>
+    <td align="center"><img src="pic/v1.1.2/02-courses-optional.jpg" width="170"/><br/><sub>课程 · 可选</sub></td>
+    <td align="center"><img src="pic/v1.1.2/03-courses-selected.jpg" width="170"/><br/><sub>课程 · 已选</sub></td>
+    <td align="center"><img src="pic/v1.1.2/04-grab-queue.jpg" width="170"/><br/><sub>抢课工作台</sub></td>
   </tr>
   <tr>
-    <td><a href="docs/images/schedule-week.png"><img src="docs/images/schedule-week.png" width="260" alt="周课表，显示完整课程名、教师与教室" /></a></td>
-    <td><a href="docs/images/schedule-day.png"><img src="docs/images/schedule-day.png" width="260" alt="日课表，显示每门课的时间、教师和地点" /></a></td>
-    <td><a href="docs/images/plugin-center.png"><img src="docs/images/plugin-center.png" width="260" alt="插件中心的发现页面、搜索和安装入口" /></a></td>
+    <td align="center"><img src="pic/v1.1.2/05-grades-term.jpg" width="170"/><br/><sub>成绩 · 按学期</sub></td>
+    <td align="center"><img src="pic/v1.1.2/06-grades-overall.jpg" width="170"/><br/><sub>成绩 · 总体与分布</sub></td>
+    <td align="center"><img src="pic/v1.1.2/07-exams.jpg" width="170"/><br/><sub>考试安排</sub></td>
+    <td align="center"><img src="pic/v1.1.2/08-settings.jpg" width="170"/><br/><sub>设置</sub></td>
   </tr>
 </table>
 
-<details>
-<summary><strong>液态玻璃界面：导航、详情、设置与背景</strong></summary>
+实机截图，跑的是内置演示数据（正方演示大学），浅色主题。换背景那一节的图仍是旧版实拍，因为那里要展示的正是壁纸本身。
 
-半透明卡片、悬浮导航和背景使用统一材质，支持浅色、深色与自定义图片背景。
+---
 
-| 悬浮导航 | 课程详情 | 分组设置 |
-| :---: | :---: | :---: |
-| <img src="docs/images/liquid-glass/navigation.jpg" width="250" alt="课程列表与悬浮导航"> | <img src="docs/images/liquid-glass/course-detail.jpg" width="250" alt="课程时间、地点与课前提醒"> | <img src="docs/images/liquid-glass/settings.jpg" width="250" alt="账号和外观设置"> |
-| 插件中心 | 每日课表 | 背景选择 |
-| <img src="docs/images/liquid-glass/plugin-center.jpg" width="250" alt="插件中心发现列表"> | <img src="docs/images/liquid-glass/timetable.jpg" width="250" alt="每日课程时间表"> | <img src="docs/images/liquid-glass/wallpaper.jpg" width="250" alt="背景选择面板"> |
+## 快速开始
 
-这六张图片于 2026-09-25 在本机 MuMu Android 15 截取，版本为 `1.0.87-ui-preview`，均使用演示数据。它们展示既有界面，不作为后续新功能的验收证据；详见 [素材来源](docs/images/liquid-glass/README.md)。
+### 直接下载（推荐）
 
-</details>
+下载最新 APK：[Gitee 发行版](https://gitee.com/sonder123i/capybara-course-helper/releases)（国内直连快得多）或 [GitHub Releases](https://github.com/sonder123i/capybara-course-helper/releases/latest)，两边是同一个签名包（sha256 一致）。也可以从[官网](https://sonder123i.github.io/capybara-course-helper/)下。装上就能用。Android 7.0+，建议 12 以上，玻璃效果最全。
 
-- **课表先打开，再刷新。** 优先显示本地课程，进入课表后静默更新；切换页面、日期和主题时保留浏览位置。
-- **长名称也能看全。** 周／日视图完整显示课程名与教师，点按课程查看详情，长按可复制教室等信息。
-- **看课表的方式由你选。** 日／周视图、周末显示、自定义课程、课程提醒，以及日历导出。
-- **日期切换保持对齐。** 星期与日期共享列中心和基线；数字滚动支持单／双位变化、跨月与快速反向切换。
-- **浅色、深色都可用。** 支持自定义背景和玻璃效果；开关、日期与页面切换提供连续的动画反馈，并适配系统减少动态效果设置。
+### 从源码构建
 
-开关点按与连续切换的实际录屏：
-
-<p align="center"><img src="docs/images/switch.gif" width="520" alt="开关滑动与连续点按时的回弹动画" /></p>
-
-## 桌面课表
-
-不用打开 App，也能知道下一节上什么、谁来上、去哪里。
-
-![简洁单课、双课程和课程时间轴的真实小组件预览](docs/images/widgets.png)
-
-| 样式 | 适合怎样使用 | 显示内容 |
-| --- | --- | --- |
-| **简洁单课 · 1×1** | 桌面只留一小块位置 | 当前或下一节课，完整课名与教师、时间、教室 |
-| **双课程 · 2×1** | 提前看下一堂安排 | 两门课并排显示，各自可点按进入详情 |
-| **课程时间轴 · 2×2** | 查看当天的连续安排 | 按时间排列，突出当前与下一节，拉大可查看更多课程 |
-
-在 **课表 → 更多 → 桌面组件** 中预览并添加，也可以从桌面的系统小组件列表添加。长按调整尺寸后，文字会更舒展，并可显示结束时间和更多课程。小组件读取当前账号的本地课表，支持离线查看。小尺寸优先为完整课名、教师、时间和教室分配空间，再调整文字大小；不会仅截取教室编号代替完整地点。
-
-## 还能做什么
-
-| 功能 | 内容 |
-| --- | --- |
-| 课表 | 日／周视图、课程详情、日期切换、日历导出；一次设置所选学期的课前提醒 |
-| 成绩与考试 | 按学期查询成绩、绩点和考试安排；以学校提供的数据为准 |
-| 选课 | 课程查询、选退课、批量队列、定时执行和余量检测 |
-| 校园插件 | 学校搜索、教务适配、原生页面和网页服务；经授权复用本校登录；按版本下载公开源码参与修改 |
-| 个性化 | 浅色／深色主题、自定义背景与随设备能力调整的玻璃效果 |
-| 消息与反馈 | 更新提示、公告、问卷提醒，以及无需 GitHub 账号的站内反馈 |
-
-具体数据和可用操作由学校系统提供。选课窗口、名额、冲突规则及验证码仍遵循学校要求；定时任务和后台提醒需要相应的系统权限与后台运行条件。
-
-## 开始使用
-
-1. 从 [最新版 Release](https://github.com/znjhahaha/zhengfang-apk/releases/latest) 下载 APK，支持 **Android 7.0 及以上**。
-2. 在登录页搜索学校，选择对应适配并确认权限；已有自定义学校可直接选择，也可手动添加或管理学校。按学校要求完成登录。
-3. 打开课表并同步课程，检查学期、开学日期和节次时间。随后可以查看成绩、管理选课或添加桌面组件。
-
-应用内可以检查更新。若学校使用特殊登录方式或教务接口，可先在插件中心搜索学校名称。
-
-<details>
-<summary><strong>课表、小组件或登录遇到问题？</strong></summary>
-
-- **课程日期不对：** 检查当前学期、开学日期及课程周次；周次不明确的课程会提示核对。
-- **小组件没有课程：** 先在 App 中登录并同步课表，再检查节次时间和开学日期。切换账号后，小组件也会切换到对应课表。
-- **登录失效：** 返回 App 按提示重新登录；学校要求验证码或额外确认时，需要完成对应步骤。
-- **提醒没有出现：** 检查通知权限、系统闹钟权限与后台运行设置。
-- **学校暂不支持：** 查看插件商店，或通过反馈入口提供系统类型、教务地址及问题现象。
-
-</details>
-
-## 校园插件
-
-**正式版支持通用网页插件。** 开发者使用 SDK 的 `web-browser` 模板配置 HTTPS 地址，即可接入学习、工具或社区等网站；普通网页不要求教务账号。多个入口可从服务中心打开，也可固定到主导航。纯浏览不注入宿主桥，网站登录按服务账号隔离；设备不支持所需 WebView 能力时使用外部浏览器。详见 [网页插件 Wiki](https://plugins.hidisiwa.xyz/wiki/web/) 与 [1.0.109 更新说明](release-notes/v1.0.109.md)。
-
-宿主同时提供原生插件的多账号隔离、记录查询、前台任务与脚本管理；内置浏览器支持会话恢复与 Cookie 隔离。插件可以声明子页标题与返回事件（可选能力 `ui.navigation@1`），进入、退出动画和系统返回键由宿主统一处理。
-
-插件中心提供 **发现** 与 **已安装** 两个入口，可以按名称搜索、筛选学校，并查看插件详情、安装或启用适配。已有目录会先显示，刷新失败时仍可浏览本地保存的插件。
-
-学校搜索合并已保存的学校与通过签名验证的插件目录，显示兼容状态和可选提供者。选择适配后按下载校验、权限确认和激活顺序处理，完成后才绑定学校；多个候选由你选择，原有自定义地址会保留。
-
-在插件中心管理本校适配与已安装插件，按学校域名、端口及路径匹配。本校停用、卸载和回滚各有独立入口；离线时仍能使用已有配置及可用缓存。
-
-同一学校可以启用不同作者的功能插件。需要已有教务登录时，由你授权宿主为该插件发送限定范围的请求，调用插件不会取得共享登录的密码或 Cookie 原文。选择“允许并记住”后，重开 App 或同账号重新登录可复用同意；“仅本次”在当前登录会话有效。账号、学校、提供者身份或授权范围改变，以及本地包摘要变化时可能需要重新确认；同一可信发行身份且范围不扩大的更新可保留同意。插件详情可撤销授权，独立认证的服务仍使用各自账号。详见 [共享登录说明](https://plugins.hidisiwa.xyz/wiki/shared-login)。
-
-作者升级沿用同一个插件 ID 并递增版本，后台按插件归组展示版本历史。功能以独立标签展示和搜索，不混入简介；更新增加权限时须确认，运行中的任务继续使用原版本。
-
-校园服务可使用自身的 `X-Token` 验证，需在清单声明精确网络范围与 `network.request@3`；宿主按请求范围及每次重定向核验。示例见 [服务认证文档](https://plugins.hidisiwa.xyz/docs/SERVICE-AUTH.md)。
-
-插件详情的「本版本源码与参与修改」对应当前安装版本，可查看许可证、源码摘要与仓库入口。下载源码后可以向现维护者提交修复，也可保留原作者与许可证、使用新 ID 独立衍生。历史版本没有公开源码时会明确提示。
-
-**金智、乘方支持多校复用。** 学校适配可以继承通用基础协议，配置本校教务地址、认证入口和网络范围；金智还需要本校作息。接口或登录流程存在差异时，可以用扩展插件补充对应能力。
-
-App 另附湖北汽车工业学院（金智）与山东石油化工学院（乘方）的预置适配，以及电子科技大学成都学院（树维 EAMS）与武汉职业技术大学（超星智慧教务）的内置配置，均无需额外导入即可使用。其他学校需完成本校配置和兼容验证；乘方基础协议目前不支持选退课提交。具体能力与适配方法见 [六类通用协议与迁移说明](https://plugins.hidisiwa.xyz/docs/architecture-v3/PROTOCOLS.md)。
-
-| 你想做的事 | 入口 |
-| --- | --- |
-| 找到本校适配、查看作者和兼容要求 | [插件商店](https://plugins.hidisiwa.xyz) |
-| 编写教务适配或校园服务插件 | [开发者中心：SDK、模板与接口文档](https://plugins.hidisiwa.xyz/developers) |
-| 提交插件问题、查看处理进展 | [站内反馈](https://plugins.hidisiwa.xyz/feedback) |
-
-
-新投稿经过自动检查与人工发布审核，目录使用签名校验来源；签名验证与人工审核状态分别展示，历史版本缺少审核凭证时明确标注。旧版插件继续兼容。教务适配按学校域名、端口和路径匹配；发生冲突时可手动选择，本校停用、卸载和回滚各有独立入口。
-
-本仓库保留 App 使用的插件运行时与协议文件，SDK 生成源码和插件网站独立维护。
-
-欢迎有能力的同学为自己的学校开发独立适配，或编写校园服务插件。**开发者 QQ 群：1074017033**。SDK、模板、接口文档和上传入口统一放在 [开发者中心](https://plugins.hidisiwa.xyz/developers)。SDK 3.6.0 保持 API 主版本 3；网站提供“开始开发 → 验证打包 → 提交更新”三步流程。平台源码在独立仓库维护，公开的使用文档、可复制的 Agent 提示词及两类开发包从开发者中心获取；完整教程与正确／错误示例见 [开发者 Wiki](https://plugins.hidisiwa.xyz/wiki/)。本仓库保留 App 运行时与生成的契约资源。
-
-## 作息时间预设
-
-在课表设置的「作息预设」中，可以保存当前作息，或新建、复制和编辑夏季／冬季等多套时间表。每个账号最多保存 12 套，每套支持每天 8–16 节；保存预设后，预览并选择「应用这套作息」才会更新课表。
-
-应用会更新所选学期的节次时间，并沿用账号共用的每天节数设置；开学日期、每周第一天、课程和调课记录保持不变。课前提醒重新排程，桌面组件随本地课表刷新。可以撤回最近一次应用；之后手动更改作息时，旧撤回入口会失效，以免覆盖新修改。预设保存在本机，季节变化时需手动切换。
-
-## 一次设置学期提醒
-
-在课表设置的「课前提醒」中，可一次开启或关闭当前账号、所选学期完整课表的提醒，包含手动课程。已设置的提前时间会保留，新开启的提醒默认提前 15 分钟；之后新加入的课程默认关闭，可以逐门调整。
-
-页面分别显示开启数量和可调度状态。按提示处理通知、精确闹钟权限，以及学期日期和节次时间；缺少时间、已经结束或受到系统限制时，不会把已保存的开关当作通知已经安排。
-
-## 更新说明
-
-以下为近期正式版的主要更新，完整记录见 [更新记录](CHANGELOG.md)。
-
-- **1.0.113** — 安装包分为 ARM64、ARM32 与 ARM 通用三个分包，更新器按设备架构选择对应分包，旧版更新器可通过通用包平滑升级；新增树维 EAMS 与超星智慧教务两类教务协议，内置电子科技大学成都学院（EAMS）与武汉职业技术大学（超星智慧教务）配置。
-- **1.0.115** — 修复正式包自动识别拼图时的原生崩溃：保留 ONNX 由 JNI 查找的类和成员，并在 CI 校验混淆后的类名；恢复 1.0.112-ui-preview 中遗漏的登录首页布局、加载动画、调课与节假日调整、小组件外观设置、地图子页与国内地图源等。
-- **1.0.116** — 内置油猴脚本的更新信息与下载改为自有域名优先，Greasy Fork 不可达时回退原站；保留原作者内容与来源声明，校验下载摘要、版本、语法与运行权限，失败时保留已有可用版本。
-
-## 当前源码与 SDK
-
-`main` 包含 SDK 3.6.0 / API 3 对应的宿主能力，当前正式 App 为 1.0.116。现有 Release 保留各自版本信息；新增能力由清单的 `requires` 和 `minAppVersionCode` 检查，不能仅凭 API 主版本相同判断客户端可用。
-
-| 开发入口 | 用途 |
-| --- | --- |
-| [完整开发套件](https://plugins.hidisiwa.xyz/downloads/plugin-starter-v3.zip) | CLI、SDK、模板、协议源码与离线样本 |
-| [独立 SDK 源码包](https://plugins.hidisiwa.xyz/downloads/plugin-sdk-v3.zip) | 类型、契约、生成器和消费示例，可独立重建 |
-| [Agent 开发指南](https://plugins.hidisiwa.xyz/docs/AGENT-QUICKSTART.md) | 定位契约、选择模板、验证与交付 |
-| [可复制的 Agent 提示词](https://plugins.hidisiwa.xyz/docs/AGENT-PROMPT.md) | 与网站复制按钮同源生成的任务提示词 |
-| [使用指南](https://plugins.hidisiwa.xyz/guide) | 安装、授权、更新与源码协作 |
-
-## 反馈与隐私
-
-推荐使用 [站内反馈](https://plugins.hidisiwa.xyz/feedback)，无需 GitHub 账号即可提交问题并查看回复；选择公开提交后会同步 GitHub Issue。App 的设置、插件详情与运行错误页也有反馈入口。
-
-反馈时请附上 **App 版本、学校、操作步骤、预期结果和错误提示**。界面问题可以附截图，记得遮住学号等个人信息；不要公开密码、验证码或会话令牌。
-
-已保存的登录凭据使用 Android Keystore 加密保存在本机，登录时提交到所选学校的教务或认证地址。匿名使用统计可在设置中关闭，统计不包含账号、学校或课程内容。
-
-## 从源码构建
-
-需要 **JDK 17 或以上**、Android SDK Platform **37.0**。使用仓库自带的 Gradle Wrapper，无需 Node.js，也无需单独生成插件 SDK。
-
-```sh
-git clone https://github.com/znjhahaha/zhengfang-apk.git
-cd zhengfang-apk
-./gradlew testDebugUnitTest lintDebug assembleDebug
+```bash
+git clone https://github.com/sonder123i/capybara-course-helper.git
+cd capybara-course-helper
+./gradlew assembleDebug
 ```
 
-Windows 使用 `gradlew.bat`。通过 `ANDROID_HOME` 或本机 `local.properties` 配置 SDK 路径。调试包输出到 `app/build/outputs/apk/debug/app-debug.apk`。
+环境要求：Android Studio Hedgehog+、JDK 17、`compileSdk 37` / `targetSdk 34` / `minSdk 24`。
 
-插件和界面设备测试使用独立的预览包：
+---
 
-```sh
-./gradlew assembleUiPreview assembleUiPreviewAndroidTest -PuiTestBuildType=uiPreview
-```
+## 新手教程
 
-预览包包含演示数据，包名为 `com.tyust.course.uipreview`，可以与正式 App 并存。设备回归脚本位于 [`scripts/`](scripts)，支持传入设备序列号、API 级别和 ADB 路径。
+### 第一步：登录
 
-<details>
-<summary><strong>仓库目录</strong></summary>
+选择或添加学校，确认新正方、旧正方、新强智、旧强智的类型，再填写教务账号密码。需要验证码时可输入或刷新图片；定制认证按提示打开学校网页。
 
-```text
-app/             Android 应用、插件运行时和测试
-docs/images/     README 中使用的界面截图
-scripts/         设备回归与发布辅助脚本
-release-notes/   各版本发布说明
-.github/         GitHub Actions 构建与发布配置
-CHANGELOG.md     更新记录
-```
+### 第二步：换背景（可选）
 
-</details>
+设置 → 背景。预设、颜色、图片三个来源，选图片之后能调模糊和蒙版。
 
-## 参与开发
+<p align="center">
+  <img src="pic/v1.0.68/06-wallpaper-image.jpg" width="240"/>
+  <img src="pic/v1.0.68/08-wallpaper-preset.jpg" width="240"/>
+</p>
 
-欢迎提交 [Issue](https://github.com/znjhahaha/zhengfang-apk/issues) 和 Pull Request。涉及学校差异时优先考虑插件；修改 App 时请说明具体问题、修改后的行为及验证方法，界面改动请附截图。
+### 第三步：抢课
 
-项目采用 [GNU GPL v3](LICENSE)。修改和分发时请保留版权与许可说明，并按要求提供对应源码。
+| 模式 | 啥时候用 | 怎么操作 |
+|------|----------|----------|
+| 即时执行 | 现在就有空位 | 课程详情 → 立即抢课 |
+| 定时任务 | 知道几点开抢 | 先把课加进队列 → 设启动时间 → 到点自动跑 |
+| 捡漏 | 想抢已经满了的热门课 | 选好课 → 开捡漏 → 有人退自动顶 |
 
-## 社区认可
+定时任务得先往队列里加课，队列空着创建不了，会提示你。
 
-本项目认可 [LINUX DO](https://linux.do/) 社区倡导的「真诚、友善、团结、专业」，支持开源分享与技术交流。
+### 第四步：看课表 / 查成绩
+
+课表在底栏第二个 Tab，周视图，右上角能导出 `.ics`。成绩在第四个，按学期切，GPA 自动算好。
+
+---
+
+## 技术栈
+
+Kotlin + Jetpack Compose（Material 3）。玻璃渲染用 Kyant Backdrop 2.0，`blur + lens + vibrancy` 三层，按设备能力分档，低端机降级到透镜采样。动效走 Compose Animation，spring/tween 曲线全收在 `MotionTokens` 里。网络 OkHttp + Coroutines，HTML 用 Jsoup 解析。屏幕适配靠 `ScreenMetrics` 的两个连续紧凑度系数插值几何，没有尺寸分档。打包发布走 GitHub Actions。
+
+---
+
+## 二次开发
+
+本 fork 与其上游同样基于 **GPL-3.0** 开源。你可以自由地修改、改名、分发甚至商用，
+只需遵守 GPL-3.0 的三条核心义务：
+
+1. 保留原作者的版权声明与本许可
+2. 衍生作品继续以 GPL-3.0 发布（不能换成更宽松的许可，也不能闭源）
+3. 分发时提供完整对应源码，并显著标注你做了哪些修改
+
+> 上游原作者的表述是「不接受任何形式的私自打包和分发，唯一的二开渠道是向本仓库提 PR」。
+> 该表述与 GPL-3.0 第 10 条（不得对所授予的权利附加进一步限制）存在冲突。
+> 作为遵循 GPL-3.0 的衍生作品，本 fork 按 GPL-3.0 的条款发布与分发。
+
+提 PR 流程：
+
+1. Fork
+2. 改完跑一遍 `./gradlew assembleDebug` 确认能编
+3. 提交：`git commit -m 'feat: xxx'`
+4. 推上去开 PR
+
+UI 类改动记得附真机截图，审起来省事。
+
+更新日志写在 `release-notes/vX.Y.Z.md`。
+
+---
+
+## 与原项目的关系
+
+本仓库 fork 自 [znjhahaha/zhengfang-apk](https://github.com/znjhahaha/zhengfang-apk)，基线为其 v1.0.80。
+原始版权归原作者及其贡献者所有，本 fork 继续以 GPL-3.0 发布。
+
+相对上游的主要改动：
+
+| 类别 | 内容 |
+|---|---|
+| 品牌 | 应用名改为「卡皮巴拉教务助手」；应用图标替换为卡皮巴拉；启动页 logo 同步替换 |
+| 包名 | `applicationId` 与源码包名（`namespace`）一并由 `com.tyust.course` 改为 `com.k2767.course` |
+| 界面 | 「关于作者」改为「关于项目」，如实说明二次开发关系并指向本仓库 |
+| 服务解耦 | 新增 `SelfHostConfig.kt` 集中开关，关闭对上游自建服务的依赖（远端公告、用户反馈上报、匿名统计）；应用内更新改指向本仓库 |
+| 后端地址 | 学校适配与问卷中心的后端地址改指保留域名，不再访问上游服务 |
+| 仓库清理 | 移除上游的统计服务端（`usage-stats-service/`）、发布脚本（`scripts/`）、CI 工作流、issue 模板与编辑器遗留文件 |
+| 构建 | 补齐 `local.properties`；Gradle 发行包改用国内镜像获取 |
+
+**未改动**：教务系统适配逻辑（新/旧正方、新/旧强智）、抢课与捡漏实现、课表与成绩、液态玻璃渲染管线。
+
+## 免责声明
+
+- 项目开源免费，仅供学习交流
+- 用出任何后果自己负责
+- 抢课归抢课，别挂一晚上把学校教务打挂
+
+## 许可证
+
+[GPL-3.0](LICENSE)
