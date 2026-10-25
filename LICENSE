@@ -685,3 +685,13 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+---
+
+## 附加声明：与 AGPL-3.0 组件的组合
+
+本发行版自 v2.0.0 起包含 `app/src/main/assets/plugin-models/slider-gap.ort`
+（滑块验证码缺口识别模型，许可证见同目录 `AGPL-3.0.txt` 与 `NOTICE.txt`）。
+依据 GPL-3.0 第 13 条（与 AGPL-3.0 的互相兼容条款），本程序与该模型的组合作品
+按 AGPL-3.0 或更高版本向接收者提供许可。移除上述模型及其加载代码后，
+本程序其余部分仍按本文件主体的 GPL-3.0 授权。
