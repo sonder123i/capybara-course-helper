@@ -254,9 +254,23 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: >-
-          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
-          :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleUiPreview
+          ./gradlew :app:testDebugUnitTest :widget:testDebugUnitTest
+          :app:compileDebugAndroidTestKotlin
+          :app:lintDebug :widget:lintDebug
+          :app:assembleDebug :app:assembleRelease :app:assembleUiPreview
           --no-parallel --max-workers=2 --console=plain
+
+      # v2 产物是 app-universal-release.apk；镜像 URL、1.x 下载链路与 Gitee 附件
+      # 历史上都用 app-release.apk 这个名字，统一改名，避免 Release 挂两个 249MB 文件。
+      - name: Normalize Release APK Name
+        run: |
+          set -euo pipefail
+          cd app/build/outputs/apk/release
+          ls -la
+          if [ -f app-universal-release.apk ] && [ ! -f app-release.apk ]; then
+            mv app-universal-release.apk app-release.apk
+          fi
+          ls -la
 
 
       - name: Upload Check Reports
@@ -321,7 +335,38 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
+
+      # 应用内更新走 ECDSA 签名清单（schemaVersion=2）。清单必须从本次 CI 产物
+      # 计算 sha256/size，因此只能在这里生成，不能本地预生成。
+      # 私钥经 secrets.UPDATE_SIGNING_KEY_B64 注入（PEM base64），只在本步内存/临时文件中出现。
+      - name: Generate Signed Update Manifest
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          UPDATE_SIGNING_KEY_B64: ${{ secrets.UPDATE_SIGNING_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY_B64:-}" ]; then
+            echo "ERROR: 缺少 secrets.UPDATE_SIGNING_KEY_B64（更新签名私钥 PEM 的 base64）。"
+            echo "       公钥已钉在 app/src/main/assets/app-update-keys.json（keyId=capybara-update-2026-10）。"
+            exit 1
+          fi
+          echo "${UPDATE_SIGNING_KEY_B64}" | base64 --decode > /tmp/update-signing-key.pem
+          python3 scripts/make_update_manifest.py \
+            --apk app/build/outputs/apk/release/app-release.apk \
+            --mirror "gh=GitHub Release=https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk" \
+            --mirror "gitee=Gitee 附件=https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk" \
+            --notes "${{ steps.notes.outputs.release_notes }}" \
+            --key-file /tmp/update-signing-key.pem \
+            --out docs/update/stable.json
+          rm -f /tmp/update-signing-key.pem
+
+      - name: Upload Manifest Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-manifest
+          path: docs/update/stable.json
           retention-days: 3
 
   sync-to-gitee:
@@ -348,6 +393,12 @@ jobs:
         with:
           name: version-info
           path: ./version
+
+      - name: Download Update Manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: update-manifest
+          path: ./manifest
 
       - name: Sync to Gitee
         env:
@@ -502,6 +553,27 @@ jobs:
           echo ""
           echo "=== Gitee sync complete ==="
 
+      # 应用内更新的备用源走 Gitee raw（raw/main/docs/update/stable.json），
+      # 与 version.json 一样经 contents API 写入 main 分支。
+      - name: Sync Update Manifest to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          MANIFEST=$(find ./manifest -name stable.json | head -1)
+          [ -n "$MANIFEST" ] || { echo "ERROR: 清单产物缺失"; exit 1; }
+          MANIFEST_B64=$(base64 -w 0 < "$MANIFEST")
+          EXISTING=$(curl -s "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/contents/docs/update/stable.json?access_token=${GITEE_TOKEN}" 2>/dev/null)
+          PAYLOAD=$(jq -n --arg token "$GITEE_TOKEN" --arg msg "release: 更新清单 ${TAG}" \
+            --arg content "$MANIFEST_B64" '{access_token: $token, message: $msg, content: $content, branch: "main"}')
+          if echo "$EXISTING" | jq -e '.sha' > /dev/null 2>&1; then
+            PAYLOAD=$(echo "$PAYLOAD" | jq --arg sha "$(echo "$EXISTING" | jq -r '.sha')" '. + {sha: $sha}')
+          fi
+          RESULT=$(curl -s -X PUT "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/contents/docs/update/stable.json" \
+            -H "Content-Type: application/json" -d "$PAYLOAD")
+          echo "manifest sync: $(echo "$RESULT" | jq -r '.content.path // .message // "done"')"
+
       # App 的 UpdateManager 读的是 GitHub Pages 上那份 version.json（docs/version.json），
       # 不是 Gitee 这份。两份曾经各自手工维护，结果长期漂移：Pages 停在 v1.1.5 而
       # Gitee 已经是 v1.1.6，用户点「检查更新」看到的其实是旧数据。
@@ -550,12 +622,28 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/version.json
 
+          # 应用内更新清单（GitHub Pages 主源）与 version.json 同批落库。
+          MANIFEST=$(find ./manifest -name stable.json | head -1 || true)
+          if [ -n "$MANIFEST" ]; then
+            mkdir -p docs/update
+            cp "$MANIFEST" docs/update/stable.json
+            git add docs/update/stable.json
+          else
+            echo "::warning::清单产物缺失，本次不更新 docs/update/stable.json"
+          fi
+
+          # 公告 feed 与仓库根 announcement.json 同源生成（本地 release.sh 提交）。
+          if [ -f announcement.json ] && [ -f scripts/make_announcement_feed.py ]; then
+            python3 scripts/make_announcement_feed.py
+            git add docs/announcement.json
+          fi
+
           if git diff --cached --quiet; then
             echo "docs/version.json 无变化，跳过提交"
             exit 0
           fi
 
-          git commit -m "release: 同步 version.json 到 ${VERSION_NAME} (${VERSION_CODE})"
+          git commit -m "release: 同步 version.json / 更新清单 / 公告 feed 到 ${VERSION_NAME} (${VERSION_CODE})"
 
           # 这一步是往共享分支写。若期间有人推了 main，直接 push 会被拒；
           # 自动 rebase 后重试，避免整条发版流水线因为这种竞态变红。

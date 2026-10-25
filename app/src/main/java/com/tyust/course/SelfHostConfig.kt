@@ -16,7 +16,7 @@ object SelfHostConfig {
     const val ENABLE_APP_UPDATE_CHECK = true
 
     /** 远端公告：拉取自建公告源（见 [announcementFeedUrls]）。B4 公告中心接线后开启。 */
-    const val ENABLE_REMOTE_ANNOUNCEMENT = false
+    const val ENABLE_REMOTE_ANNOUNCEMENT = true
 
     /** 用户反馈上报与历史拉取：关闭后反馈内容不离开本机，历史恒为空。 */
     const val ENABLE_REMOTE_FEEDBACK = false

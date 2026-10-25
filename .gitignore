@@ -93,7 +93,7 @@ add_device.py
 paper.md
 log.txt
 update.json
-announcement.json
+/announcement.json
 
 # Agent Skills
 .agent/

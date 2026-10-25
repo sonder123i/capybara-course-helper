@@ -246,6 +246,30 @@ print(f"  公告 {Path(path).name} 校验通过")
 PYCHECK
 fi
 
+# ── 4c. 公告并入根 announcement.json 并再生成 App feed ──────────────
+# v2 客户端公告中心读 docs/announcement.json（GitHub Pages 主 / Gitee raw 备），
+# feed 由根 announcement.json 经 scripts/make_announcement_feed.py 派生，
+# 随发布提交一起进仓库；CI 的 Pages 步骤只做兜底再生成。
+if [ -f "$ANNOUNCEMENT_FILE" ] && [ -n "$PYTHON_BIN" ]; then
+    "$PYTHON_BIN" - "$ANNOUNCEMENT_FILE" <<'PYMERGE'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path("scripts").resolve()))
+from publish_announcement import merge_announcements
+incoming = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+root_path = Path("announcement.json")
+existing = json.loads(root_path.read_text(encoding="utf-8")) if root_path.exists() else None
+merged = merge_announcements(existing, incoming)
+root_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n",
+                     encoding="utf-8", newline="\n")
+ids = [a.get("id") for a in merged.get("announcements", [])][:3]
+print(f"  根 announcement.json 已并入 {incoming['id']}（最新: {ids}）")
+PYMERGE
+    "$PYTHON_BIN" scripts/make_announcement_feed.py
+else
+    note "提示：缺少公告文件或 python，跳过 feed 再生成"
+fi
+
 # ── 5. 写 version.properties ─────────────────────────────────────────
 cat > "$VERSION_FILE" <<PROPS
 #Release version. 唯一权威是 git tag：CI 会从 tag 反写这个文件
@@ -288,6 +312,8 @@ ADD_PATHS=("$VERSION_FILE" "$NOTES_FILE")
 if [ -f "$ANNOUNCEMENT_FILE" ]; then
     ADD_PATHS+=("$ANNOUNCEMENT_FILE")
 fi
+[ -f announcement.json ] && ADD_PATHS+=("announcement.json")
+[ -f docs/announcement.json ] && ADD_PATHS+=("docs/announcement.json")
 git add "${ADD_PATHS[@]}" "$CHANGELOG" 2>/dev/null || git add "${ADD_PATHS[@]}"
 git commit -q -m "release: ${VERSION}" -m "$(printf '%s\n' "$NOTES")"
 git tag -a "$TAG" -m "Release ${TAG}"
