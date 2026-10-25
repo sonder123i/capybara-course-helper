@@ -12,7 +12,7 @@ import java.util.Base64
 internal object UpdateFixtures {
     val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
     val keys = mapOf("test-key" to pair.public)
-    fun payload() = JSONObject().put("channel", "stable").put("revision", 100).put("packageName", "com.tyust.course")
+    fun payload() = JSONObject().put("channel", "stable").put("revision", 100).put("packageName", com.tyust.course.BuildConfig.APPLICATION_ID)
         .put("versionCode", 98).put("versionName", "1.0.98").put("minSdk", 24).put("releaseNotes", "更新：国内下载")
         .put("forceUpdate", false).put("size", 6).put("sha256", "a".repeat(64)).put("sourceSha", "b".repeat(40))
         .put("buildId", "36717097766").put("publishedAt", "2026-10-01T00:00:00Z")

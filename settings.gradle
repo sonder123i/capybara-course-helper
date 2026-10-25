@@ -24,6 +24,6 @@ dependencyResolutionManagement {
     }
 }
 
-include ':app'
-rootProject.name = "CourseSelector"
+include ':app', ':widget'
+rootProject.name = "CapybaraCourseHelper"
 

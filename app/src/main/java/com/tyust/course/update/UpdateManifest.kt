@@ -1,5 +1,6 @@
 package com.tyust.course.update
 
+import com.tyust.course.BuildConfig
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okio.ByteString.Companion.decodeBase64
 import org.json.JSONArray
@@ -137,7 +138,7 @@ object UpdateManifestVerifier {
                 return (v as Number).toLong().also { require(it in min..max) }
             }
             require(p.getString("channel") == channel && channel in setOf("stable", "test"))
-            require(p.getString("packageName") == "com.tyust.course")
+            require(p.getString("packageName") == BuildConfig.APPLICATION_ID)
             val code = integer("versionCode", 1, Int.MAX_VALUE.toLong()).toInt()
             val name = p.getString("versionName"); require(name.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")))
             val sha = p.getString("sha256"); require(sha.matches(Regex("[a-f0-9]{64}")))

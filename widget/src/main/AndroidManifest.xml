@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- 桌面小组件接收器。系统（桌面进程）通过 APPWIDGET_UPDATE 广播驱动刷新，
+             因此这个 receiver 必须导出。 -->
+        <receiver
+            android:name=".CourseWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_today_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/course_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".TodayTomorrowWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_today_tomorrow_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_tomorrow_widget_info" />
+        </receiver>
+
+        <!-- 「今日时间轴」。类名仍叫 WeekWidgetReceiver：桌面上已经摆了旧「周课表」的
+             组件认的就是这个组件名，改名会让它们升级后变成「不可用」的灰块。
+             内容换掉、名字留着，原因写在 TimelineWidget.kt 里。 -->
+        <receiver
+            android:name=".WeekWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_timeline_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/timeline_widget_info" />
+        </receiver>
+    <!-- 下课闹钟：到点重画组件（只由本应用的 PendingIntent 触发，不导出） -->
+        <receiver
+            android:name=".WidgetRefreshReceiver"
+            android:exported="false" />
+    </application>
+
+</manifest>

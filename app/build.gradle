@@ -82,7 +82,9 @@ android {
     compileSdkVersion 'android-37.0'
 
     defaultConfig {
-        applicationId "com.tyust.course"
+        // 卡皮巴拉发行版身份：包名保持 com.k2767.course 以便 1.x 用户原位升级；
+        // namespace 维持上游 com.tyust.course，保证后续同步上游不再产生全量改名冲突。
+        applicationId "com.k2767.course"
         minSdk 24
         targetSdk 34
         versionCode code
@@ -199,6 +201,9 @@ android {
 dependencies {
     // Core AndroidX
     implementation 'androidx.core:core-ktx:1.12.0'
+    // 桌面小组件（1.x 用户的 Glance 组件：今日课程/今日明日/今日时间轴），
+    // 独立模块、自成命名空间，与上游 RemoteViews 组件体系共存保兼容。
+    implementation project(':widget')
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.14.0'
     // Loaded only by the private browser process on API 26+. Android 7 keeps the base App.

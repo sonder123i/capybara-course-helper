@@ -32,13 +32,17 @@ class UpdateManagerTest {
     private fun awaitCheck(manager: UpdateManager) = runBlocking {
         withTimeout(8000) { manager.state.first { it.check !in setOf(UpdateManager.Check.IDLE, UpdateManager.Check.CHECKING) } }
     }
+    /** 构造"新于当前构建"的 versionCode：直接问 PackageManager，不依赖先建 manager。 */
+    private fun newerVersionCode(): Int =
+        app.packageManager.getPackageInfo(app.packageName, 0).let { (it.longVersionCode.toInt().takeIf { v -> v > 0 } ?: it.versionCode) + 1 }
     @Test fun invalidJsonIsFailureNotUpToDate() { MockWebServer().use { server ->
         server.enqueue(MockResponse().setBody("<html>error</html>")); val m = create(server); m.checkForUpdate(true)
         assertEquals(UpdateManager.Check.FAILED, awaitCheck(m).check)
     } }
     @Test fun successfulManifestOffersUpdate() { MockWebServer().use { server ->
-        server.enqueue(MockResponse().setBody(UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", 1000).put("versionName", "1.0.1000").toString())))
-        val m = create(server); m.checkForUpdate(true); val result = awaitCheck(m)
+        val m = create(server)
+        server.enqueue(MockResponse().setBody(UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", m.getCurrentVersionCode() + 1).put("versionName", "9.9.9").toString())))
+        m.checkForUpdate(true); val result = awaitCheck(m)
         assertEquals(UpdateManager.Check.AVAILABLE, result.check); assertTrue(result.showDialog)
     } }
     @Test fun migratedClientCanCheckOlderStableReleaseWithoutDowngrade() { MockWebServer().use { server ->
@@ -88,14 +92,15 @@ class UpdateManagerTest {
         assertEquals("one", server.takeRequest().getHeader("If-None-Match"))
     } }
     @Test fun automaticFailureDoesNotRemindFromCache() { MockWebServer().use { server ->
+        val m = create(server)
         val dir = File(app.filesDir, "app-updates").apply { mkdirs() }
-        File(dir, "stable-manifest.json").writeText(UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", 1000).put("versionName", "1.0.1000").toString()))
-        server.enqueue(MockResponse().setResponseCode(503)); val m = create(server); m.checkForUpdate()
+        File(dir, "stable-manifest.json").writeText(UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", m.getCurrentVersionCode() + 1).put("versionName", "9.9.9").toString()))
+        server.enqueue(MockResponse().setResponseCode(503)); m.checkForUpdate()
         val state = awaitCheck(m); assertEquals(UpdateManager.Check.CACHED, state.check); assertFalse(state.showDialog)
     } }
     @Test fun verifiedTaskResumesAsPausedAndCancelDeletesPartial() { MockWebServer().use { server ->
         val dir = File(app.filesDir, "app-updates").apply { mkdirs() }
-        val envelope = UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", 1000).put("versionName", "1.0.1000").toString())
+        val envelope = UpdateFixtures.envelope(UpdateFixtures.payload().put("versionCode", newerVersionCode()).put("versionName", "9.9.9").toString())
         File(dir, "task.json").writeText(org.json.JSONObject().put("envelope", envelope).put("channel", "stable").toString())
         File(dir, "download.part").writeText("abc")
         val m = create(server)
@@ -111,17 +116,18 @@ class UpdateManagerTest {
         assertThrows(UpdateFailure::class.java) { m.verifyApk(UpdateFixtures.manifest(), file) }
     } }
     @Test fun freshCheckOffersDeviceArtifactAndStoresOriginalSignedEnvelope() { MockWebServer().use { server ->
-        val payload = UpdateFixtures.splitPayload().put("versionCode", 1000).put("versionName", "1.0.1000")
+        val m = create(server, listOf("armeabi-v7a"))
+        val payload = UpdateFixtures.splitPayload().put("versionCode", m.getCurrentVersionCode() + 1).put("versionName", "9.9.9")
         val envelope = UpdateFixtures.envelope(payload.toString())
         server.enqueue(MockResponse().setBody(envelope))
-        val m = create(server, listOf("armeabi-v7a")); m.checkForUpdate(true)
+        m.checkForUpdate(true)
         val result = awaitCheck(m)
         assertEquals("armeabi-v7a", result.manifest!!.selectedAbi); assertEquals(3L, result.manifest!!.size)
         val cached = UpdateManifestVerifier.verify(File(app.filesDir, "app-updates/stable-manifest.json").readText(), UpdateFixtures.keys, "stable")
         assertNull(cached.selectedAbi); assertEquals(6L, cached.size)
     } }
     @Test fun savedArm32DownloadDoesNotChangeToArm64OnResume() { MockWebServer().use { server ->
-        val raw = UpdateFixtures.manifest(UpdateFixtures.splitPayload().put("versionCode", 1000))
+        val raw = UpdateFixtures.manifest(UpdateFixtures.splitPayload().put("versionCode", newerVersionCode()))
         val selected = raw.forAbi("armeabi-v7a")
         val dir = File(app.filesDir, "app-updates").apply { mkdirs() }
         File(dir, "task.json").writeText(org.json.JSONObject().put("envelope", raw.envelope).put("channel", "stable")
@@ -132,7 +138,7 @@ class UpdateManagerTest {
         assertEquals("armeabi-v7a", value.manifest!!.selectedAbi); assertEquals(2L, value.bytes)
     } }
     @Test fun oldUpdaterTaskRetainsUniversalDownloadEvenWhenSplitManifestExists() { MockWebServer().use { server ->
-        val raw = UpdateFixtures.manifest(UpdateFixtures.splitPayload().put("versionCode", 1000))
+        val raw = UpdateFixtures.manifest(UpdateFixtures.splitPayload().put("versionCode", newerVersionCode()))
         val dir = File(app.filesDir, "app-updates").apply { mkdirs() }
         File(dir, "task.json").writeText(org.json.JSONObject().put("envelope", raw.envelope).put("channel", "stable").toString())
         File(dir, "download.part").writeText("abc")
