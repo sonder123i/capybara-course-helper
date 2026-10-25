@@ -39,10 +39,11 @@ class AnnouncementManagerTest {
         assertThrows(Exception::class.java) { AnnouncementManager.validateDocument(" ".repeat(256 * 1024 + 1)) }
     }
     @Test fun onlyTheAnnouncementFeedGetsTheNewHostAllowance() {
-        assertTrue(AnnouncementManager.validFeedUrl("https://plugins.hidisiwa.xyz/api/app/announcements"))
-        assertFalse(AnnouncementManager.validFeedUrl("https://plugins.hidisiwa.xyz/api/admin/app-announcements"))
-        assertFalse(AnnouncementManager.validFeedUrl("https://plugins.hidisiwa.xyz.attacker.test/api/app/announcements"))
-        assertFalse(AnnouncementManager.validFeedUrl("http://plugins.hidisiwa.xyz/api/app/announcements"))
+        assertTrue(AnnouncementManager.validFeedUrl("https://sonder123i.github.io/capybara-course-helper/announcement.json"))
+        assertTrue(AnnouncementManager.validFeedUrl("https://gitee.com/sonder123i/capybara-course-helper/raw/main/docs/announcement.json"))
+        assertFalse(AnnouncementManager.validFeedUrl("https://sonder123i.github.io.attacker.test/capybara-course-helper/announcement.json"))
+        assertFalse(AnnouncementManager.validFeedUrl("http://sonder123i.github.io/capybara-course-helper/announcement.json"))
+        assertFalse(AnnouncementManager.validFeedUrl("https://dl.hidisiwa.xyz/announcement.json"))
     }
     @Test fun defaultDisplayAndReadRevisionPreserveTheUsersNotificationPreference() {
         assertEquals("center", AnnouncementManager.validateDocument(notice()).single().display)
@@ -104,7 +105,7 @@ class AnnouncementManagerTest {
         assertTrue(cached.cached)
         assertTrue(cached.items.isEmpty())
         assertEquals(1, requests.size)
-        assertTrue(requests.single().endsWith("/api/app/announcements"))
+        assertTrue(requests.single().endsWith("/announcement.json"))
     }
     @Test fun invalidNetworkDocumentKeepsTheLastValidCloudSnapshot() = runBlocking {
         val context = RuntimeEnvironment.getApplication()

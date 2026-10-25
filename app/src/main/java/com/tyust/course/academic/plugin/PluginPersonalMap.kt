@@ -42,6 +42,7 @@ internal object PluginPersonalMapClient {
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
 
     suspend fun status(token: String): JSONObject = withContext(Dispatchers.IO) {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE) throw IOException("地图服务未启用")
         require(PluginPersonalMapStore.valid(token)) { "请填写插件站生成的个人地图连接码，不是高德 Key 原值" }
         val request = Request.Builder().url(PluginMapService.ORIGIN + "/api/maps/v1/personal-status")
             .header(PluginPersonalMapStore.HEADER, token).header("User-Agent", PluginLocationSearch.USER_AGENT).build()

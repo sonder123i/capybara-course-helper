@@ -15,8 +15,10 @@ internal class PluginUserscriptDownloader(
     private val policy: PluginUserscriptPolicy,
     private val requireActive: () -> Unit,
     private val client: OkHttpClient = defaultClient,
+    private val enabled: Boolean = com.tyust.course.SelfHostConfig.ENABLE_USERSCRIPT_DOWNLOAD,
 ) {
     fun download(value: String, revalidate: Boolean = false): String {
+        if (!enabled) throw PluginException(PluginErrorCode.NETWORK_RETRYABLE, "本发行版未启用脚本下载")
         // Validate the original before considering a transport; the relay never expands sourcePrefix.
         val original = policy.source(value)
         relayUrl(original)?.let { relay ->

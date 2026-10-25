@@ -17,7 +17,7 @@ import kotlin.coroutines.resumeWithException
 internal class HttpUsageTransport(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .callTimeout(15, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build(),
-    private val endpoint: String = "https://usage.hidisiwa.xyz/v1/usage"
+    private val endpoint: String = "https://usage.invalid/v1/usage"
 ) : UsageTransport {
     override suspend fun report(installationId: String, version: String): String = suspendCancellableCoroutine { continuation ->
         // This client has no school cookies, account headers, interceptors or persisted request queue.

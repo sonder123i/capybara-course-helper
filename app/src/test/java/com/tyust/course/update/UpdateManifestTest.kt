@@ -16,7 +16,7 @@ internal object UpdateFixtures {
         .put("versionCode", 98).put("versionName", "1.0.98").put("minSdk", 24).put("releaseNotes", "更新：国内下载")
         .put("forceUpdate", false).put("size", 6).put("sha256", "a".repeat(64)).put("sourceSha", "b".repeat(40))
         .put("buildId", "36717097766").put("publishedAt", "2026-10-01T00:00:00Z")
-        .put("mirrors", JSONArray().put(JSONObject().put("id", "cf").put("name", "自有镜像").put("url", "https://dl.hidisiwa.xyz/releases/98/a.apk")))
+        .put("mirrors", JSONArray().put(JSONObject().put("id", "cf").put("name", "自有镜像").put("url", "https://release-assets.githubusercontent.com/releases/98/a.apk")))
     fun envelope(payload: String = payload().toString()): String {
         val bytes = payload.toByteArray(Charsets.UTF_8)
         val signature = Signature.getInstance("SHA256withECDSA").run { initSign(pair.private); update(bytes); sign() }
@@ -28,7 +28,7 @@ internal object UpdateFixtures {
         for ((abi, marker) in listOf("arm64-v8a" to "c", "armeabi-v7a" to "d")) put(abi, JSONObject()
             .put("size", if (abi == "arm64-v8a") 4 else 3).put("sha256", marker.repeat(64))
             .put("mirrors", JSONArray().put(JSONObject().put("id", "cf").put("name", abi)
-                .put("url", "https://dl.hidisiwa.xyz/releases/98/$abi.apk"))))
+                .put("url", "https://release-assets.githubusercontent.com/releases/98/$abi.apk"))))
     })
 }
 
@@ -66,7 +66,9 @@ class UpdateManifestTest {
     @Test fun destinationBoundaries() {
         listOf("http://dl.hidisiwa.xyz/a", "https://dl.hidisiwa.xyz.evil.test/a", "https://dl.hidisiwa.xyz:444/a",
             "https://user:password@dl.hidisiwa.xyz/a", "https://127.0.0.1/a", "file:///a", "https://dl.hidisiwa.xyz/a#x").forEach { assertFalse(it, UpdateManifestVerifier.validUrl(it)) }
-        assertTrue(UpdateManifestVerifier.validUrl("https://gh-proxy.com/https://github.com/znjhahaha/zhengfang-apk/releases/download/v1.0.98/app-release.apk"))
+        assertTrue(UpdateManifestVerifier.validUrl("https://github.com/sonder123i/capybara-course-helper/releases/download/v2.0.0/app-release.apk"))
+        assertTrue(UpdateManifestVerifier.validUrl("https://sonder123i.github.io/capybara-course-helper/update/stable.json"))
+        assertFalse(UpdateManifestVerifier.validUrl("https://gh-proxy.com/https://github.com/znjhahaha/zhengfang-apk/releases/download/v1.0.98/app-release.apk"))
     }
     @Test fun mirrorIdentityIsUnique() {
         val p = UpdateFixtures.payload(); p.getJSONArray("mirrors").put(p.getJSONArray("mirrors").getJSONObject(0))
@@ -119,7 +121,7 @@ class UpdateManifestTest {
         assertNull(UpdateManifestVerifier.choose(listOf(UpdateFixtures.manifest(UpdateFixtures.payload().put("revision", 101))), previous))
         val mirrors = UpdateFixtures.splitPayload().put("revision", 101)
         mirrors.getJSONObject("artifacts").getJSONObject("arm64-v8a").getJSONArray("mirrors").getJSONObject(0)
-            .put("url", "https://dl.hidisiwa.xyz/new/arm64.apk")
+            .put("url", "https://release-assets.githubusercontent.com/new/arm64.apk")
         assertNotNull(UpdateManifestVerifier.choose(listOf(UpdateFixtures.manifest(mirrors)), previous))
     }
 }

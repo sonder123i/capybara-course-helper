@@ -25,7 +25,9 @@ object AcademicProviderRegistry {
 
     private var app: Context? = null
     private var store: PluginPackageStore? = null
-    const val OFFICIAL_WEBSITE = "https://plugins.hidisiwa.xyz"
+    // 本发行版不连作者插件目录：域名为保留形状的 invalid（必定解析失败、零外联），
+    // 插件中心因此只有本地导入/停用/回退；内置 .eduplugin 协议包离线照常工作。
+    const val OFFICIAL_WEBSITE = "https://plugin-directory.invalid"
     const val OFFICIAL_CATALOG = "$OFFICIAL_WEBSITE/academic-plugins/catalog.json"
     const val OFFICIAL_CATALOG_V3 = "$OFFICIAL_WEBSITE/academic-plugins-v3/catalog.json"
     const val OFFICIAL_CATALOG_V2 = "$OFFICIAL_WEBSITE/academic-plugins-v3/catalog-v2.json"

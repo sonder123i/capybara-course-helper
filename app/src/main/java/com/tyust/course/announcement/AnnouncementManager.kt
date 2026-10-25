@@ -29,14 +29,13 @@ import java.util.concurrent.TimeUnit
 
 /** Public App notices, independent of plugin installation and school credentials. */
 object AnnouncementManager {
-    private const val PORTAL = "https://plugins.hidisiwa.xyz/api/app/announcements"
+    // 公告源指向自建端点（GitHub Pages 主 + Gitee 备），见 SelfHostConfig；
+    // ENABLE_REMOTE_ANNOUNCEMENT 关闭时不发起任何网络请求。
+    private val PORTAL: String get() = com.tyust.course.SelfHostConfig.announcementFeedUrls.first()
     private const val PREFS = "announcement_prefs"
     private const val READ_IDS = "read_announcement_ids"
     private const val PORTAL_SEEN = "portal_feed_seen"
-    private val legacySources = listOf("https://dl.hidisiwa.xyz/announcement.json",
-        "https://raw.githubusercontent.com/znjhahaha/zhengfang-apk/updates/announcement.json",
-        "https://gh-proxy.com/https://raw.githubusercontent.com/znjhahaha/zhengfang-apk/updates/announcement.json",
-        "https://gitee.com/znj12345/zhengfang/raw/main/announcement.json")
+    private val legacySources: List<String> get() = com.tyust.course.SelfHostConfig.announcementFeedUrls.drop(1)
     val screens = setOf("schedule", "grades", "selection", "settings", "plugins", "services", "feedback", "updates", "announcements")
     data class Action(val label: String, val kind: String, val target: String)
     data class Announcement(
@@ -83,6 +82,9 @@ object AnnouncementManager {
     suspend fun fetchUnreadAnnouncements(context: Context): List<Announcement> = visible(refresh()).filter { !isRead(context, it) }
     suspend fun fetchAnnouncement(context: Context) = fetchUnreadAnnouncements(context).firstOrNull { it.display == "popup" }
     suspend fun refresh(force: Boolean = false): List<Announcement> = lock.withLock {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_ANNOUNCEMENT) {
+            return@withLock state.value.items
+        }
         if (!force && fetchedAt >= 0 && SystemClock.elapsedRealtime() - fetchedAt < 600_000) return@withLock state.value.items
         fetchedAt = SystemClock.elapsedRealtime()
         mutable.update { it.copy(loading = true) }

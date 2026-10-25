@@ -47,7 +47,7 @@ class PluginUserscriptDownloaderTest {
             if (!active) throw PluginException(PluginErrorCode.STALE_CONTEXT, "Account removed")
         }, OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).addInterceptor { chain ->
             calls.add(chain.request()); transport(chain.request())
-        }.build())
+        }.build(), enabled = true)
 
     private fun response(request: Request, text: String = original, code: Int = 200,
                          headers: Map<String, String> = emptyMap()): Response =

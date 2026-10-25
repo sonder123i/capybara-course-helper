@@ -37,6 +37,14 @@ import java.util.concurrent.TimeUnit
 /** The resource lives inside the hosted page, including its final animated frames. */
 @Composable
 internal fun PluginLocationMap(point: PluginCoordinates.Point?, focusRevision: Int, onChoose: (PluginCoordinates.Point) -> Unit, modifier: Modifier = Modifier) {
+    if (!com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE) {
+        // 本发行版切断地图后端：不加载瓦片样式，给出一句话说明与坐标兜底。
+        Column(modifier.fillMaxWidth().padding(16.dp)) {
+            Text("地图服务未启用", style = MaterialTheme.typography.titleMedium)
+            Text("本发行版未接入在线地图；可在下方直接输入或粘贴坐标选点。", style = MaterialTheme.typography.bodyMedium)
+        }
+        return
+    }
     var attempt by remember { mutableIntStateOf(0) }
     key(attempt) { PluginMapSurface(point, focusRevision, onChoose, { attempt++ }, modifier) }
 }

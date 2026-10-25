@@ -1,5 +1,6 @@
 package com.tyust.course.usage
 
+import com.tyust.course.SelfHostConfig
 import android.app.Activity
 import android.app.Application
 import android.content.Context
@@ -56,7 +57,8 @@ object UsageStatsManager {
         reporter = UsageReporter(
             store = NoBackupUsageStore(application), transport = HttpUsageTransport(),
             version = BuildConfig.VERSION_NAME,
-            eligibleBuild = !BuildConfig.DEBUG && !BuildConfig.UI_PREVIEW,
+            eligibleBuild = !BuildConfig.DEBUG && !BuildConfig.UI_PREVIEW &&
+                SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS,
             isDemo = { UserManager.getInstance().isDemoMode }, scope = scope
         )
         val resumed = mutableSetOf<Activity>()

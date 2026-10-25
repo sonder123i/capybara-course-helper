@@ -69,9 +69,11 @@ class PluginMapSettingsActivity : ComponentActivity() {
                     InsetGroupedRow(title = if (personal) "个人地图服务" else "公共地图服务",
                         subtitle = if (personal) "使用你接入的高德 Web 服务 Key" else "使用公共免费搜索额度", showDivider = false)
                 }
-                InsetGroupedSection(header = "接入自己的 Key", footer = "在插件站登录并加密提交自己的高德 Web 服务 Key，核实免费额度后启用。Key 原值只保存在云端；App 使用个人连接码。") {
-                    InsetGroupedRow(title = "管理个人 Key", subtitle = "提交 Key、查看审核和额度、生成连接码",
-                        onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PluginPersonalMapStore.MANAGE_URL))) }, showDivider = false)
+                if (com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE) {
+                    InsetGroupedSection(header = "接入自己的 Key", footer = "在插件站登录并加密提交自己的高德 Web 服务 Key，核实免费额度后启用。Key 原值只保存在云端；App 使用个人连接码。") {
+                        InsetGroupedRow(title = "管理个人 Key", subtitle = "提交 Key、查看审核和额度、生成连接码",
+                            onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PluginPersonalMapStore.MANAGE_URL))) }, showDivider = false)
+                    }
                 }
                 OutlinedTextField(input, { input = it.take(100) }, label = { Text("个人地图连接码") },
                     placeholder = { Text("粘贴插件站生成的连接码") }, visualTransformation = PasswordVisualTransformation(),
@@ -109,7 +111,6 @@ class PluginMapSettingsActivity : ComponentActivity() {
                     }
                 }
                 Text("连接码仅授权个人地点搜索，有效期 90 天。可在插件站重新生成或撤销；重新生成后，其他设备需要重新连接。")
-                TextButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://plugins.hidisiwa.xyz/maps/donate"))) }) { Text("自愿捐赠共享 Key") }
             }
         }
     }

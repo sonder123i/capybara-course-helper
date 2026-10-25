@@ -30,6 +30,7 @@ internal object PluginAmap {
     fun consent(context: Context) { context.getSharedPreferences("amap-privacy", Context.MODE_PRIVATE).edit().putBoolean("consent-v1", true).apply() }
 
     suspend fun configuration(context: Context): PluginAmapConfiguration = configMutex.withLock {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE) throw IOException("地图服务未启用")
         val now = System.currentTimeMillis() / 1000
         configuration?.takeIf { it.expiresAt > now + 30 }?.let { return@withLock it }
         // Debug/preview credentials are a local developer setting, never a production fallback.

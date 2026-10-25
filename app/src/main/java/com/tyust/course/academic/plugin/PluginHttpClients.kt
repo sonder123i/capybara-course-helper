@@ -26,8 +26,12 @@ internal object PluginHttpClients {
         return base.newBuilder().cookieJar(cookies).build()
     }
 
-    fun call(operation: PluginOperation, url: HttpUrl, cookies: CookieJar, request: Request): Call =
-        PluginConnectFallbackCall(client(operation, url, cookies), Trace(operation), request, PluginConnectFallback.MAX_ATTEMPTS)
+    fun call(operation: PluginOperation, url: HttpUrl, cookies: CookieJar, request: Request): Call {
+        // 本发行版切断作者后端：任何插件作用域都不得访问 *.hidisiwa.xyz。
+        if (url.host.endsWith("hidisiwa.xyz"))
+            throw PluginException(PluginErrorCode.NETWORK_RETRYABLE, "本发行版未接入插件后端服务")
+        return PluginConnectFallbackCall(client(operation, url, cookies), Trace(operation), request, PluginConnectFallback.MAX_ATTEMPTS)
+    }
     @Synchronized fun clearPlugin(id: String) {
         val iterator = clients.entries.iterator()
         while (iterator.hasNext()) { val entry = iterator.next(); if (entry.key.startsWith(id + "\u0000")) { entry.value.connectionPool.evictAll(); iterator.remove() } }

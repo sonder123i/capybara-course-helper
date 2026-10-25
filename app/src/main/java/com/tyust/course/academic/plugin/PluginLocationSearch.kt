@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 internal object PluginLocationSearch {
     class Failure(message: String) : java.io.IOException(message)
     data class Place(val name: String, val point: PluginCoordinates.Point, val title: String, val address: String, val exact: Boolean = true)
-    val USER_AGENT = "ZhengfangCourse/${com.tyust.course.BuildConfig.VERSION_NAME} (https://github.com/znjhahaha/zhengfang-apk)"
+    val USER_AGENT = "CapybaraCourse/${com.tyust.course.BuildConfig.VERSION_NAME} (https://github.com/sonder123i/capybara-course-helper)"
     private val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
     private val mutex = Mutex()
@@ -23,6 +23,7 @@ internal object PluginLocationSearch {
 
     // Search is an explicit button action, never autocomplete or background polling.
     suspend fun search(query: String): List<Place> = mutex.withLock {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_MAP_SERVICE) throw Failure("地图服务未启用，可用地图选点或坐标")
         val text = query.trim().take(120)
         require(text.length >= 2)
         val connection = PluginMapRequestAuth.currentPersonalAccess()

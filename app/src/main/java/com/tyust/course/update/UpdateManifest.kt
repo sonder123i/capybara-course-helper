@@ -181,10 +181,14 @@ object UpdateManifestVerifier {
         if (value.length > 4096) return false
         val url = value.toHttpUrlOrNull() ?: return false
         return url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null &&
-            url.port == 443 && url.host in setOf("dl.hidisiwa.xyz", "dl-test.hidisiwa.xyz", "github.com",
-                "raw.githubusercontent.com", "release-assets.githubusercontent.com", "gh-proxy.com", "ghproxy.net",
-                "gitee.com", "raw.giteeusercontent.com")
+            url.port == 443 && url.host in ALLOWED_UPDATE_HOSTS
     }
+
+    /** 更新与公告相关网络仅允许自建端点：本仓库 Pages、Gitee 镜像与双仓 Release 资产域。 */
+    private val ALLOWED_UPDATE_HOSTS = setOf("sonder123i.github.io",
+        "gitee.com", "raw.giteeusercontent.com", "attachments.gitee.com",
+        "github.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com")
 
     fun choose(candidates: List<UpdateManifest>, previous: UpdateManifest?): UpdateManifest? = candidates.filter {
         previous == null || (it.channel == previous.channel && it.revision >= previous.revision &&

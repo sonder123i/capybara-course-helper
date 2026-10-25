@@ -93,10 +93,8 @@ class UpdateManager internal constructor(private val context: Context,
     }
     private fun sources(channel: String): List<String> {
         testSources?.let { return it(channel) }
-        val host = if (channel == "test") "dl-test.hidisiwa.xyz" else "dl.hidisiwa.xyz"
-        val raw = "https://raw.githubusercontent.com/znjhahaha/zhengfang-apk/updates/$channel.json"
-        return listOf("https://$host/$channel.json", raw, "https://gh-proxy.com/$raw",
-            "https://gitee.com/znj12345/zhengfang/raw/main/app-update-$channel.json")
+        // 自建双源（GitHub Pages 主 + Gitee raw 备），见 SelfHostConfig。
+        return com.tyust.course.SelfHostConfig.updateManifestSources(channel)
     }
     private suspend fun fetch(url: String, selectedChannel: String): UpdateManifest {
         var target = url

@@ -38,6 +38,9 @@ object FeedbackManager {
         screenshotBase64: String? = null, // 新增图片支持
         includeLogs: Boolean = true // 新增日志开关
     ): Result<String> = withContext(Dispatchers.IO) {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_FEEDBACK) {
+            return@withContext Result.failure(IllegalStateException("本发行版未启用反馈上报"))
+        }
         try {
             val deviceId = com.tyust.course.activation.DeviceUtils.getDeviceId(context)
             val studentName = UserManager.getInstance().studentName ?: "未知用户"
@@ -117,6 +120,9 @@ object FeedbackManager {
      * 获取我的反馈历史
      */
     suspend fun getMyFeedbacks(context: Context): Result<List<FeedbackItem>> = withContext(Dispatchers.IO) {
+        if (!com.tyust.course.SelfHostConfig.ENABLE_REMOTE_FEEDBACK) {
+            return@withContext Result.success(emptyList())
+        }
         try {
             val deviceId = com.tyust.course.activation.DeviceUtils.getDeviceId(context)
             val timestamp = System.currentTimeMillis().toString()
