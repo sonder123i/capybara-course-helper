@@ -37,6 +37,10 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     // Glance：用 Compose 风格的 API 写桌面小组件，最终编译成 RemoteViews。
     implementation 'androidx.glance:glance-appwidget:1.2.0'
+    // Glance 传递引入 work-runtime 2.7.1（2021 年版本），其 Room 反射初始化在
+    // 基线的新工具链（R8 9.4.24，Kotlin 2.4 必需）下于冷启动崩溃
+    // （WorkDatabase_Impl 构造失败）。显式升到现代版本以获得配套 consumer 规则。
+    implementation 'androidx.work:work-runtime-ktx:2.10.0'
 
     testImplementation 'junit:junit:4.13.2'
     // JVM 单测里 android.jar 的 org.json 是桩实现，换成真实现才能测快照解析

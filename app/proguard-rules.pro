@@ -16,3 +16,8 @@
 # Keep this exception exact so other missing runtime dependencies still fail R8.
 -dontwarn com.amap.ams.gnss.GnssSoftLocator
 
+
+# Glance(:widget) 引入的 WorkManager 通过反射实例化 Room 生成类 WorkDatabase_Impl，
+# R8 full mode 会裁掉其无参构造导致冷启动崩溃（NoSuchMethodException / Failed to
+# create an instance）。work 2.10 的 consumer 规则在本工具链下未覆盖到，显式保留。
+-keep class androidx.work.impl.WorkDatabase_Impl { <init>(); }
