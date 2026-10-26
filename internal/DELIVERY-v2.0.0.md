@@ -13,12 +13,13 @@
 | 质量 | 1412 项单测 0 失败 · Lint 0 错误 · MuMu 全程实测通过 |
 | 上游依赖 | 作者服务器依赖清零；外链仅剩用户 GitHub 仓库、学校教务地址、插件自带源码仓库 |
 
-## 发版当前状态（重要：半完成态，交接时必须核对）
+## 发版当前状态（重要：对外产物为零，需完整重走发版）
 
-1. **GitHub Release v2.0.0**：build job 成功，大概率已带着三包与 release-notes 发布——先 `gh release view v2.0.0 -R sonder123i/capybara-course-helper` 核实内容与附件。
-2. **Gitee 侧全部未同步**（附件 / `docs/update/stable.json` / `version.json`）：App 的 Gitee 备源清单因此还是旧版，重跑方式见 release.yml 的 `sync-to-gitee` job（可从被取消的 run 重跑该 job，或删掉远端 Release 重打 tag 全量重走）。
-3. **tag 已删**：重新发版需重新打 `v2.0.0` tag 并推送（先确认 GitHub Release 若已存在，重推 tag 会触发全流程重跑，注意避免 Release 重复）。
-4. **取消原因待确认**：cancel 由用户账号执行（可能是主动停止 Gitee 同步，也可能是发现问题）。重跑前先问用户/看 `gh run view 40290028539 --log` 的 sync-to-gitee 段是否卡在某个步骤（Gitee API 超时/凭证问题常见）。
+1. **GitHub Release 未创建**（gh release list 最新为 v1.2.2）——Release 创建步骤在被取消的 job 里
+2. **Gitee 侧全部未同步**（附件 / `docs/update/stable.json` / `version.json`）
+3. **tag v2.0.0 已删除**（本地与远端），CI run 40290028539 被 `@sonder123i` 取消（build ✓ 22m，sync-to-gitee ✗ 15m 后取消）
+4. **可回收的产物**：被取消 run 的 artifacts 里有已构建的三包，但对外发布需重走流程
+5. **取消原因待确认**：重跑前先 `gh run view 40290028539 --log` 看 sync-to-gitee 段（Gitee API 超时/凭证问题常见），或直接问用户为何取消
 
 ## 交付明细（按 commit）
 
@@ -60,11 +61,11 @@
 
 ## 发版
 
-上一轮由发版 agent 执行至 build 成功、Gitee 同步被取消（见「发版当前状态」）。继续收尾的核对顺序：
+上一轮发版 agent 的尝试没有产出对外可见结果（Release/Gitee/Pages 均未落库），**发版需完整重走**：
 
-1. `gh release view v2.0.0` 确认 GitHub Release 现状（存在则补 Gitee 同步即可，不必重打 tag 全量重跑）
-2. 查被取消 run 的 sync-to-gitee 日志定位取消原因（凭证/超时/人工）
-3. 决定：重跑 sync-to-gitee job（推荐，增量）或删 Release 重打 tag 全量重走
-4. 完成后按 RELEASE-HANDOFF §6 做发布后抽查（Gitee 清单、Pages、真机检查更新）
+1. 先查 `gh run view 40290028539 --log` 的 sync-to-gitee 段，确认上次卡点（或问用户取消原因）
+2. 核对 §3 硬前置（Secrets、release-notes 已含收尾内容）
+3. `git push origin v2-main`，然后 `git tag v2.0.0 && git push origin refs/tags/v2.0.0` 触发全流程（build 约 22 分钟 + Gitee 同步）
+4. 完成后按 RELEASE-HANDOFF §6 做发布后抽查（GitHub Release 三包、Gitee 清单、Pages、真机检查更新）
 
-其余细节与执行命令见 `internal/RELEASE-HANDOFF.md`。
+执行命令细节见 `internal/RELEASE-HANDOFF.md`。
