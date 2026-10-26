@@ -4,6 +4,15 @@
 > 自 1.0.68 起，每个版本的更新日志以 `release-notes/vX.Y.Z.md` 为唯一数据源，由 CI 扇出到本文件、GitHub Release 与应用内更新提示。
 > 1.0.67 未发布：该 tag 的流水线在版本号校验步骤失败，未产出任何 Release，内容顺延至 1.0.68。
 
+## [2.0.3] - 2026-10-26
+
+- build: 移除 `onnxruntime-android`（11.6MB）与 `assets/plugin-models/slider-gap.ort`（4.7MB）；滑块缺口识别回落到 `PluginImageMatcher` 的纯 Kotlin 像素匹配（灰度 + 边缘 + 遮罩轮廓），常见拼图仍可识别
+- build: 排除 GeckoView 自带的崩溃上报 native 库（`libcrashtools.so` / `libcrashhelper.so`，3.7MB）——本发行版不接任何崩溃上报服务，也未启用 crash handler
+- build: arm64 包 191MB → 91.3MB，armeabi 88.7MB，通用包 156.3MB（均低于 Gitee 单附件 100MB 的部分才走 Gitee）
+- release: Gitee 附件改传 arm64 分包并按真实文件名判重；`version.json` 主源换 arm64 分包（约为通用包一半），备源保留通用包
+- license: 移除 AGPL-3.0 滑块模型后不再构成组合作品，NOTICE 更新为按 GPL-3.0 单独分发
+- feat/fix: 并入 2.0.2 全部内容——课表卡片回迁 1.x 排版（无教师行、课名 3 行、地点 2 行 + 9→7.3sp 自适应缩字号）、`ScheduleLocation.compact` 短地址漏裁校区修复、「现在是第几周」反推、匿名统计弹窗与统一登录适配入口清理、基础设置上移到课前提醒之后
+
 ## [2.0.2] - 2026-10-26
 
 - fix(schedule): 课表卡片回迁 1.x 排版——移除卡片内教师行，课程名最多 3 行、地点最多 2 行自然折行；网格行高测量同步改为同一套行数预算
