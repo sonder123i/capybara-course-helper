@@ -68,8 +68,10 @@ class ErrorReportActivity : ComponentActivity() {
         button("复制日志", ::copy)
         button("复制并反馈") {
             copy()
-            runCatching { PluginFeedback.open(this, errorCode = "APP_RUNTIME_ERROR") }
-                .onFailure { Toast.makeText(this, "无法打开反馈页面，请稍后重试", Toast.LENGTH_SHORT).show() }
+            // 反馈落到 GitHub Issue：日志已经进了剪贴板，粘贴到正文即可。
+            if (!PluginFeedback.open(this, errorCode = "APP_RUNTIME_ERROR")) {
+                Toast.makeText(this, "没有可打开网页的应用，日志已复制", Toast.LENGTH_SHORT).show()
+            }
         }
         button("返回应用") { finish() }
         setContentView(root)

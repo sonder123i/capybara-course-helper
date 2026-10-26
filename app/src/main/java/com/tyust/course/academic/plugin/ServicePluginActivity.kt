@@ -241,7 +241,7 @@ class ServicePluginActivity : ComponentActivity() {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("service-busy"))
                 if (message.isNotBlank()) {
                     Text(message, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("service-message"))
-                    SystemDialogButton(onClick = { PluginFeedback.open(this@ServicePluginActivity, pkg) }) { Text("快捷反馈") }
+                    SystemDialogButton(onClick = { PluginFeedback.open(this@ServicePluginActivity, pkg) }) { Text("问题反馈") }
                 }
                 if (!loggedIn && runtime.sharesAcademicSession) {
                     ServiceAcademicEntry(academicEntry, busy, onAuthorize = { run {
