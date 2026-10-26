@@ -588,8 +588,9 @@ jobs:
           echo "--- Step 2: Upload APK ---"
 
           if [ -n "$RELEASE_ID" ]; then
-            # Gitee 单附件上限 100MB。2.x 的包远超这个数，硬传只会让 curl 挂住
-            # 半小时以上（v2.0.1/v2.0.2 实测），并且拖死同 job 里的 Pages 落库。
+            # Gitee 单附件上限 100MB；减包后 arm64 分包 92MB 刚好在限内。
+            # 但 GitHub runner 到 Gitee 的上传带宽实测只有 ~100KB/s（v2.0.3 实测
+            # 15 分钟没传完就超时），所以超时给到 40 分钟——这是后台 job，不挡发版。
             APK_BYTES=$(stat -c%s "$APK_FILE")
             if [ "$APK_BYTES" -gt 104857600 ]; then
               echo "::warning::APK ${APK_BYTES} 字节超过 Gitee 单附件上限（100MB），跳过 Gitee 附件上传。"
@@ -607,7 +608,7 @@ jobs:
               echo "APK asset already exists (ID: $EXISTING_ASSET), skipping upload"
             else
               echo "Uploading APK..."
-              UPLOAD_RESPONSE=$(curl -s --max-time 900 -X POST \
+              UPLOAD_RESPONSE=$(curl -s --max-time 2400 -X POST \
                 "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files" \
                 -F "access_token=${GITEE_TOKEN}" \
                 -F "file=@${APK_FILE}")
