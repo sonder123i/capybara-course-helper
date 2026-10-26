@@ -1,0 +1,17 @@
+本目录数据（app/src/main/assets/school_catalog.json）来源于开源项目 shangkeschedule：
+
+    https://github.com/qiqqqqq517/shangkeschedule
+
+Copyright (c) shangkeschedule contributors
+Licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0)
+
+本项目对该数据的修改（依据 Apache-2.0 第 4 条声明）：
+
+    1. 仅保留校名、教务地址、原始教务类型三列，并新增拼音全拼（py）、
+       拼音首字母（ini）、排序字母（ab）三个索引字段；
+    2. 将原始教务类型映射到本项目已有的适配器（正方新版 zf / 强智新版 qz /
+       强智旧版 qz_old），其余类型标记为暂未适配；
+    3. 过滤掉缺少校名或教务地址的条目，并按（校名, 地址）去重、按拼音排序。
+
+加载与使用逻辑见 com.k2767.course.model.SchoolCatalog。

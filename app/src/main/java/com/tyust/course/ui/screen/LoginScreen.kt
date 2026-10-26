@@ -86,6 +86,7 @@ fun LoginScreen(
     onServiceCenter: () -> Unit = {},
     onManageBindings: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
+    onBrowseCatalog: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     isLoading: Boolean = false,
     errorMessage: String? = null,
@@ -286,6 +287,7 @@ fun LoginScreen(
                             onSelected = { selectedSchool = it; onSchoolSelected(it) }, onAdded = onSchoolAdded,
                             onAddManually = { addSchoolName = it; showAddSchoolDialog = true },
                             onManage = { showSchoolManagement = true },
+                            onBrowseCatalog = onBrowseCatalog,
                             subtitle = if (selectedSchoolIndex == null) com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS
                                 else com.tyust.course.academic.AcademicCapabilities.name(schools[selectedSchoolIndex].academicSystem))
                         if (onSchoolPlugins != null) {

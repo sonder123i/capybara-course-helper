@@ -29,7 +29,7 @@ private data class PendingSchoolInstall(val pkg: PluginPackage, val school: Scho
 @Composable
 fun SchoolSearchPicker(schools: List<SchoolConfig>, selected: SchoolConfig?, enabled: Boolean,
     onSelected: (SchoolConfig) -> Unit, onAdded: () -> Unit, onAddManually: (String) -> Unit,
-    onManage: () -> Unit, subtitle: String? = null) {
+    onManage: () -> Unit, subtitle: String? = null, onBrowseCatalog: (() -> Unit)? = null) {
     var open by remember { mutableStateOf(false) }
     InsetGroupedRow(title = selected?.name ?: "搜索学校", subtitle = subtitle ?: "搜索或切换学校",
         icon = Icons.Default.School, showDivider = false, enabled = enabled, onClick = { open = true },
@@ -38,14 +38,14 @@ fun SchoolSearchPicker(schools: List<SchoolConfig>, selected: SchoolConfig?, ena
     if (open) SchoolSearchDialog(schools, onDismiss = { open = false }, onSelected = {
         onSelected(it); open = false
     }, onAdded = onAdded, onAddManually = { open = false; onAddManually(it) },
-        onManage = { open = false; onManage() })
+        onManage = { open = false; onManage() }, onBrowseCatalog = { open = false; onBrowseCatalog?.invoke() })
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Unit,
     onSelected: (SchoolConfig) -> Unit, onAdded: () -> Unit, onAddManually: (String) -> Unit,
-    onManage: () -> Unit) {
+    onManage: () -> Unit, onBrowseCatalog: (() -> Unit)? = null) {
     val scope = rememberCoroutineScope()
     val gate = remember { SchoolSearchSession() }
     var job by remember { mutableStateOf<Job?>(null) }
@@ -129,6 +129,8 @@ private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Uni
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SystemActionButton("搜索", ::submit, icon = Icons.Default.Search, enabled = query.isNotBlank() && !busy)
                 SystemActionButton("手动添加", { manual(query.trim()) }, icon = Icons.Default.Add)
+                if (onBrowseCatalog != null) SystemActionButton("内置学校库", { cancel(); onBrowseCatalog() },
+                    icon = Icons.Default.School, enabled = !busy)
                 SystemActionButton("管理学校", { cancel(); onManage() }, icon = Icons.Default.Settings)
             }
             if (loading) Text("正在查询学校适配，本地学校仍可选择…", style = MaterialTheme.typography.bodySmall)

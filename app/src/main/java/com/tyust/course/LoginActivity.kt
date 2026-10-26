@@ -184,6 +184,8 @@ class LoginActivity : ComponentActivity() {
                 // Use mutableStateOf for reactive schools list
                 var schools by remember(schoolRevision) { mutableStateOf(UserManager.getInstance().supportedSchools) }
                 var showSchoolAdaptation by remember { mutableStateOf(false) }
+                var showSchoolCatalog by remember { mutableStateOf(false) }
+                var schoolFavorites by remember { mutableStateOf(com.tyust.course.model.SchoolCatalogFavorites.load(this@LoginActivity)) }
                 
                 // 🔧 强化版学校选择记忆逻辑
                 LaunchedEffect(schools) {
@@ -201,7 +203,23 @@ class LoginActivity : ComponentActivity() {
                 }
                 
                 // 如果正在自动验证，显示加载状态
-                if (showSchoolAdaptation) {
+                if (showSchoolCatalog) {
+                    // 1.x 移植回来的 1777 校内置学校库：中文/拼音/首字母搜索 + A–Z 索引 + 收藏。
+                    com.tyust.course.ui.screen.SchoolPickerScreen(
+                        favorites = schoolFavorites,
+                        onToggleFavorite = { id ->
+                            schoolFavorites = com.tyust.course.model.SchoolCatalogFavorites.toggle(this@LoginActivity, id)
+                        },
+                        onSelect = { school ->
+                            selectedLoginSchool = school
+                            manualLoginInteraction = true
+                            invalidateLoginAttempt()
+                            schools = UserManager.getInstance().supportedSchools
+                            showSchoolCatalog = false
+                        },
+                        onBack = { showSchoolCatalog = false }
+                    )
+                } else if (showSchoolAdaptation) {
                     SchoolAdaptationFlow(
                         onNavigateBack = { showSchoolAdaptation = false }
                     )
@@ -238,6 +256,7 @@ class LoginActivity : ComponentActivity() {
                     onSchoolAdaptation = {
                         showSchoolAdaptation = true
                     },
+                    onBrowseCatalog = { showSchoolCatalog = true },
                     onPasswordLogin = { username, password ->
                         handlePasswordLogin(username, password)
                     },
