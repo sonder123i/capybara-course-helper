@@ -133,3 +133,57 @@ scripts/release.sh 2.0.0 --push
 - **测试**：`gradlew test lint`（JVM+Lint，发布门禁）；`gradlew :app:connectedDebugAndroidTest -PemulatorPreview=true`（深度回归，含 11 项已知 MuMu 环境失败）
 - **构建环境**：JDK 必须 `D:\Java\jdk-17.0.16+8`；MuMu 模拟器用 `-PemulatorPreview=true` 构建 x86_64
 - **密钥**：更新签名私钥、release keystore 密码在 `local.properties`（已 gitignore）+ GitHub Secrets（CI 用）；**两者丢失则更新通道永久失效**
+
+---
+
+## 九、v2.0.2 增补（2026-10-26 晚）
+
+### 版本与内容
+
+| 版本 | versionCode | 内容 |
+|---|---|---|
+| v2.0.1 | 20001 | 课表卡片回迁 1.x 排版（无教师行、课名 3 行、地点 2 行 + 自适应缩字号）、`ScheduleLocation.compact` 短地址漏裁校区修复、「现在是第几周」反推开学日期 |
+| v2.0.2 | 20002 | v2.0.1 全部内容 + 关掉匿名统计弹窗/设置开关、隐藏「统一登录适配」入口、「基础设置」上移到「课前提醒」之后 |
+
+### 发布链路的两个实测坑
+
+1. **HTTPS 推 GitHub 走本地代理 502**：`git push origin` 报 `CONNECT tunnel failed, response 502`，
+   直连也超时；改用 SSH 正常：
+   ```bash
+   git push git@github.com:sonder123i/capybara-course-helper.git v2-main
+   git push git@github.com:sonder123i/capybara-course-helper.git refs/tags/vX.Y.Z
+   ```
+2. **`sync-to-gitee` job 会在上传 191MB 附件后长时间挂住**（v2.0.1 实测 45 分钟仍在 in_progress）。
+   而 `docs/update/stable.json` 与 `docs/version.json` 的落库写在这个 job 的**最后一步**，
+   于是主源也被一起拖住。应急做法：
+   ```bash
+   gh run download <run-id> -n update-manifest -D ./manifest   # 已含签名清单
+   # 在 main 的 worktree 里放入 docs/update/stable.json + docs/version.json 后 push
+   ```
+   Pages 40 秒内重新部署，`update/stable.json` 即可访问。
+   **后续建议**：把 Pages 落库从 `sync-to-gitee` 拆成独立 job（`needs: build`），别让备源阻塞主源。
+
+### 更新通道验证结论（v2.0.1 实测）
+
+| 检查 | 结果 |
+|---|---|
+| `update/stable.json` | HTTP 200 · 2003 bytes |
+| 清单签名 | 用 `app-update-keys.json` 公钥 `openssl dgst -verify` → Verified OK |
+| 发布包完整性 | 下载 `app-release.apk`（199,927,387 B），sha256 与清单逐字节一致 |
+| App 端解析 | `UpdateFeedDeviceTest`（debug 变体连线上双源）→ packageName/版本/线路全部正确，当前 20001 判定「已是最新」 |
+| 更新弹窗 | **未登录时不弹**：`MainActivity:689` 的渲染条件是 `!session.expired`。演示模式也会被 `SettingsRoute.checkForUpdate()` 拦住（提示「本地演示模式不执行更新检查」）。真机验收需登录任一账号 |
+
+### 更新包体积
+
+CI 的 `Normalize Release APK Name` 把 universal 包改名为 `app-release.apk` 发布，清单没有
+`artifacts` 字段 → 所有设备下载通用包（191MB）。`UpdateManifest.forDevice()` 已支持按 ABI
+分发（arm64 111MB / armeabi 108MB），但 `make_update_manifest.py` 还没有对应参数、
+Gitee 也只同步一个附件，所以暂未启用。要做的话：脚本加 `--artifact abi=path`、
+CI 的 Release 上传两个 ABI 包、Gitee 同步两个附件。
+
+### 关闭上游入口的开关
+
+| 功能 | 开关 | 现状 |
+|---|---|---|
+| 匿名使用统计弹窗/设置项 | `SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS` | `false`，UI 直接不渲染 |
+| 统一登录适配入口（登录页 + 设置页） | `SelfHostConfig.ENABLE_SCHOOL_SERVICE_BACKEND` | `false`，入口隐藏；底层 `SchoolAdaptationScreen` 保留在库 |
