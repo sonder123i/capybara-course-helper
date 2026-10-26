@@ -15,11 +15,11 @@
 
 ## 发版当前状态（重要：对外产物为零，需完整重走发版）
 
-1. **GitHub Release 未创建**（gh release list 最新为 v1.2.2）——Release 创建步骤在被取消的 job 里
-2. **Gitee 侧全部未同步**（附件 / `docs/update/stable.json` / `version.json`）
-3. **tag v2.0.0 已删除**（本地与远端），CI run 40290028539 被 `@sonder123i` 取消（build ✓ 22m，sync-to-gitee ✗ 15m 后取消）
+1. **GitHub Release 已删除**：曾于 08:28Z 创建（3 个 APK 齐全），回滚时已连同资产删除（`gh release list` 最新为 v1.2.2）——不是「创建在被取消的 job 里」，创建发生在取消之前
+2. **Gitee 有残留，重发前必须人工删除（硬前置）**：sync-to-gitee 被取消前已创建 Release v2.0.0 对象、附件 curl 上传中途被杀；releases 页至今可见 v2.0.0。CI 对已存在的 Release 是「跳过复用」，不删会把旧/残缺附件挂在新包上。删除入口：https://gitee.com/sonder123i/capybara-course-helper/releases → v2.0.0 → 删除（tags 页已无 v2.0.0）
+3. **tag v2.0.0 已删除**（本地与远端），CI run 40290028539 结论 cancelled（build ✓ 22m，sync-to-gitee 附件上传段被取消）
 4. **可回收的产物**：被取消 run 的 artifacts 里有已构建的三包，但对外发布需重走流程
-5. **取消原因待确认**：重跑前先 `gh run view 40290028539 --log` 看 sync-to-gitee 段（Gitee API 超时/凭证问题常见），或直接问用户为何取消
+5. **取消原因已确认**：用户在本地做地图移除调整（→ 712f915），主动叫停发版。sync-to-gitee 日志显示附件（curl）上传进行中被杀、无 API/凭证报错——重发时 Gitee 上传段预计仍需 15 分钟以上，属正常耗时，不要误判为卡死
 
 ## 交付明细（按 commit）
 
@@ -34,7 +34,7 @@
 | 3a1054d | **移除公告中心与问卷中心**：入口、未读角标、轮询、弹窗、WebView 全部拆除；`ENABLE_REMOTE_ANNOUNCEMENT=false`；README/官网文案同步 |
 | 712f915 | **地图 SDK 物理移除**：11 个源文件 + maplibre/amap 依赖删除，arm64 包 -33MB；`device.location.pick` 能力改为明确报不支持 |
 | 5507480 | **发版交接文档**：RELEASE-HANDOFF.md（runbook 增补与过时点修正） |
-| 5f3bfe1* | **更新历史替换**：设置页更新历史从上游 50 条改为发行版专属 12 条（本篇同批提交） |
+| 3a1054d（同笔并入） | **更新历史替换**：设置页更新历史从上游 50 条改为发行版专属 12 条 |
 
 ## 用户可见变化一览
 
@@ -63,9 +63,17 @@
 
 上一轮发版 agent 的尝试没有产出对外可见结果（Release/Gitee/Pages 均未落库），**发版需完整重走**：
 
-1. 先查 `gh run view 40290028539 --log` 的 sync-to-gitee 段，确认上次卡点（或问用户取消原因）
-2. 核对 §3 硬前置（Secrets、release-notes 已含收尾内容）
-3. `git push origin v2-main`，然后 `git tag v2.0.0 && git push origin refs/tags/v2.0.0` 触发全流程（build 约 22 分钟 + Gitee 同步）
-4. 完成后按 RELEASE-HANDOFF §6 做发布后抽查（GitHub Release 三包、Gitee 清单、Pages、真机检查更新）
+1. ~~查上次卡点~~ 已完成：附件上传中被用户叫停，无 API/凭证错误（见「发版当前状态」第 5 条）
+2. 硬前置已核：Secrets 6/6（2026-10-26 实测 `gh secret list`）；release-notes / CHANGELOG / 公告已含全部收尾内容，体积（130→110MB）与测试数（1412）已按实测修正
+3. **前置人工步骤**：在 Gitee 网页删除残留的 Release v2.0.0（agent 无 GITEE_TOKEN，见「发版当前状态」第 2 条）
+4. 推送分支并打**附注 tag**。注意：**不要重跑 `release.sh 2.0.0`**——发版提交 `ca2f1a7` 已包含全部版本文件，重跑会死在「nothing to commit」；**不要建轻量 tag**——仓库规矩重打 tag 须 `-a`：
+
+   ```bash
+   git push git@github.com:sonder123i/capybara-course-helper.git v2-main
+   git tag -a v2.0.0 -m "Release v2.0.0"
+   git push git@github.com:sonder123i/capybara-course-helper.git refs/tags/v2.0.0
+   ```
+
+5. 完成后按 RELEASE-HANDOFF §6 做发布后抽查（GitHub Release 三包、Gitee 清单、Pages、真机检查更新）
 
 执行命令细节见 `internal/RELEASE-HANDOFF.md`。
