@@ -112,7 +112,13 @@ class PluginCenterActivity : ComponentActivity() {
         val current = resolved?.getOrNull()
 
         suspend fun refresh() {
-            packages = withContext(Dispatchers.IO) { AcademicProviderRegistry.reload(); AcademicProviderRegistry.packages().list() }
+            // 内置协议包存在 assets 里、不在 store 里，但用户视角同样是「已安装」。
+            // 原先只取 store.list()，「已安装」页只剩用户手动装过的包，内置的那 10 个看不见，
+            // 会让人以为校园插件丢了。knownPackages() = bundled + installed。
+            packages = withContext(Dispatchers.IO) {
+                AcademicProviderRegistry.reload()
+                AcademicProviderRegistry.knownPackages().sortedBy { it.manifest.id }
+            }
             val snapshot = packages.sortedBy { it.manifest.id }.joinToString { it.digest }
             if (packageSnapshot != null && packageSnapshot != snapshot) changed = true
             packageSnapshot = snapshot
@@ -133,6 +139,13 @@ class PluginCenterActivity : ComponentActivity() {
             catch (e: Exception) { message = e.message ?: "已安装插件读取失败" }
         }
         fun loadCatalog() {
+            // 本发行版不接入在线插件目录（见 SelfHostConfig.ENABLE_PLUGIN_DIRECTORY）。
+            // 这里直接短路，既不发那个注定失败的请求，也不把「没接入」显示成「网络不好」。
+            if (!com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY) {
+                catalogLoading = false
+                catalogError = "本发行版未接入在线插件目录"
+                return
+            }
             if (catalogJob?.isActive == true) return
             catalogLoading = true; catalogError = ""
             catalogJob = scope.launch {
@@ -144,6 +157,9 @@ class PluginCenterActivity : ComponentActivity() {
         }
         LaunchedEffect(catalogClient) {
             catalogJob?.cancelAndJoin()
+            // 目录关闭时连本地缓存也不读：从 1.x 升上来的用户磁盘里可能还留着上游客服目录的副本，
+            // 显示出来会让人以为这些插件仍然可装。
+            if (!com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY) { loadCatalog(); return@LaunchedEffect }
             catalog = catalogClient.cached()
             loadCatalog()
         }
@@ -283,24 +299,31 @@ class PluginCenterActivity : ComponentActivity() {
             actions = {
                 GlassSearchFilterPanel(panel, { focus.clearFocus(); if (it != null) schoolAfterPanel = false; panel = it }, onClosed = {
                     if (schoolAfterPanel) { schoolAfterPanel = false; if (panel == null) chooseSchool = true }
-                }, moreActions = listOf(
-                    SystemMenuAction("从文件安装", Icons.Outlined.FileOpen, { importer.launch(arrayOf("*/*")) }, enabled = !busy),
-                    SystemMenuAction("刷新插件目录", Icons.Outlined.Refresh, { loadCatalog() }, enabled = !catalogLoading),
-                    SystemMenuAction("打开插件商店", Icons.Outlined.Storefront, { web("/") }),
-                    SystemMenuAction("导入、回滚与开发工具", Icons.Outlined.Build, {
+                }, moreActions = buildList {
+                    add(SystemMenuAction("从文件安装", Icons.Outlined.FileOpen, { importer.launch(arrayOf("*/*")) }, enabled = !busy))
+                    // 目录被发行版关掉后，「刷新/商店/文档」三个入口全都指向同一个注定失败的端点，
+                    // 留在菜单里只会让人反复点、反复失败。
+                    if (com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY) {
+                        add(SystemMenuAction("刷新插件目录", Icons.Outlined.Refresh, { loadCatalog() }, enabled = !catalogLoading))
+                        add(SystemMenuAction("打开插件商店", Icons.Outlined.Storefront, { web("/") }))
+                        add(SystemMenuAction("开发文档与交流群", Icons.Outlined.MenuBook, { web("/developers") }))
+                    }
+                    add(SystemMenuAction("导入、回滚与开发工具", Icons.Outlined.Build, {
                         developerTools.launch(Intent(this@PluginCenterActivity, PluginDeveloperActivity::class.java)
                             .putExtra(EXTRA_TARGET_SCHOOL, targetSchoolId))
-                    }),
-                    SystemMenuAction("开发文档与交流群", Icons.Outlined.MenuBook, { web("/developers") })
-                ), search = searchControls, filters = filterControls)
+                    }))
+                }, search = searchControls, filters = filterControls)
             }, expandedControls = {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton({ panel = BrowserPanel.Filters }) { Text(type.label + " · " +
-                        if (onlySchool) (school?.name ?: "未选择学校") else "全部学校") }
+                    if (com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY) {
+                        TextButton({ panel = BrowserPanel.Filters }) { Text(type.label + " · " +
+                            if (onlySchool) (school?.name ?: "未选择学校") else "全部学校") }
+                    }
                     if (query.isNotBlank()) TextButton({ panel = BrowserPanel.Search }) {
                         Text("搜索：$query", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    if (query.isNotBlank() || onlySchool || type != PluginDiscovery.Type.ALL) TextButton({
+                    if (query.isNotBlank() || (com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY &&
+                        (onlySchool || type != PluginDiscovery.Type.ALL))) TextButton({
                         query = ""; onlySchool = false; type = PluginDiscovery.Type.ALL
                     }) { Text("清除条件") }
                 }
@@ -342,7 +365,9 @@ class PluginCenterActivity : ComponentActivity() {
                     if (catalogLoading && !installedView) item("loading") {
                         LinearProgressIndicator(Modifier.fillMaxWidth().testTag("plugin-catalog-loading"))
                     }
-                    if (catalogError.isNotBlank() && !installedView) item("error") {
+                    // 目录开启时才显示加载错误；目录关闭时的说明由空态一行承担，不重复刷屏。
+                    if (catalogError.isNotBlank() && !installedView &&
+                        com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY) item("error") {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(catalogError, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -358,13 +383,24 @@ class PluginCenterActivity : ComponentActivity() {
                     }
                     val entries = if (installedView) installed else discovered
                     if (entries.isEmpty() && !(catalogLoading && !installedView)) item("empty") {
+                        val catalogOff = !com.tyust.course.SelfHostConfig.ENABLE_PLUGIN_DIRECTORY
                         Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Outlined.Extension, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(if (query.isNotBlank() || onlySchool) "没有找到匹配的插件" else if (installedView) "还没有安装插件" else "暂时没有可用插件")
-                            Text(if (query.isNotBlank() || onlySchool) "试试其他关键词，或查看全部学校" else "学校适配和校园服务都可以在这里找到",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (installedView && query.isBlank() && !onlySchool) SystemDialogButton(onClick = { installedView = false }) { Text("去发现插件") }
+                            Text(when {
+                                query.isNotBlank() || onlySchool -> "没有找到匹配的插件"
+                                installedView -> "还没有安装插件"
+                                catalogOff -> "教务适配已随安装包内置"
+                                else -> "暂时没有可用插件"
+                            })
+                            Text(when {
+                                query.isNotBlank() || onlySchool -> "试试其他关键词，或查看全部学校"
+                                // 数「随包内置」的（bundled=true），别按 isAcademic 过滤——
+                                // 内置协议包的 manifest 不声明 academic 标志，那样数出来恒为 0。
+                                catalogOff -> "共 ${AcademicProviderRegistry.knownPackages().count { it.bundled }} 个教务协议包随包提供，选好学校自动生效，无需在此安装"
+                                else -> "学校适配和校园服务都可以在这里找到"
+                            }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (installedView && query.isBlank() && !onlySchool && !catalogOff) SystemDialogButton(onClick = { installedView = false }) { Text("去发现插件") }
                         }
                     }
                     items(entries, key = { it.getString("id") }) { entry ->
@@ -474,7 +510,7 @@ class PluginCenterActivity : ComponentActivity() {
                     if (detailSection == "source") {
                     Detail("作者", author?.optString("name")?.ifBlank { null } ?: pkg.manifest.json.optString("author").ifBlank { "作者未公开" })
                     author?.optString("bio")?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    if (authorRef.isNotBlank()) SystemDialogButton(onClick = { web("/authors/" + Uri.encode(authorRef)) }) { Text("作者主页") }
+                    // 「作者主页」原指向作者站点 /authors/<ref>，本发行版不接入该站点，仅保留源码仓库链接。
                     Detail("版本与兼容", "${pkg.manifest.version} · API ${pkg.manifest.apiVersion}" + if (pkg.official) " · 已验证签名" else " · 开发包")
                     Detail("许可证", source?.optString("license")?.ifBlank { null } ?: pkg.manifest.json.optString("license").ifBlank { "作者未提供" })
                     val repository = PluginSourceDetails.repository(source?.optString("repository")?.ifBlank { null } ?: pkg.manifest.json.optString("repository"))
@@ -550,7 +586,7 @@ class PluginCenterActivity : ComponentActivity() {
                     SystemDialogButton(onClick = { AcademicProviderRegistry.setEnabled(pkg.manifest.id, !AcademicProviderRegistry.isEnabled(pkg.manifest.id)); generation++; selected = null }) {
                         Text(if (AcademicProviderRegistry.isEnabled(pkg.manifest.id)) "停用所有入口与任务" else "启用插件")
                     }
-                    SystemDialogButton(onClick = { PluginFeedback.open(this@PluginCenterActivity, pkg) }) { Text("快捷反馈") }
+                    SystemDialogButton(onClick = { PluginFeedback.open(this@PluginCenterActivity, pkg) }) { Text("问题反馈") }
                     SystemDialogButton(destructive = true, onClick = { selected = null; uninstall = pkg }) { Text(if (AcademicProviderRegistry.installedOverride(pkg)) "卸载插件" else "停用内置插件") }
                     }
                 }
