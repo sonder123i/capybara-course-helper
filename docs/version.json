@@ -1,7 +1,7 @@
 {
-  "versionCode": 20001,
-  "versionName": "2.0.1",
-  "releaseNotes": "课表卡片回到 1.x 的排版：课程名最多三行、地点两行，教师信息移到课程详情。七列窄卡片里「九龙湖教学楼 406」不再被压成「九龙…」——地点在 9sp 排不下时自动缩到 8.1sp 或 7.3sp，楼栋与教室号都留在卡片上；短地址的校区前缀也会被裁掉。\n课表设置新增「现在是第几周」：不知道开学是哪天，填本周是第几周就能反推出第一周日期。它和「第一周开始日期」写同一个入口，开始时跟随「每周第一天」，课前提醒与桌面组件同步生效。\n体积提醒：更新仍按设备架构分发，arm64 包约 111MB，建议在 Wi-Fi 下安装。",
-  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v2.0.1/app-release.apk",
+  "versionCode": 20002,
+  "versionName": "2.0.2",
+  "releaseNotes": "课表卡片回到 1.x 的排版：课程名最多三行、地点两行，教师信息移到课程详情。七列窄卡片里「九龙湖教学楼 406」不再被压成「九龙…」，楼栋与教室号都留在卡片上；短地址的校区前缀也会被裁掉。\n课表设置新增「现在是第几周」：填本周是第几周就能反推出第一周日期，课前提醒与桌面组件同步生效。基础设置整体上移到课前提醒之后，开学日期和每天节数不用再往下翻。\n清掉了两处用不上的上游功能：匿名使用统计的启动弹窗与设置开关，以及登录页和设置页的「统一登录适配」入口。\n体积提醒：arm64 包约 111MB，更新按设备架构分发，建议在 Wi-Fi 下安装。",
+  "downloadUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v2.0.2/app-release.apk",
   "forceUpdate": false
 }
