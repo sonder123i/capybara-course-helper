@@ -216,7 +216,7 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                 if (approvedSharedWrite && sharedRequest != null) operation.markAuthorizedSharedWrite()
                 else operation.markMutation()
             }
-            val call = PluginHttpClients.call(operation, url, requestCookies, PluginMapRequestAuth.authorize(builder).build())
+            val call = PluginHttpClients.call(operation, url, requestCookies, builder.build())
             operation.register(call)
             dataGuard?.track(operation)
             try {

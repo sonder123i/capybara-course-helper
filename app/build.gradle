@@ -222,8 +222,8 @@ dependencies {
     // Loaded only by the private browser process on API 26+. Android 7 keeps the base App.
     implementation 'org.mozilla.geckoview:geckoview:157.0.20261005135250'
     // The default 13.x artifact is Vulkan-only; MuMu Android 12 cannot create its surface.
-    implementation 'org.maplibre.gl:android-sdk-opengl:13.6.1'
-    implementation 'com.amap.api:3dmap-location-search:11.3.100_loc11.3.000_sea9.8.1'
+    // 地图 SDK（高德 3dmap-location-search 33MB + MapLibre 10MB）已随地图服务功能移除，
+    // 原引用的 11 个 Plugin* 地图源文件一并删除——省出约 45MB 安装体积。
     // AMap's JAR references FastMath but its published POM omits this dependency.
     implementation 'net.jafama:jafama:2.3.2'
     implementation 'androidx.activity:activity-compose:1.10.1'

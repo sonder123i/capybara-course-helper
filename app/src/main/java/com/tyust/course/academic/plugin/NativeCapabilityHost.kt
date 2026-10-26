@@ -163,14 +163,17 @@ class NativeCapabilityHost internal constructor(
                 }
                 "services.discover", "services.call", "workflow.prepare", "workflow.step", "workflow.reconcile", "workflow.cancel", "workflow.list" -> services.execute(name, input, flow)
                 "network.request" -> network(input, flow)
-                "device.location.pick", "images.puzzle" -> {
-                    val images = if (name == "images.puzzle") listOf(files.file(input.getString("backgroundHandle")), files.file(input.getString("pieceHandle"))) else emptyList()
+                "images.puzzle" -> {
+                    val images = listOf(files.file(input.getString("backgroundHandle")), files.file(input.getString("pieceHandle")))
                     val result = PluginExecutionBudget.userInput { withContext(Dispatchers.Main) { interaction!!.visual(name, input, images) } }
                         ?: throw PluginException(PluginErrorCode.CANCELLED, "已取消操作")
                     ensureActive()
-                    if (name == "images.puzzle" && System.currentTimeMillis() >= input.getLong("expiresAt")) throw PluginException(PluginErrorCode.SESSION_EXPIRED, "验证图片已过期，请重新获取")
+                    if (System.currentTimeMillis() >= input.getLong("expiresAt")) throw PluginException(PluginErrorCode.SESSION_EXPIRED, "验证图片已过期，请重新获取")
                     result
                 }
+                // 地图选点（device.location.pick）已随地图服务移除：给插件一个明确的失败，
+                // 而不是挂起等一个永远不会出现的选点界面。
+                "device.location.pick" -> throw PluginException(PluginErrorCode.UNSUPPORTED, "本发行版未提供地图选点，请改用手动输入坐标")
                 "images.match" -> withContext(Dispatchers.Default) { PluginImageMatcher.match(files.file(input.getString("backgroundHandle")), files.file(input.getString("pieceHandle")), input.optDouble("expectedY").takeIf { it.isFinite() }, app) }
                 "records.upsert" -> withContext(Dispatchers.IO) { records.upsert(input) }
                 "records.query" -> withContext(Dispatchers.IO) { records.query(input) }

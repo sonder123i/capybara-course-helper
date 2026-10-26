@@ -28,7 +28,7 @@ internal class PluginVisualPrompt(val kind: String, val input: JSONObject, val i
 }
 @Composable internal fun NativePluginVisualPrompts(state: PageInteraction) {
     val prompt = state.visualPrompt ?: return
-    key(prompt.id) { if (prompt.kind == "device.location.pick") LocationPrompt(prompt) else PuzzlePrompt(prompt) }
+    key(prompt.id) { PuzzlePrompt(prompt) }
 }
 
 @Composable private fun PuzzlePrompt(prompt: PluginVisualPrompt) {
