@@ -9,39 +9,31 @@
 | 项 | 状态 |
 | --- | --- |
 | 分支 | `v2-main`（工作区干净） |
-| 本地未推送 commit | `git log origin/v2-main..HEAD` 应为 8 笔（1 笔 docs + 7 笔发行版收尾，见 §2） |
+| 本地未推送 commit | `git log origin/v2-main..HEAD` 应为 9 笔（7 笔发行版收尾 + 2 笔 docs：`5507480` 本文档与随后的文案清理提交；`1475a13` 已推送、不计入，见 §2） |
 | tag | `v2.0.0` **尚未打**（只有 `v2.0.0-rc1`；正式 tag 由 release.sh 创建） |
 | version.properties | `VERSION_NAME=2.0.0 / VERSION_CODE=20000`（与 tag 规则一致，勿手改） |
 | 版本号权威 | **tag**。CI 从 tag 反写 version.properties；已推送的 tag 永不移动（1.0.67 事故规矩） |
 | remotes | `origin`=GitHub（发版主战场）、`gitee`=Gitee（双源备）、`upstream`=上游（**永远不要 push**） |
 | CHANGELOG | `[2.0.0] - 2026-10-26` 段已存在 |
-| release-notes | `release-notes/v2.0.0.md` 已存在，**但缺 rc1 之后的收尾内容（§1 补）** |
+| release-notes | `release-notes/v2.0.0.md` 已增补完成：notes 已改写为无标记 4 条、收尾内容已并入（§1 已做完，2026-10-26） |
 
-## 1. 发版前必须做：增补 release-notes（CI 扇出的唯一数据源）
+## 1. release-notes 增补（已于 2026-10-26 完成，勿重复执行）
 
-`release-notes/v2.0.0.md` 目前只写到 rc 阶段。rc1 之后还有 8 笔 commit（发行版收尾轮），把下面这段追加到该文件的 `## notes` 列表末尾（文案已备好，直接粘贴）：
+本节原先提供「直接粘贴」的收尾文案，现已全部落地。**不要再往 `## notes` 里粘贴列表**，原因与现状：
 
-```markdown
-- 正式版收尾（rc1 之后）：更新检查区分「渠道未发布」与「网络故障」，主源确认无清单时提示「已是最新版本」而非误报换网络；插件中心不再请求已切断的在线目录，空态直接说明教务适配已内置，内置 9 个协议包并入已安装列表；移除公告中心与问卷中心（上游作者单向推送/收集通道，数据源已切断，UI 只会永远报错）；问题反馈改走 GitHub Issues，自动预填版本、机型与错误码；登录页换用品牌插画图标；选校面板重做：1777 所高校实时搜索（拼音/首字母），有可用教务适配的学校标星；设置内更新历史替换为发行版专属版本史。
+- `## notes` 已整体改写为 4 行无标记文案。硬约束：`scripts/release.sh` 第 203 行会拦截 notes 里以 `#`、`*`、`-` 开头或含反引号的行（die 退出）；应用内更新弹窗（UpdateDialog）是纯 Text 渲染，标记会原样显示给用户。细节一律放 `## changelog`（允许 Markdown）。
+- 原 notes 里「应用内公告中心」一条已删除——3a1054d 已移除公告中心入口，宣传它就是错的。`CHANGELOG.md` 的 `[2.0.0]` 段与 `release-notes/v2.0.0-announcement.json` 里的「公告中心」字样也一并清掉（注意：release.sh 对已存在的 `[2.0.0]` 小节是跳过不改的，CHANGELOG 只能手改）。
+- rc1 之后 7 笔收尾的条目已追加进 `## changelog` 列表末尾；`CHANGELOG.md` `[2.0.0]` 段已补「正式版收尾」一行。
+- 发版前如还要动 notes：只准改这 4 行且保持无标记。自检命令（与 release.sh 同一条管线，有输出即会被拦）：
+
+```bash
+awk -v want="notes" '$0 ~ "^## " want "[[:space:]]*$" { i=1; next } /^## / { i=0 } i' release-notes/v2.0.0.md | sed -e '/^[[:space:]]*<!--.*-->[[:space:]]*$/d' -e '/^[[:space:]]*<!--/,/-->/d' | sed '/^[[:space:]]*$/d' | grep -nE '^[[:space:]]*[#*-]|`'
 ```
 
-同时在 `## changelog` 列表末尾追加：
-
-```markdown
-- fix(update): 主源 404 判为渠道未发布，不再误报「请更换网络」
-- feat(plugin): 插件中心适配发行版（内置包入列、死链清理）
-- feat(school): 选校面板重做（1777 校直搜 + 适配星标）
-- feat(brand): 登录页品牌图标
-- feat(feedback): 反馈改走 GitHub Issues（含 4 项单测）
-- remove(selfhost): 移除公告中心与问卷中心，清零上游作者服务入口
-- build: debug 水印开关与 x86_64 release 验收属性
-```
-
-`CHANGELOG.md` 的 `[2.0.0]` 段可同步追加一行「正式版收尾：公告/问卷移除、反馈走 GitHub、选校直搜、更新检查修正（详见 release-notes/v2.0.0.md）」。
-
-## 2. rc1 之后的 8 笔 commit（内容速览，便于你写发布说明）
+## 2. rc1 之后的提交（内容速览，便于你写发布说明）
 
 ```
+5507480 docs(release): 发版交接文档（本文档，未推送）
 3a1054d remove(selfhost): 移除公告中心与问卷中心，清零上游作者服务入口
 87e3f7e feat(feedback): 反馈入口改走 GitHub Issues
 e297ea7 feat(school): 选校面板重做——1777 校直搜 + 适配星标
@@ -49,12 +41,13 @@ e297ea7 feat(school): 选校面板重做——1777 校直搜 + 适配星标
 e106c6a build: 本地验收构建开关——debug 水印与 x86_64 release
 b4a9ef0 feat(plugin): 插件中心适配发行版
 65bf0f1 fix(update): 主源 404 判为渠道未发布
-1475a13 docs: 交接文档（HANDOFF.md）
+—— 以上 7 笔为发行版收尾；另有 2 笔 docs 未推送（5507480 本文档 + notes 文案清理），合计 9 笔 ——
+1475a13 docs: 交接文档（HANDOFF.md）——已推送，不计入未推送集合
 ```
 
 ## 3. 发版硬前置（缺一不发）
 
-1. **GitHub Secrets**（runbook §0）：`UPDATE_SIGNING_KEY_B64`、`KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`、`GITEE_TOKEN`。用 `gh secret list -R sonder123i/capybara-course-helper` 核对。`UPDATE_SIGNING_KEY_B64` 若缺失，按 runbook §0 从 `C:\Users\k2767\projects\capybara-update-signing\update-signing-key.pem` 生成。
+1. **GitHub Secrets**（runbook §0）：`UPDATE_SIGNING_KEY_B64`、`KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`、`GITEE_TOKEN`。用 `gh secret list -R sonder123i/capybara-course-helper` 核对——注意该命令访问 secrets，在 Qoder 自动模式下会被权限分类器拦截，**需用户亲手执行或明确授权后再跑**。`UPDATE_SIGNING_KEY_B64` 若缺失，按 runbook §0 从 `C:\Users\k2767\projects\capybara-update-signing\update-signing-key.pem` 生成。
 2. **§1 的 release-notes 增补已提交**。
 3. **rc 验证**（runbook §1 清单）：跑过就勾掉；注意下条修正。
 4. **工作区干净、在 `v2-main`**。
@@ -66,7 +59,6 @@ b4a9ef0 feat(plugin): 插件中心适配发行版
 | runbook 原条目 | 替换为 |
 | --- | --- |
 | §1「检查更新：无清单时给出明确失败文案」 | 检查更新在无清单时应显示「**已是最新版本**」（fix(update) 改动），这是新行为，报错反而说明回退了 |
-| §1「签到选点接入高德原生地图」 | 地图服务已整体移除，跳过 |
 | §3「公告中心：拉到 v2.0.0 公告，重要弹窗出现」 | 公告中心已移除。CI 仍会投递公告 feed（无害），验证改为「Pages 上 announcement.json 可访问即可，App 不再消费」 |
 | §3 更新链路 | 发布后 Pages 有 stable.json，1.2.2 真机检查更新应提示 v2.0.0；v2 设备走签名清单校验+断点续传 |
 
@@ -78,8 +70,11 @@ b4a9ef0 feat(plugin): 插件中心适配发行版
 scripts/release.sh 2.0.0          # 本地：同步文件、写 CHANGELOG、提交、打 tag（无 --push 先看产物）
 git show --stat HEAD              # 检查脚本生成的提交
 git tag -l v2.0.0                 # 确认 tag 存在且指向正确
-scripts/release.sh 2.0.0 --push   # 或手动：git push origin v2-main && git push origin refs/tags/v2.0.0
+# 检查无误后手动推送。不要重跑 release.sh：本地 tag 已存在，它会在第 2 步报错退出（set -e）
+git push origin v2-main && git push origin refs/tags/v2.0.0
 ```
+
+两条路等价，任选其一：确认无需检查产物就一步 `scripts/release.sh 2.0.0 --push`；**同一条命令绝不能跑两次**（第二次必死于「tag 已存在」）。
 
 推 tag 即触发 `release.yml`：测试+Lint → 三包构建（arm64/armeabi/universal）→ GitHub Release → 签名清单 `docs/update/stable.json` → 同步 Gitee（附件+清单+version.json）→ Pages 落库。全流程盯 `gh run watch -R sonder123i/capybara-course-helper`。
 
