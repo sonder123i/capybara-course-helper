@@ -357,10 +357,18 @@ jobs:
             exit 1
           fi
           echo "${UPDATE_SIGNING_KEY_B64}" | base64 --decode > /tmp/update-signing-key.pem
+          # 顶层仍是通用包（156MB），只在挑不出 ABI 时兜底；能挑出 ABI 的设备
+          # 走 artifacts。arm64 分包 91MB，Gitee 那边只放得下它（单附件 100MB）。
+          GH=https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}
+          GT=https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}
           python3 scripts/make_update_manifest.py \
             --apk app/build/outputs/apk/release/app-release.apk \
-            --mirror "gh=GitHub Release=https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk" \
-            --mirror "gitee=Gitee 附件=https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk" \
+            --mirror "gh=GitHub Release=${GH}/app-release.apk" \
+            --artifact "arm64-v8a=app/build/outputs/apk/release/app-arm64-v8a-release.apk" \
+            --artifact-mirror "arm64-v8a=gh=GitHub Release=${GH}/app-arm64-v8a-release.apk" \
+            --artifact-mirror "arm64-v8a=gitee=Gitee 附件=${GT}/capybara-${TAG#v}-arm64.apk" \
+            --artifact "armeabi-v7a=app/build/outputs/apk/release/app-armeabi-v7a-release.apk" \
+            --artifact-mirror "armeabi-v7a=gh=GitHub Release=${GH}/app-armeabi-v7a-release.apk" \
             --notes "${{ steps.notes.outputs.release_notes }}" \
             --key-file /tmp/update-signing-key.pem \
             --out docs/update/stable.json
@@ -528,7 +536,10 @@ jobs:
             echo "ERROR: APK file not found in artifact"
             exit 1
           fi
-          APK_NAME=$(basename "$APK_FILE")
+          # 与清单里 gitee 线路的文件名保持一致，否则 version.json 会指到不存在的附件。
+          APK_NAME="capybara-${VERSION_NAME}-arm64.apk"
+          cp "$APK_FILE" "/tmp/$APK_NAME"
+          APK_FILE="/tmp/$APK_NAME"
           echo "Gitee 上传文件: $APK_NAME ($(stat -c%s "$APK_FILE") 字节)"
 
           if [ -z "${RELEASE_NOTES:-}" ]; then

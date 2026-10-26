@@ -53,6 +53,11 @@ def main():
     parser.add_argument("--channel", default="stable", choices=["stable", "test"])
     parser.add_argument("--mirror", action="append", default=[],
                         help='id="显示名"="下载 URL"，可重复；至少一个')
+    parser.add_argument("--artifact", action="append", default=[],
+                        help='abi=APK 路径，可重复。用于按 ABI 分发：2.x 的通用包 156MB，'
+                             '分包 91MB，弱网差别很大')
+    parser.add_argument("--artifact-mirror", action="append", default=[],
+                        help='abi=id="显示名"="下载 URL"，可重复；每个 artifact 至少一个')
     parser.add_argument("--notes", default="")
     parser.add_argument("--notes-file", default="")
     parser.add_argument("--key-file", default=os.environ.get("UPDATE_SIGNING_KEY_FILE", ""))
@@ -79,6 +84,39 @@ def main():
     if not (1 <= len(mirrors) <= 8):
         raise SystemExit("镜像数量须在 1..8")
 
+    # 按 ABI 分发的分包（可选）。顶层 size/sha256 仍是通用包，只有挑不出 ABI 的
+    # 设备才会用它；能挑出来的走 artifacts，省一半流量。
+    artifact_paths = {}
+    for spec in args.artifact:
+        abi, _, path = spec.partition("=")
+        if abi not in ("arm64-v8a", "armeabi-v7a"):
+            raise SystemExit(f"--artifact 的 ABI 只能是 arm64-v8a / armeabi-v7a，收到: {abi}")
+        if not Path(path).exists():
+            raise SystemExit(f"--artifact 的 APK 不存在: {path}")
+        artifact_paths[abi] = path
+
+    artifact_mirrors = {}
+    for spec in args.artifact_mirror:
+        abi, _, rest = spec.partition("=")
+        m = re.match(r'([a-z0-9-]{1,32})=("?)([^"]{1,40})\2=(.+)$', rest)
+        if not m or abi not in artifact_paths:
+            raise SystemExit(f'--artifact-mirror 格式应为 abi=id="名称"="URL"，收到: {spec}')
+        artifact_mirrors.setdefault(abi, []).append(
+            {"id": m.group(1), "name": m.group(3), "url": m.group(4)})
+
+    artifacts = {}
+    for abi, path in artifact_paths.items():
+        entries = artifact_mirrors.get(abi, [])
+        if not (1 <= len(entries) <= 8):
+            raise SystemExit(f"{abi} 的镜像数量须在 1..8，当前 {len(entries)}")
+        blob = Path(path).read_bytes()
+        artifacts[abi] = {
+            "size": len(blob),
+            "sha256": hashlib.sha256(blob).hexdigest(),
+            "mirrors": entries,
+        }
+        print(f"  artifact {abi}: {len(blob)} 字节, {len(entries)} 条线路")
+
     source_sha = run(["git", "rev-parse", "HEAD"], ).decode().strip()
     payload = {
         "channel": args.channel,
@@ -96,6 +134,8 @@ def main():
         "publishedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "mirrors": mirrors,
     }
+    if artifacts:
+        payload["artifacts"] = artifacts
     payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     signature = run(["openssl", "dgst", "-sha256", "-sign", args.key_file], payload_bytes)
     envelope = {
