@@ -250,7 +250,7 @@ fun ScheduleGrid(
             ScheduleTimeColumnShadowWidth.roundToPx()) / days.toFloat()).roundToInt()
     }
     // Measure the whole timetable, not just this week's cards. Paging and live
-    // status changes keep one geometry while names and teachers remain complete.
+    // status changes keep one geometry while course names and locations remain readable.
     val periodHeight = rememberFullCoursePeriodHeight(courses, columnWidth,
         maxOf(schedulePeriodHeight() * if (compact) 0.85f else 1f,
             (if (compact) 70.dp else 76.dp) * density.fontScale.coerceAtLeast(1f)))
@@ -487,12 +487,22 @@ private fun rememberFullCoursePeriodHeight(courses: List<ScheduleCourseUi>, colu
             var height = minimum.toPx()
             courses.forEach { course ->
                 val duration = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
-                val name = measurer.measure(course.name, courseNameStyle(base, duration), constraints = Constraints(maxWidth = textWidth)).size.height
-                val metadata = courseLocationStyle(base, duration)
-                val teacher = measurer.measure(course.teacher.ifBlank { "教师待定" }, metadata, constraints = Constraints(maxWidth = textWidth)).size.height
-                val room = measurer.measure("教室\nA1208", metadata).size.height
-                // Keep the optional status lane allocated, including on minute ticks.
-                val required = name + teacher + room + 25.dp.toPx()
+                // 与 CourseCard 同一套行数预算：课程名最多 3 行、地点最多 2 行。
+                // 七列均分后每列内容宽约 42dp，「至善楼406」一行装不下；与其截成
+                // 「至善…」，不如让它折到第二行完整显示。这也是 1.x 的老布局——
+                // 卡片里不排教师行，把宝贵的纵向空间留给楼栋与教室。
+                val name = measurer.measure(course.name, courseNameStyle(base, duration),
+                    maxLines = 3, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = textWidth)).size.height
+                val hasStatus = course.hasCardStatus()
+                val locationHeight = if (course.location.isNotBlank()) measurer.measure(
+                    com.tyust.course.schedule.ScheduleLocation.compact(course.location),
+                    courseLocationStyle(base, duration),
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    constraints = Constraints(maxWidth = textWidth)
+                ).size.height else 0
+                val informationHeight = locationHeight + if (hasStatus) 11.dp.roundToPx() else 0
+                // Includes card insets, content padding, inter-line gap and rounding slack.
+                val required = name + informationHeight + 9.dp.toPx()
                 height = maxOf(height, kotlin.math.ceil(required / duration))
             }
             kotlin.math.ceil(height).toDp()
@@ -659,7 +669,10 @@ fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: 
     val containerColor = scheduleCardColor(course.color, if (course.isCurrent) 0.20f else 0.10f)
     val accentColor = course.color.copy(alpha = 0.85f)
 
-    val displayLocation = com.tyust.course.schedule.ScheduleLocation.compact(course.location)
+    // 只显示楼栋 + 教室：校区前缀每门课都重复一遍，裁掉后真正的楼栋与教室才放得下。
+    // 空地点保持为空——「教室待定」在窄卡片里只会挤掉课程名，详情页仍有完整信息。
+    val displayLocation = if (course.location.isBlank()) "" else
+        com.tyust.course.schedule.ScheduleLocation.compact(course.location)
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -736,53 +749,51 @@ fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: 
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(start = 5.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
                 Text(
                     text = course.name,
                     modifier = Modifier.fillMaxWidth().testTag("schedule-name-${course.id}"),
                     style = courseNameStyle(MaterialTheme.typography.labelSmall, duration),
                     color = MaterialTheme.colorScheme.onSurface,
+                    // 与 rememberFullCoursePeriodHeight 的测量一致：最多三行。
+                    // 课程名再长也不该把地点挤出卡片。
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
                     softWrap = true,
                 )
 
-                Text(course.teacher.ifBlank { "教师待定" },
-                    Modifier.fillMaxWidth().testTag("schedule-teacher-${course.id}"),
-                    style = courseLocationStyle(MaterialTheme.typography.labelSmall, duration),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, softWrap = true)
-
                 if (displayLocation.isNotBlank()) {
                     BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-                    val baseStyle = courseLocationStyle(MaterialTheme.typography.labelSmall, duration)
-                    val room = com.tyust.course.schedule.ScheduleLocation.room(course.location).orEmpty()
-                    val density = LocalDensity.current
-                    // Leave a pixel rounding margin, and remeasure after scaling: modern
-                    // Android font scaling is nonlinear, so a width ratio alone can wrap the room.
-                    val availableWidth = (constraints.maxWidth - 2).coerceAtLeast(1).toFloat()
-                    val locationStyle = remember(room, baseStyle, availableWidth, density) {
-                        val roomWidth = measurer.measure(room, baseStyle, softWrap = false).size.width
-                        var fitted = baseStyle.copy(fontSize = baseStyle.fontSize * minOf(1f, availableWidth / roomWidth.coerceAtLeast(1)))
-                        repeat(8) {
-                            if (measurer.measure(room, fitted, softWrap = false).size.width <= availableWidth) return@remember fitted
-                            fitted = fitted.copy(fontSize = fitted.fontSize * 0.92f)
+                        val measurer = rememberTextMeasurer()
+                        val baseStyle = courseLocationStyle(MaterialTheme.typography.labelSmall, duration)
+                        val availableWidth = constraints.maxWidth.coerceAtLeast(1)
+                        // 七列均分后每列只有约 42dp：「九龙湖教学楼 406」按 9sp 排两行会
+                        // 把教室号挤到第三行。先按 9sp → 8.1sp → 7.3sp 缩，楼名和教室
+                        // 都留住；实在缩不下去才交给 Ellipsis。1.x 当年直接两行折行，
+                        // 楼名完整的观感就是这么来的。
+                        val fittedStyle = remember(displayLocation, baseStyle, availableWidth, duration) {
+                            var style = baseStyle
+                            repeat(3) {
+                                val laid = measurer.measure(displayLocation, style, maxLines = 2,
+                                    softWrap = true, constraints = Constraints(maxWidth = availableWidth))
+                                if (!laid.hasVisualOverflow) return@remember style
+                                style = style.copy(
+                                    fontSize = style.fontSize * 0.9f,
+                                    lineHeight = style.lineHeight * 0.9f
+                                )
+                            }
+                            style
                         }
-                        fitted
-                    }
-                    val label = remember(displayLocation, availableWidth, locationStyle, density) {
-                        com.tyust.course.schedule.ScheduleLocation.fit(course.location, availableWidth, 2) {
-                            measurer.measure(it, locationStyle, softWrap = false).size.width.toFloat()
-                        }
-                    }
-                    Text(
-                        text = label,
-                        modifier = Modifier.fillMaxWidth().testTag("schedule-location-${course.id}"),
-                        style = locationStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        softWrap = true
-                    )
+                        Text(
+                            text = displayLocation,
+                            modifier = Modifier.fillMaxWidth().testTag("schedule-location-${course.id}"),
+                            style = fittedStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true
+                        )
                     }
                 }
                 // A status symbol must not reserve a column beside every line of a long address.

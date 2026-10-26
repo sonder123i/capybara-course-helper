@@ -104,6 +104,22 @@ object ScheduleDates {
     fun weekAt(value: String?, now: Long, zone: TimeZone = TimeZone.getDefault()): Int? =
         weekIndexAt(value, now, zone)?.takeIf { it in 1..ScheduleMaxWeeks }
 
+    /**
+     * The first day of teaching week [week], derived from the week containing [now].
+     *
+     * Most people cannot recall the semester's first day but do know which teaching week it is
+     * today. Walking back whole weeks from the current week's first day keeps the answer on the
+     * user's chosen [weekStart] and makes the anchor round-trip through [weekAt].
+     */
+    fun firstWeekDateForWeek(
+        now: Long,
+        week: Int,
+        weekStart: ScheduleWeekStart = ScheduleWeekStart.Default,
+        zone: TimeZone = TimeZone.getDefault()
+    ): Long = startOfWeek(now, weekStart, zone).apply {
+        add(Calendar.DAY_OF_MONTH, -((week.coerceAtLeast(1)) - 1) * 7)
+    }.timeInMillis
+
     /** An unbounded civil week lets Today stay on the real date before/after a semester. */
     fun weekIndexAt(value: String?, now: Long, zone: TimeZone = TimeZone.getDefault()): Int? {
         val start = firstWeekDate(value, TimeZone.getTimeZone("UTC")) ?: return null

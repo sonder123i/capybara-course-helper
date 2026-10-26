@@ -6,6 +6,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScheduleDomainTest {
+    @Test fun weekNumberPickerRoundTripsToTheSameTeachingWeek() {
+        val zone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        // 2026-10-28 是第 9 周里的周三；反推出来的锚点必须让 weekAt 重新算出 9。
+        val now = requireNotNull(ScheduleDates.firstWeekDate("2026-10-28", zone)).timeInMillis + 10 * 3_600_000L
+        for (start in listOf(ScheduleWeekStart.Monday, ScheduleWeekStart.Sunday)) {
+            val anchor = ScheduleDates.firstWeekDateForWeek(now, 9, start, zone)
+            val anchorDate = ScheduleTimeBase.dateFromMillis(anchor, zone)
+            assertEquals(
+                if (start == ScheduleWeekStart.Monday) "2026-08-31" else "2026-08-30",
+                anchorDate
+            )
+            assertEquals(9, ScheduleDates.weekAt(anchorDate, now, zone))
+            val calendar = java.util.Calendar.getInstance(zone).apply { timeInMillis = anchor }
+            assertEquals(start.firstDayOfWeek, calendar.get(java.util.Calendar.DAY_OF_WEEK))
+            assertEquals(0, calendar.get(java.util.Calendar.HOUR_OF_DAY))
+            assertEquals(0, calendar.get(java.util.Calendar.MINUTE))
+        }
+    }
+
+    @Test fun weekNumberPickerMovesToTheWeekAskingForWeekOne() {
+        val zone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        val now = requireNotNull(ScheduleDates.firstWeekDate("2026-10-28", zone)).timeInMillis
+        val anchor = ScheduleDates.firstWeekDateForWeek(now, 1, ScheduleWeekStart.Monday, zone)
+        assertEquals("2026-10-26", ScheduleTimeBase.dateFromMillis(anchor, zone))
+        assertEquals(1, ScheduleDates.weekAt("2026-10-26", now, zone))
+        // 越界的周次按第 1 周处理，不产生未来锚点。
+        assertEquals(anchor, ScheduleDates.firstWeekDateForWeek(now, 0, ScheduleWeekStart.Monday, zone))
+    }
+
     @Test fun chosenDateNormalizesToLocalMondayAcrossMonthAndDstBoundaries() {
         val zone = java.util.TimeZone.getTimeZone("Europe/Berlin")
         listOf(Triple(2026, 2, 31) to "2026-03-30", Triple(2026, 10, 1) to "2026-10-26")

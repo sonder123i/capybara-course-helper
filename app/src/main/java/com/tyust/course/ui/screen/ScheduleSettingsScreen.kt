@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.outlined.AccessTime
+import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -124,6 +125,7 @@ fun ScheduleSettingsScreen(
     var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
     var semesterStartDate by remember { mutableStateOf(semesterStartOverride ?: manager.semesterStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showWeekNumberPicker by remember { mutableStateOf(false) }
     var showWeekStartPicker by remember { mutableStateOf(false) }
     var showLeadPicker by remember { mutableStateOf(false) }
     if (showLeadPicker) ReminderLeadPicker(defaultLead, onDismiss = { showLeadPicker = false }, onSave = { it?.let { minutes -> onDefaultLead?.invoke(minutes) } })
@@ -137,9 +139,11 @@ fun ScheduleSettingsScreen(
     val dateFormat = remember { SimpleDateFormat("yyyy年M月d日", Locale.CHINA) }
     val dateText = if (semesterStartDate > 0) dateFormat.format(Date(semesterStartDate)) else "未设置"
 
-    // 外部（旧 Fragment 的 MaterialDatePicker）改了日期要能同步回来
+    // 外部（旧 Fragment 的 MaterialDatePicker）改了日期要能同步回来。
+    // override 为 0 表示当前学期没有下发开学日，此时应回落到本机保存的值——
+    // 否则刚用「第几周」反推出的日期会被一个 0 立刻盖掉，页面看起来像没保存。
     LaunchedEffect(manager.semesterStartDate, semesterStartOverride) {
-        semesterStartDate = semesterStartOverride ?: manager.semesterStartDate
+        semesterStartDate = semesterStartOverride?.takeIf { it > 0L } ?: manager.semesterStartDate
     }
     LaunchedEffect(manager.revision, periodTimesOverride, presetAccountKey) {
         storedPeriodTimes = periodTimesOverride ?: manager.getPeriodTimes(presetAccountKey)
@@ -348,6 +352,27 @@ fun ScheduleSettingsScreen(
                                     }
                                 }
                             )
+                            // 多数人不记得开学那天，但知道「这周是第几周」。
+                            // 从本周往前推就行，省掉一次翻日历。写回的是与日期选择器同一个入口。
+                            InsetGroupedRow(
+                                icon = Icons.Outlined.Today,
+                                iconTint = Color(0xFF30D158),
+                                title = "现在是第几周",
+                                subtitle = "不知道开学那天？填本周是第几周即可反推",
+                                trailing = {
+                                    Text(
+                                        text = if (semesterStartDate > 0) "重新计算" else "去填写",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (semesterStartDate > 0) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            NeuPrimary
+                                        }
+                                    )
+                                },
+                                onClick = { showWeekNumberPicker = true }
+                            )
                             InsetGroupedRow(
                                 icon = Icons.Outlined.AccessTime,
                                 iconTint = Color(0xFFFF9F0A),
@@ -426,6 +451,33 @@ fun ScheduleSettingsScreen(
                         showDatePicker = false
                     },
                     onDismiss = { showDatePicker = false }
+                )
+            }
+
+            if (showWeekNumberPicker) {
+                val scheduleDates = com.tyust.course.schedule.ScheduleDates
+                GlassOptionWheelDialog(
+                    title = "现在是第几周",
+                    options = (1..com.tyust.course.schedule.ScheduleMaxWeeks).map { "第 $it 周" },
+                    // 已有锚点时预选真正的当前周；没有则从「第 1 周」起步
+                    selectedIndex = ((if (semesterStartDate > 0) {
+                        scheduleDates.weekAt(
+                            com.tyust.course.schedule.ScheduleTimeBase.dateFromMillis(semesterStartDate),
+                            System.currentTimeMillis()
+                        )
+                    } else {
+                        null
+                    } ?: 1) - 1).coerceIn(0, com.tyust.course.schedule.ScheduleMaxWeeks - 1),
+                    onConfirm = { index ->
+                        // 本周第一天往前推 index 周 = 第一周的第一天。起点跟随「每周第一天」
+                        // 设置（周一或周日），否则周日起始的账号会整体错一天。
+                        val start = scheduleDates.firstWeekDateForWeek(
+                            System.currentTimeMillis(), index + 1, weekStart)
+                        if (onSemesterStartChange != null) onSemesterStartChange(start) else manager.semesterStartDate = start
+                        semesterStartDate = start
+                        showWeekNumberPicker = false
+                    },
+                    onDismiss = { showWeekNumberPicker = false }
                 )
             }
 

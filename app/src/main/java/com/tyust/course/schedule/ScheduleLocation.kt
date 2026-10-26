@@ -7,18 +7,20 @@ object ScheduleLocation {
     fun compact(raw: String): String {
         if (raw.isBlank()) return "教室待定"
         val normalized = raw.trim().replace(Regex("[\\s　]+"), " ")
-        if (normalized.length <= 12) return normalized
-        // Campus prefixes and trailing notes are less useful on a narrow timetable column.
+        // 先裁校区与括号注释，再判断长短。反过来的话「九龙湖校区 南应师足球场」
+        // 这种刚好 12 字的地址会原样留下校区前缀，把楼栋挤到第二行。
         val withoutCampus = normalized.replace(Regex("^.*?校区[ ·,，:：/\\-]*"), "")
             .replace(Regex("[（(][^）)]*[）)]"), "").trim()
-        val room = roomNumber.findAll(withoutCampus).lastOrNull()
+        val base = withoutCampus.ifBlank { normalized }
+        if (base.length <= 12) return base
+        val room = roomNumber.findAll(base).lastOrNull()
         if (room != null) {
-            val prefix = withoutCampus.substring(0, room.range.first).trim().trimEnd('-', '—')
+            val prefix = base.substring(0, room.range.first).trim().trimEnd('-', '—')
                 .replace(Regex("[一二三四五六七八九十百\\d]+层$"), "").trim()
             val building = Regex("[\\p{IsHan}A-Za-z0-9]+(?:教学楼|实验楼|楼|馆|栋|座|区|教)").find(prefix)?.value
             if (building != null) return "$building ${room.value}"
         }
-        return withoutCampus.ifBlank { normalized }
+        return base
     }
 
     fun room(raw: String): String? = roomNumber.findAll(compact(raw)).lastOrNull()?.value
