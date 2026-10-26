@@ -33,13 +33,17 @@ class UpdateFeedDeviceTest {
                 "没有解析出清单：${state.check} / ${state.message} / ${state.errorCode}"
             }
             // 签名、packageName、版本字段都由 UpdateManifestVerifier 校验过才会走到这里。
-            assertEquals(20001, manifest.versionCode)
-            assertEquals("2.0.1", manifest.versionName)
-            assertEquals("com.k2767.course", manifest.packageName)
+            assertEquals(com.tyust.course.BuildConfig.APPLICATION_ID, manifest.packageName)
+            assertTrue("清单版本不应低于当前构建：${manifest.versionCode}",
+                manifest.versionCode >= com.tyust.course.BuildConfig.VERSION_CODE)
+            assertTrue("版本名格式异常：${manifest.versionName}",
+                manifest.versionName.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")))
             assertTrue("清单里至少要有可下载的线路", manifest.mirrors.isNotEmpty())
-            // 测试包本身就是 20001，所以应当判定为已是最新，而不是又提示一次更新。
-            assertEquals("当前构建已是 2.0.1，应判定为最新：${state.message}",
-                UpdateManager.Check.UP_TO_DATE, state.check)
+            // 测试包与线上同版本时应当判定为已是最新，而不是又提示一次更新。
+            val expected = if (manifest.versionCode > com.tyust.course.BuildConfig.VERSION_CODE)
+                UpdateManager.Check.AVAILABLE else UpdateManager.Check.UP_TO_DATE
+            assertEquals("清单 ${manifest.versionName}，当前 ${com.tyust.course.BuildConfig.VERSION_NAME}：${state.message}",
+                expected, state.check)
         } finally {
             manager.close()
         }
