@@ -117,6 +117,10 @@ MAX_TAG=""
 while IFS= read -r t; do
     [ -z "$t" ] && continue
     [ "$t" = "$TAG" ] && continue
+    # 预发布 tag（v2.0.0-rc1 这类带后缀的）与正式版共享同一个语义化 versionCode，
+    # 且从未推送发布过，不是「真实打出过」的版本。不排除的话 rc→正式 的固定节奏
+    # 会被自己拦死：rc1 已占 20000，正式版 20000 就再也过不了这道检查。
+    case "$t" in *-*) continue ;; esac
     c="$(git show "${t}:app/version.properties" 2>/dev/null \
         | sed -n 's/^VERSION_CODE=[[:space:]]*//p' | tr -d '[:space:]' || true)"
     case "$c" in
