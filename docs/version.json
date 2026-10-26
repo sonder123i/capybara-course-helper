@@ -3,6 +3,6 @@
   "versionName": "2.0.2",
   "releaseNotes": "课表卡片重新排版：课程名最多三行、地点两行，长楼名不再被省略号截断，教室号始终可见。\n课表设置新增「现在是第几周」：填本周周次即可反推第一周日期，课前提醒同步生效。\n移除匿名统计弹窗与「统一登录适配」入口，基础设置移到课前提醒下方。",
   "downloadUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v2.0.2/app-release.apk",
-  "mirrorUrl": "https://gitee.com/sonder123i/capybara-course-helper/releases/download/v2.0.2/app-release.apk",
+  "mirrorUrl": "https://github.com/sonder123i/capybara-course-helper/releases/download/v2.0.2/app-arm64-v8a-release.apk",
   "forceUpdate": false
 }
