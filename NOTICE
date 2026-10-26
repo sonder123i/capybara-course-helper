@@ -5,9 +5,6 @@
 引入以下第三方组件，各自按其原始许可证授权，此处依要求随分发一并声明：
 
 - org.mozilla.geckoview:geckoview              MPL-2.0    （内嵌浏览器引擎）
-- org.maplibre.gl:android-sdk-opengl            BSD-2-Clause（地图渲染）
-- com.microsoft.onnxruntime:onnxruntime-android MIT        （本地推理运行时）
-- assets/plugin-models/slider-gap.ort           AGPL-3.0   （滑块缺口模型，见该目录 NOTICE.txt）
 - io.github.dokar3:quickjs-kt-android           Apache-2.0 （插件脚本引擎）
 - com.journeyapps:zxing-android-embedded        Apache-2.0 （二维码扫描）
 - androidx.*（Compose / Glance / AppCompat 等）  Apache-2.0
@@ -17,5 +14,12 @@
 - com.halilibo.compose-richtext                  Apache-2.0
 - io.coil-kt                                    Apache-2.0
 - com.airbnb.android:lottie-compose              Apache-2.0
+
+## 已移除的组件
+
+- **onnxruntime-android + slider-gap.ort**（原 MIT + AGPL-3.0，合计 16.3MB）：
+  v2.0.3 起不再内置。滑块识别回落到 `PluginImageMatcher` 的纯 Kotlin 像素匹配。
+  移除后本项目不再包含 AGPL-3.0 组合作品，按 GPL-3.0 单独分发。
+- **maplibre android-sdk-opengl**（BSD-2-Clause）：v2.0.0 起地图功能整体移除。
 
 各组件的完整许可证文本可从其上游仓库获取，或在本项目构建产物对应依赖包内查阅。

@@ -335,7 +335,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          # arm64 分包给 Gitee 用：通用包 156MB 越过其单附件 100MB 上限，
+          # 分包 91MB 才传得上去。
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/release/app-arm64-v8a-release.apk
           retention-days: 3
 
       # 应用内更新走 ECDSA 签名清单（schemaVersion=2）。清单必须从本次 CI 产物
@@ -416,8 +420,8 @@ jobs:
 
           # 主下载地址必须是真实可用的：Gitee 附件对 100MB 以上的包直接拒收，
           # 指向它只会让 1.x 的「检查更新」拿到 404（v2.0.2 线上事故）。
-          DOWNLOAD_URL="https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
-          MIRROR_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+          DOWNLOAD_URL="https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-arm64-v8a-release.apk"
+          MIRROR_URL="https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
 
           jq -n \
             --argjson vc "$VERSION_CODE" \
@@ -514,12 +518,18 @@ jobs:
         run: |
           set -e
 
-          APK_FILE=$(find ./apk -name "*.apk" | head -1)
+          APK_FILE=$(find ./apk -name "app-arm64-v8a-release.apk" | head -1)
+          if [ -z "$APK_FILE" ]; then
+            echo "::warning::arm64 分包缺失，回落到 artifact 里的任意 APK"
+            APK_FILE=$(find ./apk -name "*.apk" | head -1)
+          fi
 
           if [ -z "$APK_FILE" ]; then
             echo "ERROR: APK file not found in artifact"
             exit 1
           fi
+          APK_NAME=$(basename "$APK_FILE")
+          echo "Gitee 上传文件: $APK_NAME ($(stat -c%s "$APK_FILE") 字节)"
 
           if [ -z "${RELEASE_NOTES:-}" ]; then
             echo "ERROR: 上游未传出更新日志，中止同步（不写空文案覆盖线上 version.json）"
@@ -591,7 +601,7 @@ jobs:
           if [ -n "$RELEASE_ID" ]; then
             # 检查是否已有同名附件
             EXISTING_ASSET=$(curl -s --max-time 60 "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" | \
-              jq -r '[.[] | select(.name=="app-release.apk")] | .[0].id // empty')
+              jq -r --arg n "$APK_NAME" '[.[] | select(.name==$n)] | .[0].id // empty')
 
             if [ -n "$EXISTING_ASSET" ]; then
               echo "APK asset already exists (ID: $EXISTING_ASSET), skipping upload"

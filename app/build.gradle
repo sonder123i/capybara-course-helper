@@ -177,6 +177,10 @@ android {
         // AGP's universal split also includes dependency ABIs outside splits.include.
         jniLibs.excludes += ['**/x86/**']
         if (!emulatorPreview && !x86Release) jniLibs.excludes += ['**/x86_64/**']
+        // GeckoView 自带的崩溃上报库（约 3.7MB）。本发行版不接任何崩溃上报服务，
+        // 也没有启用 GeckoRuntime 的 crash handler，运行时不会 dlopen 它们。
+        // 包体受 Gitee 单附件 100MB 限制，这类死重必须让位。
+        jniLibs.excludes += ['**/libcrashtools.so', '**/libcrashhelper.so']
     }
     
     compileOptions {
@@ -268,7 +272,8 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0'
     implementation 'io.github.dokar3:quickjs-kt-android:1.0.15'
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.29.0'
+    // 不引 onnxruntime：滑块识别改走 PluginImageMatcher 的纯像素匹配，
+    // 省下 11.6MB native 库 + 4.7MB 模型（见 PluginSliderModel 的说明）。
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
     // Modern UI & Animations
