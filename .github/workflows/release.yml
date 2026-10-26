@@ -369,6 +369,111 @@ jobs:
           path: docs/update/stable.json
           retention-days: 3
 
+  # Pages 落库独立成 job：Gitee 单附件上限 100MB，2.x 的包约 191MB 传不上去；
+  # 这段逻辑原先写在 sync-to-gitee 的最后一步，于是备源一卡、主源也跟着不上线
+  # （v2.0.1/v2.0.2 实测：Gitee 上传挂住 45 分钟，Pages 一直是旧清单）。
+  publish-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download Update Manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: update-manifest
+          path: ./manifest
+
+      - name: Download Version Info
+        uses: actions/download-artifact@v4
+        with:
+          name: version-info
+          path: ./version
+
+      - name: Publish version.json and manifest
+        env:
+          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -e
+
+          VERSION_CODE=$(sed -n 's/^VERSION_CODE=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
+
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "ERROR: 无法从产物解析版本号（VC='${VERSION_CODE}' VN='${VERSION_NAME}'）"
+            exit 1
+          fi
+          if [ -z "${RELEASE_NOTES:-}" ]; then
+            echo "ERROR: 更新日志为空，中止写入（不拿空文案覆盖线上 version.json）"
+            exit 1
+          fi
+
+          # 主下载地址必须是真实可用的：Gitee 附件对 100MB 以上的包直接拒收，
+          # 指向它只会让 1.x 的「检查更新」拿到 404（v2.0.2 线上事故）。
+          DOWNLOAD_URL="https://github.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+          MIRROR_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
+
+          jq -n \
+            --argjson vc "$VERSION_CODE" \
+            --arg vn "$VERSION_NAME" \
+            --arg rn "${RELEASE_NOTES}" \
+            --arg du "$DOWNLOAD_URL" \
+            --arg mu "$MIRROR_URL" \
+            '{
+              versionCode: ($vc | tonumber),
+              versionName: $vn,
+              releaseNotes: $rn,
+              downloadUrl: $du,
+              mirrorUrl: $mu,
+              forceUpdate: false
+            }' > docs/version.json
+
+          echo "docs/version.json:"
+          cat docs/version.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/version.json
+
+          MANIFEST=$(find ./manifest -name stable.json | head -1 || true)
+          if [ -n "$MANIFEST" ]; then
+            mkdir -p docs/update
+            cp "$MANIFEST" docs/update/stable.json
+            git add docs/update/stable.json
+          else
+            echo "::warning::清单产物缺失，本次不更新 docs/update/stable.json"
+          fi
+
+          if [ -f announcement.json ] && [ -f scripts/make_announcement_feed.py ]; then
+            python3 scripts/make_announcement_feed.py
+            git add docs/announcement.json
+          fi
+
+          if git diff --cached --quiet; then
+            echo "docs/version.json 无变化，跳过提交"
+            exit 0
+          fi
+
+          git commit -m "release: 同步 version.json / 更新清单 / 公告 feed 到 ${VERSION_NAME} (${VERSION_CODE})"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "已推送，Pages 将自动重新部署"
+              exit 0
+            fi
+            echo "push 被拒（第 ${attempt} 次），rebase 后重试..."
+            git pull --rebase origin main
+          done
+
+          echo "ERROR: 连续 3 次推送失败，请检查 main 分支状态"
+          exit 1
+
   sync-to-gitee:
     needs: build
     runs-on: ubuntu-latest
@@ -473,15 +578,26 @@ jobs:
           echo "--- Step 2: Upload APK ---"
 
           if [ -n "$RELEASE_ID" ]; then
+            # Gitee 单附件上限 100MB。2.x 的包远超这个数，硬传只会让 curl 挂住
+            # 半小时以上（v2.0.1/v2.0.2 实测），并且拖死同 job 里的 Pages 落库。
+            APK_BYTES=$(stat -c%s "$APK_FILE")
+            if [ "$APK_BYTES" -gt 104857600 ]; then
+              echo "::warning::APK ${APK_BYTES} 字节超过 Gitee 单附件上限（100MB），跳过 Gitee 附件上传。"
+              echo "::warning::应用内更新使用 GitHub 直链（publish-pages job 写入的 version.json）。"
+              RELEASE_ID=""
+            fi
+          fi
+
+          if [ -n "$RELEASE_ID" ]; then
             # 检查是否已有同名附件
-            EXISTING_ASSET=$(curl -s "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" | \
+            EXISTING_ASSET=$(curl -s --max-time 60 "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" | \
               jq -r '[.[] | select(.name=="app-release.apk")] | .[0].id // empty')
 
             if [ -n "$EXISTING_ASSET" ]; then
               echo "APK asset already exists (ID: $EXISTING_ASSET), skipping upload"
             else
               echo "Uploading APK..."
-              UPLOAD_RESPONSE=$(curl -s -X POST \
+              UPLOAD_RESPONSE=$(curl -s --max-time 900 -X POST \
                 "https://gitee.com/api/v5/repos/sonder123i/capybara-course-helper/releases/${RELEASE_ID}/attach_files" \
                 -F "access_token=${GITEE_TOKEN}" \
                 -F "file=@${APK_FILE}")
@@ -574,93 +690,11 @@ jobs:
             -H "Content-Type: application/json" -d "$PAYLOAD")
           echo "manifest sync: $(echo "$RESULT" | jq -r '.content.path // .message // "done"')"
 
-      # App 的 UpdateManager 读的是 GitHub Pages 上那份 version.json（docs/version.json），
-      # 不是 Gitee 这份。两份曾经各自手工维护，结果长期漂移：Pages 停在 v1.1.5 而
-      # Gitee 已经是 v1.1.6，用户点「检查更新」看到的其实是旧数据。
-      # 现在把 Pages 那份也纳入流水线，与 Gitee 同源同值，消除人工同步。
-      - name: Sync version.json to Pages
-        env:
-          RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}
-          TAG: ${{ needs.build.outputs.release_tag }}
-        run: |
-          set -e
 
-          VERSION_CODE=$(sed -n 's/^VERSION_CODE=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
-          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
-
-          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
-            echo "ERROR: 无法从产物解析版本号（VC='${VERSION_CODE}' VN='${VERSION_NAME}'）"
-            exit 1
-          fi
-          if [ -z "${RELEASE_NOTES:-}" ]; then
-            echo "ERROR: 更新日志为空，中止写入（不拿空文案覆盖线上 version.json）"
-            exit 1
-          fi
-
-          DOWNLOAD_URL="https://gitee.com/sonder123i/capybara-course-helper/releases/download/${TAG}/app-release.apk"
-
-          # 与 Gitee 那份用同一个 jq 表达式，保证两个源内容完全一致。
-          # forceUpdate 在 Pages 这份留 false：Gitee 那份是给直连下载用的强提示，
-          # Pages 这份是用户日常检查更新的入口，强制弹窗会打断正常使用。
-          jq -n \
-            --argjson vc "$VERSION_CODE" \
-            --arg vn "$VERSION_NAME" \
-            --arg rn "${RELEASE_NOTES}" \
-            --arg du "$DOWNLOAD_URL" \
-            '{
-              versionCode: ($vc | tonumber),
-              versionName: $vn,
-              releaseNotes: $rn,
-              downloadUrl: $du,
-              forceUpdate: false
-            }' > docs/version.json
-
-          echo "docs/version.json:"
-          cat docs/version.json
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/version.json
-
-          # 应用内更新清单（GitHub Pages 主源）与 version.json 同批落库。
-          MANIFEST=$(find ./manifest -name stable.json | head -1 || true)
-          if [ -n "$MANIFEST" ]; then
-            mkdir -p docs/update
-            cp "$MANIFEST" docs/update/stable.json
-            git add docs/update/stable.json
-          else
-            echo "::warning::清单产物缺失，本次不更新 docs/update/stable.json"
-          fi
-
-          # 公告 feed 与仓库根 announcement.json 同源生成（本地 release.sh 提交）。
-          if [ -f announcement.json ] && [ -f scripts/make_announcement_feed.py ]; then
-            python3 scripts/make_announcement_feed.py
-            git add docs/announcement.json
-          fi
-
-          if git diff --cached --quiet; then
-            echo "docs/version.json 无变化，跳过提交"
-            exit 0
-          fi
-
-          git commit -m "release: 同步 version.json / 更新清单 / 公告 feed 到 ${VERSION_NAME} (${VERSION_CODE})"
-
-          # 这一步是往共享分支写。若期间有人推了 main，直接 push 会被拒；
-          # 自动 rebase 后重试，避免整条发版流水线因为这种竞态变红。
-          for attempt in 1 2 3; do
-            if git push origin HEAD:main; then
-              echo "已推送，Pages 将自动重新部署"
-              exit 0
-            fi
-            echo "push 被拒（第 ${attempt} 次），rebase 后重试..."
-            git pull --rebase origin main
-          done
-
-          echo "ERROR: 连续 3 次推送失败，请检查 main 分支状态"
-          exit 1
-
-      # 投递校验是硬门禁：线上 version.json 与 Gitee 附件必须对本次 tag 真实可用。
+      # Gitee 投递校验降级为提示：2.x 的包超过其 100MB 附件上限，附件注定不存在；
+      # 主源（GitHub Release + Pages 清单）已由 build / publish-pages 两个 job 保证。
       - name: Verify Gitee Delivery
+        continue-on-error: true
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           RELEASE_NOTES: ${{ needs.build.outputs.release_notes }}

@@ -136,7 +136,7 @@ class ScheduleAdaptationDeviceTest {
             ScheduleCourseUi("跨学科联合研讨与实验课程", "王若宁、陈建明", "五象校区 敦行教学楼东区三层 302 研讨教室（从东侧走廊进入）", 4, 1, 2,
                 "1-25周", Color(0xFFE8B553), isCustom = true, customId = "long-two", id = "long-two"),
             // 复刻用户反馈的那一列：长楼名 + 纯数字教室，七列布局下最窄的真实场景。
-            ScheduleCourseUi("马克思主义基本原理", "刘雪纯", "九龙湖校区 九龙湖教学楼 406", 3, 1, 2,
+            ScheduleCourseUi("马克思主义基本原理", "张老师", "示例校区 长名教学楼 406", 3, 1, 2,
                 "1-25周", Color(0xFFE86A6A), id = "long-three")
         )
         compose.setContent {
@@ -191,13 +191,13 @@ class ScheduleAdaptationDeviceTest {
      */
     @Test fun narrowColumnKeepsBuildingNameAndRoomNumber() {
         val courses = listOf(
-            ScheduleCourseUi("马克思主义基本原理", "刘雪纯", "九龙湖校区 九龙湖教学楼 406", 3, 1, 2,
+            ScheduleCourseUi("马克思主义基本原理", "张老师", "示例校区 长名教学楼 406", 3, 1, 2,
                 "1-25周", Color(0xFFE86A6A), id = "narrow-long"),
-            ScheduleCourseUi("线性代数A", "蔡奥丽", "九龙湖校区 明志楼 418", 4, 1, 2,
+            ScheduleCourseUi("线性代数A", "李老师", "示例校区 明志楼 418", 4, 1, 2,
                 "1-25周", Color(0xFF63ADEC), id = "narrow-mid"),
-            ScheduleCourseUi("棒垒球", "王", "九龙湖校区 南应师足球场", 5, 1, 2,
+            ScheduleCourseUi("棒垒球", "王", "示例校区 南操场", 5, 1, 2,
                 "1-25周", Color(0xFF7AC77A), id = "narrow-field"),
-            ScheduleCourseUi("大学英语Ⅲ", "邓尚仪", "九龙湖校区 致远楼 A519", 6, 1, 2,
+            ScheduleCourseUi("大学英语Ⅲ", "王老师", "示例校区 致远楼 A519", 6, 1, 2,
                 "1-25周", Color(0xFFE8B553), id = "narrow-short")
         )
         compose.setContent {

@@ -7,7 +7,7 @@ object ScheduleLocation {
     fun compact(raw: String): String {
         if (raw.isBlank()) return "教室待定"
         val normalized = raw.trim().replace(Regex("[\\s　]+"), " ")
-        // 先裁校区与括号注释，再判断长短。反过来的话「九龙湖校区 南应师足球场」
+        // 先裁校区与括号注释，再判断长短。反过来的话「示例校区 南操场」
         // 这种刚好 12 字的地址会原样留下校区前缀，把楼栋挤到第二行。
         val withoutCampus = normalized.replace(Regex("^.*?校区[ ·,，:：/\\-]*"), "")
             .replace(Regex("[（(][^）)]*[）)]"), "").trim()

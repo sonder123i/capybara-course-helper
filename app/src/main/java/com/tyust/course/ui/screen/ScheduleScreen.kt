@@ -488,7 +488,7 @@ private fun rememberFullCoursePeriodHeight(courses: List<ScheduleCourseUi>, colu
             courses.forEach { course ->
                 val duration = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
                 // 与 CourseCard 同一套行数预算：课程名最多 3 行、地点最多 2 行。
-                // 七列均分后每列内容宽约 42dp，「至善楼406」一行装不下；与其截成
+                // 七列均分后每列内容宽约 42dp，「长名楼406」一行装不下；与其截成
                 // 「至善…」，不如让它折到第二行完整显示。这也是 1.x 的老布局——
                 // 卡片里不排教师行，把宝贵的纵向空间留给楼栋与教室。
                 val name = measurer.measure(course.name, courseNameStyle(base, duration),
@@ -768,7 +768,7 @@ fun CourseCard(course: ScheduleCourseUi, onLongClick: () -> Unit = {}, onClick: 
                         val measurer = rememberTextMeasurer()
                         val baseStyle = courseLocationStyle(MaterialTheme.typography.labelSmall, duration)
                         val availableWidth = constraints.maxWidth.coerceAtLeast(1)
-                        // 七列均分后每列只有约 42dp：「九龙湖教学楼 406」按 9sp 排两行会
+                        // 七列均分后每列只有约 42dp：「长名教学楼 406」按 9sp 排两行会
                         // 把教室号挤到第三行。先按 9sp → 8.1sp → 7.3sp 缩，楼名和教室
                         // 都留住；实在缩不下去才交给 Ellipsis。1.x 当年直接两行折行，
                         // 楼名完整的观感就是这么来的。

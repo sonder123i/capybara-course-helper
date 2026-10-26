@@ -54,7 +54,7 @@ class WidgetTodayTest {
     @Test fun showsOnlyTodaysCoursesForTheCurrentWeek() {
         val courses = listOf(
             WidgetCourse("a", "模拟电子技术", "", "创新楼A-319", 4, 3, 3, "1-16周"),
-            WidgetCourse("b", "大学物理", "", "至善楼406", 4, 1, 2, "2-16周(双)"),
+            WidgetCourse("b", "大学物理", "", "长名楼406", 4, 1, 2, "2-16周(双)"),
             WidgetCourse("c", "线性代数", "", "致远楼A519", 4, 1, 2, "1-16周(单)"),
             WidgetCourse("d", "周五的课", "", "", 5, 1, 2, "1-16周")
         )
@@ -107,11 +107,11 @@ class WidgetTodayTest {
     }
 
     @Test fun stripsCampusPrefixButKeepsLocationReadable() {
-        assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区 致远楼A519"))
-        assertEquals("致远楼A519", WidgetToday.compactLocation("九龙湖校区·致远楼A519"))
-        assertEquals("敏行楼B503-2", WidgetToday.compactLocation("九龙湖校区 敏行楼B503-2"))
+        assertEquals("致远楼A519", WidgetToday.compactLocation("示例校区 致远楼A519"))
+        assertEquals("致远楼A519", WidgetToday.compactLocation("示例校区·致远楼A519"))
+        assertEquals("敏行楼B503-2", WidgetToday.compactLocation("示例校区 敏行楼B503-2"))
         // 只有校区没有楼栋时保持原样，别把地点裁成空串
-        assertEquals("九龙湖校区", WidgetToday.compactLocation("九龙湖校区"))
+        assertEquals("示例校区", WidgetToday.compactLocation("示例校区"))
         assertEquals("", WidgetToday.compactLocation(""))
         // 没有校区前缀的地点原样保留
         assertEquals("创新楼A-319", WidgetToday.compactLocation("创新楼A-319"))
@@ -179,7 +179,7 @@ class WidgetTodayTest {
      * 组件若只看 rows 就会对着一张有课的课表说「今天没有课啦」。
      */
     @Test fun 缺锚点时与真的没课区分开() {
-        val courses = listOf(WidgetCourse("c1", "高等数学", "张", "至善楼406", 4, 1, 2, "1-16周"))
+        val courses = listOf(WidgetCourse("c1", "高等数学", "张", "长名楼406", 4, 1, 2, "1-16周"))
         val now = at(2026, 9, 17)
         assertTrue(WidgetToday.hasWeekAnchor(snapshot(courses), now))
         assertFalse(WidgetToday.hasWeekAnchor(snapshot(courses, firstWeekDate = ""), now))
@@ -196,7 +196,7 @@ class WidgetTodayTest {
      */
     @Test fun 周末向前预告到下一个有课的日子() {
         val courses = listOf(
-            WidgetCourse("a", "周一高数", "", "至善楼406", 1, 1, 2, "1-16周"),
+            WidgetCourse("a", "周一高数", "", "长名楼406", 1, 1, 2, "1-16周"),
             WidgetCourse("b", "周四物理", "", "创新楼A-319", 4, 3, 3, "1-16周")
         )
         val snap = snapshot(courses)

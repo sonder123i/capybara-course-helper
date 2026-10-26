@@ -7,8 +7,8 @@
 ## [2.0.2] - 2026-10-26
 
 - fix(schedule): 课表卡片回迁 1.x 排版——移除卡片内教师行，课程名最多 3 行、地点最多 2 行自然折行；网格行高测量同步改为同一套行数预算
-- fix(schedule): 地点两行放不下时按 9sp → 8.1sp → 7.3sp 缩字号，优先保住楼栋与教室号，而不是把楼名截成「九龙…」
-- fix(schedule): `ScheduleLocation.compact` 先裁「XX校区」与括号注释再判长度，短地址（≤12 字）不再漏裁校区（例如「九龙湖校区 南应师足球场」）
+- fix(schedule): 地点两行放不下时按 9sp → 8.1sp → 7.3sp 缩字号，优先保住楼栋与教室号，而不是把楼名截成「长楼…」
+- fix(schedule): `ScheduleLocation.compact` 先裁「XX校区」与括号注释再判长度，短地址（≤12 字）不再漏裁校区
 - feat(schedule): 课表设置新增「现在是第几周」反推第一周日期；`ScheduleDates.firstWeekDateForWeek` 跟随每周第一天（周一/周日），写回与日期选择器同一入口
 - feat(schedule): 「基础设置」上移到「课前提醒」之后，开学日期/第几周/每天节数不再被作息预设压到页面下半截
 - fix(schedule): 设置页 `semesterStartOverride` 为 0 时回落到本机保存值，避免反推出的日期被 0 立刻覆盖
@@ -19,8 +19,8 @@
 ## [2.0.1] - 2026-10-26
 
 - fix(schedule): 课表卡片回迁 1.x 排版——移除卡片内教师行，课程名最多 3 行、地点最多 2 行自然折行；网格行高测量同步改为同一套行数预算
-- fix(schedule): 地点两行放不下时按 9sp → 8.1sp → 7.3sp 缩字号，优先保住楼栋与教室号，而不是把楼名截成「九龙…」
-- fix(schedule): `ScheduleLocation.compact` 先裁「XX校区」与括号注释再判长度，短地址（≤12 字）不再漏裁校区（例如「九龙湖校区 南应师足球场」）
+- fix(schedule): 地点两行放不下时按 9sp → 8.1sp → 7.3sp 缩字号，优先保住楼栋与教室号，而不是把楼名截成「长楼…」
+- fix(schedule): `ScheduleLocation.compact` 先裁「XX校区」与括号注释再判长度，短地址（≤12 字）不再漏裁校区
 - feat(schedule): 课表设置新增「现在是第几周」反推第一周日期；`ScheduleDates.firstWeekDateForWeek` 跟随每周第一天（周一/周日），写回与日期选择器同一入口
 - fix(schedule): 设置页 `semesterStartOverride` 为 0 时回落到本机保存值，避免反推出的日期被 0 立刻覆盖
 - test(schedule): 卡片行数预算、窄列楼名/教室号截图、第几周反推的仪器用例；修正周次标签按三段式渲染后失效的旧断言
