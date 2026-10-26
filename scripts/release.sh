@@ -316,7 +316,9 @@ ADD_PATHS=("$VERSION_FILE" "$NOTES_FILE")
 if [ -f "$ANNOUNCEMENT_FILE" ]; then
     ADD_PATHS+=("$ANNOUNCEMENT_FILE")
 fi
-[ -f announcement.json ] && ADD_PATHS+=("announcement.json")
+# 根 announcement.json 是本地合并状态，B4 起已被 .gitignore 忽略（/announcement.json），
+# 不进发版提交；进仓库的是派生出来的 docs/announcement.json feed。
+# CI 的 feed 再生成有 [ -f announcement.json ] 守卫，根文件缺席时沿用已提交的 feed。
 [ -f docs/announcement.json ] && ADD_PATHS+=("docs/announcement.json")
 git add "${ADD_PATHS[@]}" "$CHANGELOG" 2>/dev/null || git add "${ADD_PATHS[@]}"
 git commit -q -m "release: ${VERSION}" -m "$(printf '%s\n' "$NOTES")"
