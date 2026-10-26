@@ -39,6 +39,15 @@ class UpdateFeedDeviceTest {
             assertTrue("版本名格式异常：${manifest.versionName}",
                 manifest.versionName.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")))
             assertTrue("清单里至少要有可下载的线路", manifest.mirrors.isNotEmpty())
+            // UpdateManager 在 check 之后已经按设备 ABI 选好分包（见 forDevice），
+            // 所以这里看的 size/mirrors 就是这台设备真正会下载的那一份。
+            if (android.os.Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }) {
+                assertEquals("arm64-v8a", manifest.selectedAbi)
+                assertTrue("分包应小于通用包，实际 ${manifest.size}",
+                    manifest.size < 100L * 1024 * 1024)
+                assertTrue("分包线路里应包含 Gitee：${manifest.mirrors.map { it.url }}",
+                    manifest.mirrors.any { it.url.contains("gitee.com") })
+            }
             // 测试包与线上同版本时应当判定为已是最新，而不是又提示一次更新。
             val expected = if (manifest.versionCode > com.tyust.course.BuildConfig.VERSION_CODE)
                 UpdateManager.Check.AVAILABLE else UpdateManager.Check.UP_TO_DATE
