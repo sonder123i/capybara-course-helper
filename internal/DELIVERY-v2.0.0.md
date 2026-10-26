@@ -6,11 +6,19 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 版本 | 2.0.0（versionCode 20000），代码全部提交，待执行发版流程 |
-| 渠道包实测 | arm64 **111.3 MB** / armeabi-v7a **107.6 MB** / universal **190.6 MB** |
+| 版本 | 2.0.0（versionCode 20000），代码全部提交 |
+| 发版进度 | **发版 agent 已执行过一轮**：tag 曾推送并触发 CI（run 40290028539），build job 成功（三包 + GitHub Release），`sync-to-gitee` job 跑 15 分钟后被 `@sonder123i` 手动取消；tag v2.0.0 已删除（本地与远端） |
+| 渠道包实测（本地构建） | arm64 **111.3 MB** / armeabi-v7a **107.6 MB** / universal **190.6 MB** |
 | 体积对比 | 比 rc1 阶段（arm64 144.4 MB）**轻 23%**（地图 SDK 已物理移除） |
 | 质量 | 1412 项单测 0 失败 · Lint 0 错误 · MuMu 全程实测通过 |
 | 上游依赖 | 作者服务器依赖清零；外链仅剩用户 GitHub 仓库、学校教务地址、插件自带源码仓库 |
+
+## 发版当前状态（重要：半完成态，交接时必须核对）
+
+1. **GitHub Release v2.0.0**：build job 成功，大概率已带着三包与 release-notes 发布——先 `gh release view v2.0.0 -R sonder123i/capybara-course-helper` 核实内容与附件。
+2. **Gitee 侧全部未同步**（附件 / `docs/update/stable.json` / `version.json`）：App 的 Gitee 备源清单因此还是旧版，重跑方式见 release.yml 的 `sync-to-gitee` job（可从被取消的 run 重跑该 job，或删掉远端 Release 重打 tag 全量重走）。
+3. **tag 已删**：重新发版需重新打 `v2.0.0` tag 并推送（先确认 GitHub Release 若已存在，重推 tag 会触发全流程重跑，注意避免 Release 重复）。
+4. **取消原因待确认**：cancel 由用户账号执行（可能是主动停止 Gitee 同步，也可能是发现问题）。重跑前先问用户/看 `gh run view 40290028539 --log` 的 sync-to-gitee 段是否卡在某个步骤（Gitee API 超时/凭证问题常见）。
 
 ## 交付明细（按 commit）
 
@@ -52,4 +60,11 @@
 
 ## 发版
 
-按 `internal/RELEASE-HANDOFF.md` §1→§6 执行：补 release-notes（文案已备好）→ 核对 Secrets → 真机 rc 验证 → `scripts/release.sh 2.0.0 --push` → 发布后抽查。当前分支 `v2-main`，本地领先远端 10 笔 commit，推送时注意 Gitee 分叉检查。
+上一轮由发版 agent 执行至 build 成功、Gitee 同步被取消（见「发版当前状态」）。继续收尾的核对顺序：
+
+1. `gh release view v2.0.0` 确认 GitHub Release 现状（存在则补 Gitee 同步即可，不必重打 tag 全量重跑）
+2. 查被取消 run 的 sync-to-gitee 日志定位取消原因（凭证/超时/人工）
+3. 决定：重跑 sync-to-gitee job（推荐，增量）或删 Release 重打 tag 全量重走
+4. 完成后按 RELEASE-HANDOFF §6 做发布后抽查（Gitee 清单、Pages、真机检查更新）
+
+其余细节与执行命令见 `internal/RELEASE-HANDOFF.md`。
