@@ -187,3 +187,28 @@ CI 的 Release 上传两个 ABI 包、Gitee 同步两个附件。
 |---|---|---|
 | 匿名使用统计弹窗/设置项 | `SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS` | `false`，UI 直接不渲染 |
 | 统一登录适配入口（登录页 + 设置页） | `SelfHostConfig.ENABLE_SCHOOL_SERVICE_BACKEND` | `false`，入口隐藏；底层 `SchoolAdaptationScreen` 保留在库 |
+
+### v2.0.2 线上 404 事故与修复（2026-10-26 晚）
+
+**现象**：1.2.2 用户在设置里点「检查更新」，弹窗显示「发现新版本 v1.2.2 → v2.0.2」，
+点下载报「服务器返回 404」。
+
+**根因**：
+1. `docs/version.json` 的 `downloadUrl` 指向 Gitee Release 附件，但 **Gitee 单附件上限 100MB**，
+   2.x 的包 191MB —— CI 的上传从未成功，两个版本的附件都是 404。
+2. Pages 落库写在 `sync-to-gitee` 的最后一步，Gitee 上传一挂（实测 45 分钟不返回），
+   `docs/update/stable.json` 与 `docs/version.json` 也不会更新。
+
+**已修**：
+- `publish-pages` 独立成 job（`needs: build`），主源不再受备源影响
+- `version.json` 的 `downloadUrl` 改指 GitHub Release，Gitee 降为 `mirrorUrl`
+- `sync-to-gitee` 增加 100MB 容量闸（超限跳过并告警）与 `--max-time 900`
+- `Verify Gitee Delivery` 降级为 `continue-on-error`（容量限制不是发版失败）
+
+**运维注意**：
+- 2.x 的包永远无法走 Gitee 附件，别再往那个方向排查
+- 发版后先看 `publish-pages` job，它绿了主源就通了；`sync-to-gitee` 红/挂不影响更新
+- 手工补投 Pages 的方法见上一节
+
+**公告规范**：见 `internal/release-notes-style.md`。三条硬线——最多 3 行、
+不出现真实校名地名课名人名、不写实现细节。`release-notes/v2.0.2.md` 是正例。
