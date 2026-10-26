@@ -21,6 +21,9 @@ def name = versionProps['VERSION_NAME']
 def compactPreview = providers.gradleProperty('compactPreview').map { it.toBoolean() }.getOrElse(false)
 // MuMu is x86_64. Run Gecko natively during device checks rather than via ARM translation.
 def emulatorPreview = providers.gradleProperty('emulatorPreview').map { it.toBoolean() }.getOrElse(false)
+// 平铺「开源版 / 严禁倒卖」水印默认只在可调试构建出现。本地验收截图时用
+// -PdebugWatermark=false 关掉，避免把一张红字标靶当成界面缺陷。
+def debugWatermark = providers.gradleProperty('debugWatermark').map { it.toBoolean() }.getOrElse(true)
 def localSecrets = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 
@@ -62,6 +65,14 @@ println "📦 当前版本: versionCode=$code, versionName=$name (isRelease=$isR
 def releaseKeystoreFile = System.getenv("RELEASE_SIGNING_CONFIG_FILE") != null
     ? file(System.getenv("RELEASE_SIGNING_CONFIG_FILE"))
     : (file('release-key.jks').exists() ? file('release-key.jks') : null)
+
+// 本地模拟器验收专用：-Px86Release=true 让 release 变体产出 x86_64 的包（MuMu 是 x86_64，
+// 正式分发的 ABI 只有 arm64/armeabi）。CI 不传这个属性，线上分发不受影响；
+// 验收包在本地用 debug key 重签覆盖安装，不占正式签名。
+def x86Release = providers.gradleProperty('x86Release').map { it.toBoolean() }.getOrElse(false)
+if (x86Release && !isReleaseTask) {
+    throw new GradleException('x86Release is only for release builds')
+}
 def releaseStorePassword = readSecret("RELEASE_STORE_PASSWORD")
 def releaseKeyAlias = readSecret("RELEASE_KEY_ALIAS")
 def releaseKeyPassword = readSecret("RELEASE_KEY_PASSWORD")
@@ -96,6 +107,7 @@ android {
         buildConfigField "String", "MAP_CONFIG_CLIENT_SECRET", quoteForBuildConfig(mapConfigClientSecret)
         buildConfigField "String", "AMAP_ANDROID_SDK_KEY", quoteForBuildConfig(isReleaseTask ? "" : (readSecret("AMAP_ANDROID_SDK_KEY") ?: ""))
         buildConfigField "boolean", "UI_PREVIEW", "false"
+        buildConfigField "boolean", "DEBUG_WATERMARK", "${debugWatermark}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -115,6 +127,7 @@ android {
             enable isReleaseTask
             reset()
             include 'arm64-v8a', 'armeabi-v7a'
+            if (x86Release) include 'x86_64'
             universalApk true
         }
     }
@@ -163,7 +176,7 @@ android {
         jniLibs.useLegacyPackaging = true
         // AGP's universal split also includes dependency ABIs outside splits.include.
         jniLibs.excludes += ['**/x86/**']
-        if (!emulatorPreview) jniLibs.excludes += ['**/x86_64/**']
+        if (!emulatorPreview && !x86Release) jniLibs.excludes += ['**/x86_64/**']
     }
     
     compileOptions {
