@@ -526,6 +526,8 @@ jobs:
         run: |
           set -e
 
+          # 附件名要用版本号，先解析；下面 Step 1 还会再解析一次，重复无害。
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=[[:space:]]*//p' ./version/version.properties | tr -d '[:space:]')
           APK_FILE=$(find ./apk -name "app-arm64-v8a-release.apk" | head -1)
           if [ -z "$APK_FILE" ]; then
             echo "::warning::arm64 分包缺失，回落到 artifact 里的任意 APK"
