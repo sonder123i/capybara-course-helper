@@ -212,3 +212,22 @@ CI 的 Release 上传两个 ABI 包、Gitee 同步两个附件。
 
 **公告规范**：见 `internal/release-notes-style.md`。三条硬线——最多 3 行、
 不出现真实校名地名课名人名、不写实现细节。`release-notes/v2.0.2.md` 是正例。
+
+### 下载源实况（v2.0.3 之后）
+
+| 通道 | 现状 |
+|---|---|
+| 1.x `version.json` | `downloadUrl` = Gitee 附件 `capybara-<版本>-arm64.apk`（92MB，实测 2.1MB/s）；`mirrorUrl` = GitHub 的 arm64 分包 |
+| 2.x `stable.json` | 顶层通用包（156MB）仅兜底；`artifacts.arm64-v8a` 92MB 走 Gitee + GitHub 双线路；`armeabi-v7a` 93MB 走 GitHub |
+| Gitee 附件上限 | **单文件 100MB**（GVP 200MB）。2.x 通用包永远传不上去，只能传 arm64 分包 |
+| Gitee 上传带宽 | GitHub runner → Gitee 实测约 **100KB/s**，92MB 要 15 分钟以上。`sync-to-gitee` 的 curl 超时已放宽到 2400s，但**仍可能传不完** |
+
+**手动补传流程**（CI 传不完时的兜底）：
+1. 本地构建或从 GitHub Release 下载 `app-arm64-v8a-release.apk`
+2. 改名为 `capybara-<版本>-arm64.apk`
+3. 在 Gitee 对应该 tag 的发行版里拖入附件
+4. 确认 `curl -I .../releases/download/v<版本>/capybara-<版本>-arm64.apk` 返回 302
+5. 把 `docs/version.json` 的 `downloadUrl` 指过去，push 到 main
+
+**永远不要把 `downloadUrl` 指向 Gitee 的 `app-release.apk`**——那是 156MB 的通用包，
+Gitee 上不存在，1.x 用户点下载会直接 404（v2.0.2 线上事故）。
