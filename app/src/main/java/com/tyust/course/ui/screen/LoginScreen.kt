@@ -195,7 +195,9 @@ fun LoginScreen(
                     androidx.compose.foundation.Image(
                         painter = androidx.compose.ui.res.painterResource(com.tyust.course.R.drawable.ic_app_logo),
                         contentDescription = null,
-                        modifier = Modifier.size(64.dp)
+                        // 母版是 1024 的方形插画，直接铺开是一个硬边方块；
+                        // 按 iOS 图标的圆角比例裁一下，既保住清晰度又不像贴图。
+                        modifier = Modifier.size(88.dp).clip(RoundedCornerShape(20.dp))
                     )
                     
                     Spacer(modifier = Modifier.height(24.dp))
