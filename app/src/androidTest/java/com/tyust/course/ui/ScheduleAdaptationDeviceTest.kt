@@ -121,6 +121,9 @@ class ScheduleAdaptationDeviceTest {
         compose.runOnIdle { assertEquals(1, todayClicks); collapse.floatValue = 0f }
         compose.onNodeWithContentDescription("周视图", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("schedule-today", useUnmergedTree = true).assertIsDisplayed()
+        // 收尾动画跑完再交还给下一个测试：残留的时钟/动画会让下一个
+        // setContent 找不到 compose hierarchy（MuMu 上实测会偶发）。
+        compose.waitForIdle()
     }
 
     @Test fun courseCardKeepsNameAndLocationWithinTheirLineBudget() {
