@@ -233,6 +233,86 @@ fun ScheduleSettingsScreen(
                         SemesterReminderSection(reminderAccountLabel, reminderTerm, summary, canChangeReminders,
                             onSemesterReminders, onConfigureTime = { showDatePicker = true })
                     }
+
+                    StaggerIn(index = 0, settled = entranceSettled) {
+                        InsetGroupedSection(header = "基础设置") {
+                            InsetGroupedRow(
+                                icon = Icons.Filled.DateRange,
+                                iconTint = Color(0xFF0A84FF),
+                                title = "每周第一天",
+                                subtitle = "学周从这一天开始，课表列序随之调整",
+                                trailing = {
+                                    Text(
+                                        text = if (weekStart == com.tyust.course.schedule.ScheduleWeekStart.Sunday) "周日" else "周一",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = NeuPrimary
+                                    )
+                                },
+                                onClick = { showWeekStartPicker = true }
+                            )
+                            InsetGroupedRow(
+                                icon = Icons.Filled.DateRange,
+                                iconTint = Color(0xFF0A84FF),
+                                title = "第一周开始日期",
+                                subtitle = "按所选日期所在周的第一天计算周次",
+                                trailing = {
+                                    Text(
+                                        text = dateText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = NeuPrimary
+                                    )
+                                },
+                                onClick = {
+                                    if (onShowDatePicker != null) {
+                                        onShowDatePicker()
+                                    } else {
+                                        showDatePicker = true
+                                    }
+                                }
+                            )
+                            // 多数人不记得开学那天，但知道「这周是第几周」。
+                            // 从本周往前推就行，省掉一次翻日历。写回的是与日期选择器同一个入口。
+                            InsetGroupedRow(
+                                icon = Icons.Outlined.Today,
+                                iconTint = Color(0xFF30D158),
+                                title = "现在是第几周",
+                                subtitle = "不知道开学那天？填本周是第几周即可反推",
+                                trailing = {
+                                    Text(
+                                        text = if (semesterStartDate > 0) "重新计算" else "去填写",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (semesterStartDate > 0) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            NeuPrimary
+                                        }
+                                    )
+                                },
+                                onClick = { showWeekNumberPicker = true }
+                            )
+                            InsetGroupedRow(
+                                icon = Icons.Outlined.AccessTime,
+                                iconTint = Color(0xFFFF9F0A),
+                                title = "每天节数",
+                                subtitle = "课表纵向的节次总数",
+                                trailing = {
+                                    Text(
+                                        text = "$periodCount 节",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = NeuPrimary
+                                    )
+                                },
+                                showDivider = false,
+                                // 原先是 Material DropdownMenu；换成与节次时间同一种
+                                // 滚轮弹窗，两处交互一致
+                                onClick = { showPeriodCountPicker = true }
+                            )
+                        }
+                    }
                     if (onDefaultLead != null || onAdjustments != null) InsetGroupedSection(header = "课程安排") {
                         if (onDefaultLead != null) InsetGroupedRow(title = "默认提前提醒", subtitle = if (defaultLead == 0) "上课时通知" else "提前 " + defaultLead + " 分钟",
                             onClick = { showLeadPicker = true })
@@ -314,86 +394,6 @@ fun ScheduleSettingsScreen(
                         if (applied) { periodCount = timing.count; storedPeriodTimes = timing.times }
                         applied
                     }
-                    StaggerIn(index = 0, settled = entranceSettled) {
-                        InsetGroupedSection(header = "基础设置") {
-                            InsetGroupedRow(
-                                icon = Icons.Filled.DateRange,
-                                iconTint = Color(0xFF0A84FF),
-                                title = "每周第一天",
-                                subtitle = "学周从这一天开始，课表列序随之调整",
-                                trailing = {
-                                    Text(
-                                        text = if (weekStart == com.tyust.course.schedule.ScheduleWeekStart.Sunday) "周日" else "周一",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = NeuPrimary
-                                    )
-                                },
-                                onClick = { showWeekStartPicker = true }
-                            )
-                            InsetGroupedRow(
-                                icon = Icons.Filled.DateRange,
-                                iconTint = Color(0xFF0A84FF),
-                                title = "第一周开始日期",
-                                subtitle = "按所选日期所在周的第一天计算周次",
-                                trailing = {
-                                    Text(
-                                        text = dateText,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = NeuPrimary
-                                    )
-                                },
-                                onClick = {
-                                    if (onShowDatePicker != null) {
-                                        onShowDatePicker()
-                                    } else {
-                                        showDatePicker = true
-                                    }
-                                }
-                            )
-                            // 多数人不记得开学那天，但知道「这周是第几周」。
-                            // 从本周往前推就行，省掉一次翻日历。写回的是与日期选择器同一个入口。
-                            InsetGroupedRow(
-                                icon = Icons.Outlined.Today,
-                                iconTint = Color(0xFF30D158),
-                                title = "现在是第几周",
-                                subtitle = "不知道开学那天？填本周是第几周即可反推",
-                                trailing = {
-                                    Text(
-                                        text = if (semesterStartDate > 0) "重新计算" else "去填写",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (semesterStartDate > 0) {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        } else {
-                                            NeuPrimary
-                                        }
-                                    )
-                                },
-                                onClick = { showWeekNumberPicker = true }
-                            )
-                            InsetGroupedRow(
-                                icon = Icons.Outlined.AccessTime,
-                                iconTint = Color(0xFFFF9F0A),
-                                title = "每天节数",
-                                subtitle = "课表纵向的节次总数",
-                                trailing = {
-                                    Text(
-                                        text = "$periodCount 节",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = NeuPrimary
-                                    )
-                                },
-                                showDivider = false,
-                                // 原先是 Material DropdownMenu；换成与节次时间同一种
-                                // 滚轮弹窗，两处交互一致
-                                onClick = { showPeriodCountPicker = true }
-                            )
-                        }
-                    }
-
                     if (onSyncSchedule != null) {
                         InsetGroupedSection(header = "课表数据") {
                             InsetGroupedRow(title = "同步课表", subtitle = "从教务系统更新正在查看的学期",

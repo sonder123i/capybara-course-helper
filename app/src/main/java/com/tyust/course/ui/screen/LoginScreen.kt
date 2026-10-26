@@ -529,9 +529,12 @@ fun LoginScreen(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         com.tyust.course.ui.system.InsetGroupedSection {
-                            InsetGroupedRow(title = "统一登录适配", subtitle = "申请或查看本校适配进度",
-                                icon = Icons.Default.AutoAwesome, onClick = onSchoolAdaptation,
-                                trailing = { Icon(Icons.Default.ChevronRight, null) })
+                            // 适配申请走作者后端，本发行版已切断；入口一并隐藏。
+                            if (com.tyust.course.SelfHostConfig.ENABLE_SCHOOL_SERVICE_BACKEND) {
+                                InsetGroupedRow(title = "统一登录适配", subtitle = "申请或查看本校适配进度",
+                                    icon = Icons.Default.AutoAwesome, onClick = onSchoolAdaptation,
+                                    trailing = { Icon(Icons.Default.ChevronRight, null) })
+                            }
                             InsetGroupedRow(title = "本机绑定名额", subtitle = "查看与释放已绑定的学生账号",
                                 icon = Icons.Default.Info, enabled = !isLoading, onClick = onManageBindings,
                                 trailing = { Icon(Icons.Default.ChevronRight, null) })

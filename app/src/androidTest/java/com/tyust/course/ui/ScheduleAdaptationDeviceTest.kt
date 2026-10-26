@@ -247,6 +247,8 @@ class ScheduleAdaptationDeviceTest {
                 }
             }
         }
+        // 设置页首屏：基础设置紧跟在课前提醒之后（不再被作息预设压在下面）。
+        captureScreen("settings-order")
         compose.onNodeWithText("现在是第几周").performScrollTo().assertExists()
         compose.onNodeWithText("现在是第几周").performClick()
         // 未设锚点时滚轮停在第 1 周；直接确认即把本周一写成第一周。

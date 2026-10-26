@@ -27,6 +27,9 @@ import com.tyust.course.usage.UsageStatsManager
 
 @Composable
 fun UsageNotice() {
+    // 本发行版不接入任何上游统计服务：上报层已由 SelfHostConfig 切断，
+    // 这里把告知弹窗一并关掉——否则用户仍会被要求对一个不会发生的上报做选择。
+    if (!com.tyust.course.SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS) return
     val preferences by UsageStatsManager.preferences.collectAsState()
     if (!preferences.noticeSeen && !BuildConfig.UI_PREVIEW && !UserManager.getInstance().isDemoMode) {
         UsageNoticeDialog(onContinue = UsageStatsManager::acknowledgeNotice)

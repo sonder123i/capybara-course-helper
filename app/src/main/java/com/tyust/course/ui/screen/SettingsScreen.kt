@@ -299,13 +299,17 @@ fun SettingsScreen(
                     subtitle = "查看、复制错误报告并反馈",
                     onClick = onErrorReport
                 )
-                SettingsRow(
-                    icon = Icons.Outlined.School,
-                    iconTint = Color(0xFF0A84FF),
-                    title = "统一登录适配",
-                    subtitle = "申请学校支持或查看适配进度",
-                    onClick = onSchoolAdaptation
-                )
+                // 「统一登录适配」依赖上游作者后端，本发行版已切断该服务；
+                // 入口一并隐藏，避免用户提交申请后等一个不会到来的回复。
+                if (com.tyust.course.SelfHostConfig.ENABLE_SCHOOL_SERVICE_BACKEND) {
+                    SettingsRow(
+                        icon = Icons.Outlined.School,
+                        iconTint = Color(0xFF0A84FF),
+                        title = "统一登录适配",
+                        subtitle = "申请学校支持或查看适配进度",
+                        onClick = onSchoolAdaptation
+                    )
+                }
                 SettingsRow(
                     icon = Icons.Outlined.Info,
                     iconTint = Color(0xFF8E8E93),
@@ -324,11 +328,14 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "数据与安全") {
-                InsetGroupedRow(
-                    title = "匿名使用统计",
-                    subtitle = "统计每日活跃与问卷入口点击；关闭后停止上报",
-                    trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
-                )
+                // 统计上报已在 SelfHostConfig 切断，开关也就没有存在的意义。
+                if (com.tyust.course.SelfHostConfig.ENABLE_ANONYMOUS_USAGE_STATS) {
+                    InsetGroupedRow(
+                        title = "匿名使用统计",
+                        subtitle = "统计每日活跃与问卷入口点击；关闭后停止上报",
+                        trailing = { LiquidSwitch(checked = usageEnabled, onCheckedChange = onUsageEnabledChange) }
+                    )
+                }
                 SettingsRow(
                     icon = Icons.Outlined.Delete,
                     iconTint = Color(0xFFFF9F0A),
