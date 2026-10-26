@@ -9,7 +9,6 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import com.tyust.course.academic.plugin.PluginPages
-import com.tyust.course.announcement.AnnouncementManager
 import com.tyust.course.academic.plugin.ExtensionCenterContent
 import com.tyust.course.academic.plugin.PluginPageRegistry
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -267,22 +266,10 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val shouldShowStarDialog = !isDemoMode && !hasStarred && dismissCount < 3
     var showStarDialog by rememberSaveable { mutableStateOf(false) }
     var startupOverlaysReady by remember { mutableStateOf(false) }
-    val announcementFeed by AnnouncementManager.state.collectAsState()
-    var announcementClock by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
-    var showAnnouncementCenter by rememberSaveable { mutableStateOf(false) }
-    var initialAnnouncementId by rememberSaveable { mutableStateOf<String?>(null) }
-    val announcementUnread = remember(announcementFeed, announcementClock, UserManager.getInstance().currentSchool?.id) { AnnouncementManager.unreadCount(context) }
 
     val sessionStore = UserManager.getInstance().sessionState
     val session by sessionStore.state.collectAsState()
     val currentAccountStorageKey = session.token.accountStorageKey
-    val surveyModel: com.tyust.course.survey.SurveyViewModel = viewModel()
-    val surveyRepository = surveyModel.forAccount(currentAccountStorageKey, UserManager.getInstance().currentSchool?.baseUrl)
-    val surveyFeed by surveyRepository.state.collectAsState()
-    val surveyVisit by com.tyust.course.survey.SurveyVisitTracker.visit.collectAsState()
-    val surveyUsagePreferences by com.tyust.course.usage.UsageStatsManager.preferences.collectAsState()
-    var showSurveyCenter by rememberSaveable(currentAccountStorageKey) { mutableStateOf(false) }
-    var initialSurveyId by rememberSaveable(currentAccountStorageKey) { mutableStateOf<String?>(null) }
     val accessibility = rememberGlassAccessibilityMode()
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
@@ -335,27 +322,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val density = LocalDensity.current
     val pageTravelPx = with(density) { 8.dp.roundToPx() }
     val updateState = rememberUpdateState()
-    val onAnnouncementAction: (AnnouncementManager.Action) -> Unit = { action ->
-        showAnnouncementCenter = false
-        initialAnnouncementId = null
-        if (action.kind == "url" && AnnouncementManager.validPublicUrl(action.target)) {
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(action.target))) }
-                .onFailure { GlassToaster.show("无法打开此链接") }
-        } else if (action.kind == "screen") when (action.target) {
-            "schedule" -> openPage("app.schedule")
-            "grades" -> openPage("app.grades")
-            "selection" -> openPage("app.grab")
-            "settings" -> openPage("app.settings")
-            "services" -> openPage("app.services")
-            "plugins" -> context.startActivity(Intent(context, com.tyust.course.academic.plugin.PluginCenterActivity::class.java))
-            "feedback" -> com.tyust.course.academic.plugin.PluginFeedback.open(context)
-            "updates" -> {
-                com.tyust.course.update.UpdateManager.getInstance(context).checkForUpdate(manual = true)
-                context.startActivity(Intent(context, com.tyust.course.update.UpdateDownloadActivity::class.java))
-            }
-            "announcements" -> showAnnouncementCenter = true
-        }
-    }
     val recovery by SessionRenewer.state.collectAsState()
     val sessionFeedback = session.expiryFeedback == com.tyust.course.manager.RequestFeedback.Interactive
     val isTokenExpired = sessionFeedback && session.expired && recovery.token == session.token && recovery.phase == RecoveryPhase.NeedsLogin
@@ -385,16 +351,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         }
         fragmentActivity.lifecycle.addObserver(observer)
         onDispose { fragmentActivity.lifecycle.removeObserver(observer) }
-    }
-    LaunchedEffect(surveyRepository, foreground, surveyVisit) {
-        if (foreground) surveyRepository.refresh()
-    }
-    LaunchedEffect(foreground) {
-        if (foreground) while (true) {
-            announcementClock = System.currentTimeMillis()
-            AnnouncementManager.refresh()
-            delay(60_000)
-        }
     }
     LaunchedEffect(session, isTokenExpired, foreground, dialogHostState.hasBlockingSurface) {
         noticeModel.notices.update(session, isTokenExpired, foreground && !dialogHostState.hasBlockingSurface)
@@ -478,10 +434,11 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         val useGlass = isBackdropSupported()
         // debug 平铺水印的开关。**它绝不能进任何 backdrop 捕获层**，见文件末尾
         // debugPiracyWatermark 的注释——落在采样层里会让 debug 包的折射永远看起来正常。
+        // 本地验收可用 -PdebugWatermark=false 关掉，release 包本来就画不到（FLAG_DEBUGGABLE 为 0）。
         val showPiracyTiles = (
             LocalContext.current.applicationInfo.flags and
                 ApplicationInfo.FLAG_DEBUGGABLE
-            ) != 0 && !BuildConfig.UI_PREVIEW
+            ) != 0 && BuildConfig.DEBUG_WATERMARK && !BuildConfig.UI_PREVIEW
         val tokenExpiredNotice = if (isTokenExpired) {
             FloatingNotice(
                 message = "需要重新登录",
@@ -677,12 +634,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                     "app.schedule" -> com.tyust.course.ui.route.ScheduleRoute(isActive = selectedPage == route)
                                     "app.grab" -> com.tyust.course.ui.route.GrabProRoute()
                                     "app.grades" -> com.tyust.course.ui.route.GradesRoute()
-                                    "app.settings" -> com.tyust.course.ui.route.SettingsRoute(
-                                        onSurveyCenter = { initialSurveyId = null; showSurveyCenter = true },
-                                        surveyUnreadCount = surveyFeed.unreadCount(System.currentTimeMillis()),
-                                        onAnnouncementCenter = { initialAnnouncementId = null; showAnnouncementCenter = true },
-                                        announcementUnreadCount = announcementUnread
-                                    )
+                                    "app.settings" -> com.tyust.course.ui.route.SettingsRoute()
                                     "app.services" -> Box(Modifier.fillMaxSize().statusBarsPadding()) {
                                         com.tyust.course.academic.plugin.ExtensionCenterContent(onOpen = { openPage(it) })
                                     }
@@ -732,34 +684,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             DialogHost(
                 state = dialogHostState,
                 modifier = Modifier.fillMaxSize()
-            )
-            if (showSurveyCenter) {
-                key(currentAccountStorageKey) {
-                    com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSurveyCenter = false; initialSurveyId = null }) { close ->
-                        com.tyust.course.ui.route.SurveyCenterRoute(surveyRepository, onBack = close, initialSurveyId = initialSurveyId)
-                    }
-                }
-            }
-            com.tyust.course.ui.screen.SurveyReminder(
-                repository = surveyRepository,
-                canPresent = startupOverlaysReady && !session.expired && !showStarDialog && !updateState.showDialog() &&
-                    !dialogHostState.hasBlockingSurfaceExcept("survey-reminder") && !showSurveyCenter && !showAnnouncementCenter && selectedPage != "app.grab" &&
-                    (surveyUsagePreferences.noticeSeen || isDemoMode),
-                foreground = foreground,
-                onOpen = { id -> initialSurveyId = id; showSurveyCenter = true }
-            )
-            if (showAnnouncementCenter) {
-                com.tyust.course.ui.system.GlassSubpage(onDismiss = { showAnnouncementCenter = false; initialAnnouncementId = null }) { close ->
-                    com.tyust.course.announcement.AnnouncementHistoryScreen(onBack = close, onAction = onAnnouncementAction, initialAnnouncementId = initialAnnouncementId)
-                }
-            }
-            com.tyust.course.announcement.AnnouncementReminder(
-                canPresent = startupOverlaysReady && !session.expired && !showStarDialog && !updateState.showDialog() &&
-                    !dialogHostState.hasBlockingSurfaceExcept("app-announcement") && !showSurveyCenter && !showAnnouncementCenter && selectedPage != "app.grab" &&
-                    (surveyUsagePreferences.noticeSeen || isDemoMode),
-                foreground = foreground,
-                onOpen = { id -> initialAnnouncementId = id; showAnnouncementCenter = true },
-                onAction = onAnnouncementAction
             )
 
             if (!session.expired && updateState.showDialog()) {

@@ -51,11 +51,12 @@ class WindowOrientationTest {
         } finally { phone.destroy() }
     }
 
+    /** 问卷 WebView 已随问卷中心移除，当前全量清单是四个全屏 Activity。 */
     @Test
-    fun manifestLeavesOrientationToRuntimeForAllFiveActivities() {
+    fun manifestLeavesOrientationToRuntimeForAllFullscreenActivities() {
         val app = RuntimeEnvironment.getApplication()
         for (name in listOf("MainActivity", "LoginActivity", "CookieWebViewActivity",
-                "AcademicWebViewActivity", "SurveyWebViewActivity")) {
+                "AcademicWebViewActivity")) {
             val info = app.packageManager.getActivityInfo(ComponentName(app.packageName, "com.tyust.course.$name"), 0)
             assertEquals(name, ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, info.screenOrientation)
         }

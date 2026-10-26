@@ -15,8 +15,11 @@ object SelfHostConfig {
     /** 应用内更新检查：清单走自建双源（见 [updateManifestSources]），签名公钥为本仓库自持密钥对。 */
     const val ENABLE_APP_UPDATE_CHECK = true
 
-    /** 远端公告：拉取自建公告源（见 [announcementFeedUrls]）。B4 公告中心接线后开启。 */
-    const val ENABLE_REMOTE_ANNOUNCEMENT = true
+    /**
+     * 远端公告：本发行版不提供公告中心，保持关闭。
+     * AnnouncementManager 仍在代码里（便于以后需要时接回），但没有任何 UI 入口调用它。
+     */
+    const val ENABLE_REMOTE_ANNOUNCEMENT = false
 
     /** 用户反馈上报与历史拉取：关闭后反馈内容不离开本机，历史恒为空。 */
     const val ENABLE_REMOTE_FEEDBACK = false

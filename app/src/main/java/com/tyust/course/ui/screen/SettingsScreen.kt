@@ -90,10 +90,6 @@ fun SettingsScreen(
     onLogExport: () -> Unit = {},
     onErrorReport: () -> Unit = {},
     onSchoolAdaptation: () -> Unit = {},
-    onSurveyCenter: () -> Unit = {},
-    surveyUnreadCount: Int = 0,
-    onAnnouncementCenter: () -> Unit = {},
-    announcementUnreadCount: Int = 0,
     onWallpaperSelect: () -> Unit = {},
     wallpaperName: String = "",
     themeName: String = "跟随系统",
@@ -116,7 +112,6 @@ fun SettingsScreen(
     onAcademicSupport: () -> Unit = {},
     onAcademicPlugins: () -> Unit = {},
     onCampusServices: () -> Unit = {},
-    onMapServices: () -> Unit = {},
     onQuickFeedback: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
@@ -269,34 +264,6 @@ fun SettingsScreen(
             }
 
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "应用与支持") {
-                SettingsRow(icon = Icons.Outlined.Map, iconTint = MaterialTheme.colorScheme.primary,
-                    title = "地图服务", subtitle = "个人高德 Key、搜索额度与公共服务", onClick = onMapServices)
-                InsetGroupedRow(
-                    icon = Icons.Outlined.Campaign,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    title = "公告中心",
-                    subtitle = if (announcementUnreadCount > 0) "有 $announcementUnreadCount 条未读公告" else "查看功能动态与使用提醒",
-                    onClick = onAnnouncementCenter,
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (announcementUnreadCount > 0) Box(Modifier.size(8.dp).background(SemanticDanger, CircleShape))
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                )
-                InsetGroupedRow(
-                    icon = Icons.Outlined.Assignment,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    title = "问卷中心",
-                    subtitle = if (surveyUnreadCount > 0) "有 $surveyUnreadCount 份新问卷" else "查看问卷、收藏与填写记录",
-                    onClick = onSurveyCenter,
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (surveyUnreadCount > 0) Box(Modifier.size(8.dp).background(SemanticDanger, CircleShape))
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                )
                 SettingsRow(
                     icon = Icons.Outlined.Home,
                     iconTint = Color(0xFF5E5CE6),
@@ -314,8 +281,8 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.ContentPasteSearch,
                     iconTint = Color(0xFF18796B),
-                    title = "快捷反馈",
-                    subtitle = "无需 GitHub 账号，可在站内查看回复",
+                    title = "问题反馈",
+                    subtitle = "跳转 GitHub Issue，自动带上版本与机型（需登录）",
                     onClick = onQuickFeedback
                 )
                 SettingsRow(

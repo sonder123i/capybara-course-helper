@@ -140,14 +140,12 @@ class PluginDeveloperActivity : ComponentActivity() {
                         subtitle = current?.let { "${it.manifest.name} · ${it.manifest.version}" } ?: if (school?.academicProvider == "unconfigured") "未配置适配" else "内置适配 · 无需额外安装",
                         showDivider = false)
                 }
-                InsetGroupedSection(header = "获取插件", footer = if (AcademicProviderRegistry.usingLocalCatalog) "当前使用本地调试目录，重启应用后恢复正式目录。" else "正式目录已启用，下载与更新均会校验签名。") {
+                InsetGroupedSection(header = "获取插件", footer = if (AcademicProviderRegistry.usingLocalCatalog) "当前使用本地调试目录，重启应用后恢复正式目录。" else "本发行版未接入在线目录；可用本地目录调试或直接导入适配包。") {
                     InsetGroupedRow(title = "浏览适配目录", subtitle = "查看可用学校，下载或更新适配", icon = Icons.Outlined.CloudDownload,
                         enabled = !busy, onClick = ::loadCatalog, trailing = { ForwardIcon() })
                     InsetGroupedRow(title = "导入适配包", subtitle = "支持学校适配与校园服务插件", icon = Icons.Outlined.FileOpen,
-                        enabled = !busy, onClick = { picker.launch(arrayOf("*/*")) },
+                        enabled = !busy, onClick = { picker.launch(arrayOf("*/*")) }, showDivider = false,
                         modifier = Modifier.testTag("plugin-import"), trailing = { ForwardIcon() })
-                    InsetGroupedRow(title = "访问插件网站", subtitle = "安装指南、源码提交与作者交流", icon = Icons.Outlined.Language,
-                        onClick = { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(AcademicProviderRegistry.OFFICIAL_WEBSITE))) }, showDivider = false, trailing = { ForwardIcon() })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall,

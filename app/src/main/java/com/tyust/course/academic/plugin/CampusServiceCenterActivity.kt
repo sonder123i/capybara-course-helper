@@ -70,10 +70,9 @@ class CampusServiceCenterActivity : ComponentActivity() {
                     }
                 }
                 InsetGroupedSection(header = "发现更多") {
-                    InsetGroupedRow(title = "插件中心", subtitle = "下载、导入与管理校园插件", icon = Icons.Outlined.CloudDownload,
-                        onClick = { startActivity(Intent(this@CampusServiceCenterActivity, PluginCenterActivity::class.java)) }, trailing = { Icon(Icons.Outlined.ChevronRight, null) })
-                    InsetGroupedRow(title = "反馈与作者交流", subtitle = "告诉作者你需要的校园服务", icon = Icons.Outlined.ChatBubbleOutline, showDivider = false,
-                        onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AcademicProviderRegistry.OFFICIAL_WEBSITE + "/community"))) }, trailing = { Icon(Icons.Outlined.OpenInNew, null) })
+                    InsetGroupedRow(title = "插件中心", subtitle = "导入与管理校园插件", icon = Icons.Outlined.CloudDownload,
+                        onClick = { startActivity(Intent(this@CampusServiceCenterActivity, PluginCenterActivity::class.java)) }, showDivider = false,
+                        trailing = { Icon(Icons.Outlined.ChevronRight, null) })
                 }
             }
         }
