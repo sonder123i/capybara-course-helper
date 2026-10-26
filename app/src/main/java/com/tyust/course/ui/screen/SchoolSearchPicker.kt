@@ -1,30 +1,46 @@
 package com.tyust.course.ui.screen
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.tyust.course.academic.AcademicCapabilities
+import com.tyust.course.academic.AcademicSystem
 import com.tyust.course.academic.plugin.*
 import com.tyust.course.manager.UserManager
+import com.tyust.course.model.CatalogSchool
+import com.tyust.course.model.SchoolCatalog
 import com.tyust.course.model.SchoolConfig
 import com.tyust.course.ui.system.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-private data class PendingSchoolInstall(val pkg: PluginPackage, val school: SchoolConfig, val token: Long)
+/** 一行 = 一所学校。适配信息只作为行尾的星标提示，不再单独占一行。 */
+private data class SchoolRow(
+    val school: SchoolConfig,
+    val name: String,
+    val subtitle: String,
+    /**
+     * 这所学校有可用的教务适配（内置协议 zf/qz 或专属插件），点选后能直接跑；
+     * 没星表示目录里还没适配，只能手动填地址试。
+     */
+    val supported: Boolean,
+    /** 已经在「我的学校」里，点一下只是切过去。 */
+    val configured: Boolean
+)
 
 @Composable
 fun SchoolSearchPicker(schools: List<SchoolConfig>, selected: SchoolConfig?, enabled: Boolean,
@@ -46,137 +62,117 @@ fun SchoolSearchPicker(schools: List<SchoolConfig>, selected: SchoolConfig?, ena
 private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Unit,
     onSelected: (SchoolConfig) -> Unit, onAdded: () -> Unit, onAddManually: (String) -> Unit,
     onManage: () -> Unit, onBrowseCatalog: (() -> Unit)? = null) {
-    val scope = rememberCoroutineScope()
-    val gate = remember { SchoolSearchSession() }
-    var job by remember { mutableStateOf<Job?>(null) }
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    var reload by remember { mutableIntStateOf(0) }
-    var loading by remember { mutableStateOf(true) }
-    var verified by remember { mutableStateOf(false) }
-    var remote by remember { mutableStateOf<List<SchoolSearchProvider>>(emptyList()) }
+    var catalog by remember { mutableStateOf<List<CatalogSchool>?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var pending by remember { mutableStateOf<PendingSchoolInstall?>(null) }
-    val installed = remember(reload, busy) { AcademicProviderRegistry.knownPackages().filter { it.official && it.manifest.isAcademic }
-        .map { SchoolSearchProvider(it.manifest.id, it.manifest.name, it.manifest.version,
-            AcademicProviderRegistry.school(it), installed = true) } }
-    val rows = remember(query, schools, remote, installed) { PluginSchoolSearch.merge(query, schools, remote, installed) }
-    fun cancel() { gate.cancel(); job?.cancel(); job = null; busy = false; pending = null }
-    fun dismiss() { cancel(); onDismiss() }
-    fun manual(name: String) { cancel(); onAddManually(name) }
-    fun submit() {
-        if (PluginSchoolSearch.shouldOfferAdd(query, true, verified && !loading, rows)) manual(query.trim())
+
+    // 1777 校目录约 400KB，只在面板第一次打开时读一次。
+    LaunchedEffect(Unit) {
+        catalog = withContext(Dispatchers.IO) { SchoolCatalog.load(context) }
     }
-    DisposableEffect(Unit) { onDispose { gate.cancel(); job?.cancel() } }
-    LaunchedEffect(reload) {
-        loading = true; verified = false; problem = null
-        try { remote = AcademicProviderRegistry.catalog().schoolEntries(); verified = true }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { problem = "无法加载已验证的学校目录：${error.message ?: "请检查网络后重试"}" }
-        finally { loading = false }
+
+    // 专属插件只能覆盖到极少数学校（内置的两所学校专用包不在 1777 校库里），
+    // 单靠它标星等于永远不亮。这里两个来源合一：能匹配专属插件，或有内置适配（sys 非空）。
+    val pluginPackages = remember {
+        runCatching {
+            AcademicProviderRegistry.knownPackages().filter { it.official && it.manifest.isAcademic }
+        }.getOrDefault(emptyList())
     }
-    fun bind(pkg: PluginPackage, requested: SchoolConfig, token: Long) {
-        if (!gate.current(token)) return
-        check(AcademicProviderRegistry.isCurrentPackage(pkg.manifest.id, pkg.digest)) { "适配版本已改变，请重新选择" }
-        val manager = UserManager.getInstance()
-        val existing = PluginSchoolSearch.existing(manager.supportedSchools, requested)
-        val target = existing ?: AcademicProviderRegistry.school(pkg)
-        check(AcademicProviderRegistry.matches(pkg, target)) { "适配不支持已保存的自定义地址，请保留原配置或手动添加学校" }
-        // No suspension between the final session check and these small local writes.
-        if (!gate.current(token)) return
-        val bound = AcademicProviderRegistry.bindSchool(pkg, target)
-        gate.finish(token); busy = false; onSelected(bound); onAdded()
-    }
-    fun activate(item: PendingSchoolInstall, approved: Boolean) {
-        job = scope.launch {
-            try {
-                if (!gate.current(item.token)) return@launch
-                val pkg = withContext(Dispatchers.IO) { AcademicProviderRegistry.packages().activateStaged(item.pkg.manifest.id, approved, item.pkg.digest) }
-                ensureActive()
-                if (!gate.current(item.token)) return@launch
-                AcademicProviderRegistry.reload()
-                pending = null
-                if (pkg == null) { problem = "适配已暂存，相关任务结束后请重新选择；学校尚未切换"; gate.finish(item.token); busy = false }
-                else bind(pkg, item.school, item.token)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (gate.current(item.token)) { problem = error.message; cancel() } }
+
+    val rows = remember(catalog, query, schools, pluginPackages) {
+        val needle = query.trim()
+        fun pluginMatched(school: SchoolConfig): Boolean = pluginPackages.any { pkg ->
+            runCatching { AcademicProviderRegistry.matches(pkg, school) }.getOrDefault(false)
         }
-    }
-    fun choose(row: SchoolSearchResult, provider: SchoolSearchProvider) {
-        val token = gate.begin() ?: return
-        busy = true; problem = null
-        job = scope.launch {
-            try {
-                val current = AcademicProviderRegistry.knownPackage(provider.id)?.takeIf { it.official }
-                if (current != null) { bind(current, row.school, token); return@launch }
-                val candidate = AcademicProviderRegistry.catalog().update(provider.id, stageOnly = true)
-                ensureActive()
-                if (!gate.current(token)) return@launch
-                check(candidate.manifest.version == provider.version) { "目录版本已更新，请刷新后重新选择" }
-                val item = PendingSchoolInstall(candidate, row.school, token)
-                if (PluginUpdatePolicy.expanded(null, candidate.manifest).isNotEmpty()) pending = item
-                else activate(item, false)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (gate.current(token)) { problem = "安装未完成：${error.message.orEmpty()}"; cancel() } }
-        }
-    }
-    SystemDialog(onDismissRequest = ::dismiss, title = { Text("搜索学校") },
-        confirmButton = { SystemDialogButton(primary = true, onClick = ::dismiss) { Text("关闭") } }) {
-        Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassTextField(query, { cancel(); query = it }, Modifier.fillMaxWidth(), placeholder = "输入学校名称",
-                leadingIcon = Icons.Default.Search, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { submit() }))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SystemActionButton("搜索", ::submit, icon = Icons.Default.Search, enabled = query.isNotBlank() && !busy)
-                SystemActionButton("手动添加", { manual(query.trim()) }, icon = Icons.Default.Add)
-                if (onBrowseCatalog != null) SystemActionButton("内置学校库", { cancel(); onBrowseCatalog() },
-                    icon = Icons.Default.School, enabled = !busy)
-                SystemActionButton("管理学校", { cancel(); onManage() }, icon = Icons.Default.Settings)
+
+        // 已添加的学校：空搜索词时就是默认列表，用户不必先打字才看得见自己在用的学校。
+        val local = schools.distinctBy { it.id }
+            .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
+            .map { school ->
+                val system = school.academicSystem
+                SchoolRow(school, school.name, AcademicCapabilities.name(system),
+                    supported = pluginMatched(school) || (system.isNotBlank() && system != AcademicSystem.AUTO.id),
+                    configured = true)
             }
-            if (loading) Text("正在查询学校适配，本地学校仍可选择…", style = MaterialTheme.typography.bodySmall)
+
+        // 目录：中文名 / 全拼 / 首字母都能搜，最多 60 条，避免一次塞进上千行。
+        val fromCatalog = if (needle.isEmpty()) emptyList() else catalog.orEmpty()
+            .asSequence()
+            .filter { it.matches(needle) }
+            .take(60)
+            .mapNotNull { entry ->
+                val school = entry.toSchoolConfig() ?: return@mapNotNull null
+                if (local.any { PluginSchoolMatcher.key(it.school) == PluginSchoolMatcher.key(school) }) return@mapNotNull null
+                val supported = entry.adapterReady || pluginMatched(school)
+                SchoolRow(
+                    school = school,
+                    name = entry.name,
+                    subtitle = (if (supported) entry.typeLabel else "暂未适配") + " · " + school.domain,
+                    supported = supported,
+                    configured = false
+                )
+            }
+            .toList()
+
+        (local + fromCatalog).distinctBy { PluginSchoolMatcher.key(it.school) }
+    }
+
+    fun select(school: SchoolConfig) {
+        try {
+            val manager = UserManager.getInstance()
+            val existing = PluginSchoolSearch.existing(manager.supportedSchools, school)
+            val target = existing ?: school
+            if (existing == null) manager.addCustomSchool(target)
+            onAdded()
+            onSelected(target)
+        } catch (error: Exception) {
+            problem = error.message ?: "无法切换到这所学校"
+        }
+    }
+
+    SystemDialog(onDismissRequest = onDismiss, title = { Text("搜索学校") },
+        confirmButton = { SystemDialogButton(primary = true, onClick = onDismiss) { Text("关闭") } }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassTextField(query, { query = it }, Modifier.fillMaxWidth(),
+                placeholder = "学校名 / 拼音 / 首字母",
+                leadingIcon = Icons.Default.Search)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SystemActionButton("手动添加", { onAddManually(query.trim()) },
+                    icon = Icons.Default.Add, enabled = query.isNotBlank())
+                if (onBrowseCatalog != null) SystemActionButton("内置学校库", { onBrowseCatalog() },
+                    icon = Icons.Default.School)
+                SystemActionButton("管理学校", { onManage() }, icon = Icons.Default.Settings)
+            }
             problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            if (!loading && !verified) SystemActionButton("重试目录查询", { reload++ })
-            if (busy) Text("正在处理适配；可关闭面板取消学校切换。", style = MaterialTheme.typography.bodySmall)
-            if (rows.isEmpty() && verified && !loading) Text("没有匹配学校，点击搜索可添加。")
-            rows.forEach { row ->
-                InsetGroupedSection(header = row.school.name,
-                    footer = PluginSchoolMatcher.endpoint(row.school).toString() +
-                        if (row.providers.size > 1) " · 选择一个适配提供者" else "") {
-                    val last = row.providers.size - 1
-                    if (row.configured) InsetGroupedRow(title = "使用已配置学校", subtitle = "保留当前地址与适配",
-                        icon = Icons.Default.School, enabled = !busy, showDivider = last >= 0,
-                        onClick = { cancel(); onSelected(row.school) },
-                        trailing = { Icon(Icons.Default.ChevronRight, null) })
-                    if (row.builtin && !row.configured) InsetGroupedRow(title = "使用内置适配", subtitle = "随 App 提供，无需安装",
-                        icon = Icons.Default.School, enabled = !busy, showDivider = last >= 0,
-                        onClick = {
-                            cancel()
-                            val manager = UserManager.getInstance()
-                            val existing = PluginSchoolSearch.existing(manager.supportedSchools, row.school)
-                            val target = existing ?: row.school
-                            if (existing == null) manager.addCustomSchool(target)
-                            onAdded(); onSelected(target)
-                        }, trailing = { Icon(Icons.Default.ChevronRight, null) })
-                    row.providers.forEachIndexed { index, provider ->
-                        val status = if (provider.installed) "已安装" else provider.incompatibleReason ?: "可安装"
-                        val available = provider.installed || provider.incompatibleReason == null
-                        InsetGroupedRow(title = provider.name, subtitle = "${provider.version} · $status",
-                            icon = Icons.Default.Extension, enabled = !busy && available, showDivider = index < last,
-                            onClick = { choose(row, provider) },
-                            trailing = { if (available) Text(if (provider.installed) "选择" else "安装",
-                                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) })
-                    }
+
+            when {
+                catalog == null -> Text("正在加载学校目录…", style = MaterialTheme.typography.bodySmall)
+                rows.isEmpty() && query.isBlank() -> Text("输入学校名称开始搜索，收录 ${catalog?.size ?: 0} 所高校。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                rows.isEmpty() -> Text("没有找到这所学校，可以用「手动添加」填教务地址。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(rows, key = { it.school.id + "|" + it.name }) { row ->
+                    InsetGroupedRow(
+                        title = row.name,
+                        subtitle = row.subtitle,
+                        icon = Icons.Default.School,
+                        showDivider = false,
+                        onClick = { select(row.school) },
+                        trailing = {
+                            when {
+                                row.supported -> Icon(Icons.Default.Star, "有可用教务适配",
+                                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                row.configured -> Icon(Icons.Default.Check, "已添加",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    )
                 }
             }
         }
     }
-    pending?.let { item -> SystemDialog(onDismissRequest = { cancel() }, title = { Text("安装 ${item.pkg.manifest.name}") },
-        confirmButton = { SystemDialogButton(primary = true, onClick = { pending = null; activate(item, true) }) { Text("确认安装") } },
-        dismissButton = { SystemDialogButton(onClick = { cancel() }) { Text("取消") } }) {
-        Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("版本 ${item.pkg.manifest.version}")
-            Text("权限：" + item.pkg.manifest.permissions.joinToString("、").ifBlank { "无额外权限" })
-            Text("网络范围：" + item.pkg.manifest.network.joinToString("\n") { it.optString("origin") + it.optString("pathPrefix") })
-        }
-    } }
 }
