@@ -110,6 +110,9 @@ class UpdateManager internal constructor(private val context: Context,
                     return@use
                 }
                 if (response.code == 304 && stored != null && prefs.getString("etag-payload:$url", null) == stored.envelope) return stored
+                // 404/410 表示「这个渠道还没发布过版本」，不是网络故障。
+                // 两者必须分开：前者应静默视为已是最新，后者才该提示用户换网络。
+                if (response.code == 404 || response.code == 410) updateError("MANIFEST_ABSENT", "更新清单尚未发布")
                 if (!response.isSuccessful) updateError("MANIFEST_HTTP", "更新来源暂时不可用（HTTP ${response.code}）")
                 val body = response.body ?: updateError("MANIFEST_EMPTY", "更新来源没有返回清单")
                 if (body.contentLength() > 128 * 1024) updateError("MANIFEST_SIZE", "更新清单过大")
@@ -141,18 +144,25 @@ class UpdateManager internal constructor(private val context: Context,
                 checkJob = scope.launch {
                     try {
                     val previous = cached(selected)
+                    val sourceList = sources(selected)
                     val results = java.util.Collections.synchronizedList(mutableListOf<UpdateManifest>())
+                    val outcomes = java.util.concurrent.ConcurrentHashMap<String, String>()
                     withTimeoutOrNull(12_000) {
                         val semaphore = Semaphore(2)
-                        coroutineScope { sources(selected).map { url -> launch {
+                        coroutineScope { sourceList.map { url -> launch {
                             semaphore.withPermit {
-                                try { results.add(fetch(url, selected)) }
+                                try { results.add(fetch(url, selected)); outcomes[url] = "" }
                                 catch (e: CancellationException) { throw e }
-                                catch (_: Exception) { /* A failed source never becomes "up to date". */ }
+                                catch (e: Exception) { outcomes[url] = (e as? UpdateFailure)?.code ?: "CHECK_FAILED" }
                             }
                         } }.joinAll() }
                     }
                     if (channel != selected) return@launch
+                    // 主源（GitHub Pages）明确回答「清单不存在」= 该渠道还没发布过版本，不是网络故障。
+                    // 备源可能因为 DNS 劫持之类的本地网络问题一句话都说不出，不能因此把
+                    // 「未发布」误报成「请更换网络」——首次发版前每次都弹这个太误导人。
+                    val neverPublished = results.isEmpty() && previous == null &&
+                        sourceList.firstOrNull()?.let { outcomes[it] } == "MANIFEST_ABSENT"
                     val chosen = UpdateManifestVerifier.choose(results.toList(), previous)
                     val value = (chosen ?: previous)?.forDevice(deviceAbis())
                     if (chosen != null) write(cacheFile(selected), chosen.envelope)
@@ -161,12 +171,23 @@ class UpdateManager internal constructor(private val context: Context,
                     mutable.update { s ->
                         val activeTask = s.active || s.phase in setOf(Phase.PAUSED, Phase.READY)
                         s.copy(manifest = if (activeTask) s.manifest else value,
-                            check = when { chosen == null && previous != null -> Check.CACHED; chosen == null -> Check.FAILED; available -> Check.AVAILABLE; else -> Check.UP_TO_DATE },
+                            check = when {
+                                chosen == null && previous != null -> Check.CACHED
+                                chosen == null && neverPublished -> Check.UP_TO_DATE
+                                chosen == null -> Check.FAILED
+                                available -> Check.AVAILABLE
+                                else -> Check.UP_TO_DATE
+                            },
                             showDialog = s.showDialog || (chosen != null && available && canRemind),
-                            message = if (activeTask) s.message else when { chosen == null && previous != null -> "检查失败，显示上次验证的更新信息"; chosen == null -> "检查更新失败，请重试或更换网络";
-                                value != null && value.minSdk > Build.VERSION.SDK_INT -> "新版本不支持当前 Android 版本";
-                                available -> "发现新版本"; else -> "已是最新版本" },
-                            errorCode = if (activeTask) s.errorCode else if (chosen == null) "CHECK_FAILED" else "")
+                            message = if (activeTask) s.message else when {
+                                chosen == null && previous != null -> "检查失败，显示上次验证的更新信息"
+                                chosen == null && neverPublished -> "已是最新版本"
+                                chosen == null -> "检查更新失败，请重试或更换网络"
+                                value != null && value.minSdk > Build.VERSION.SDK_INT -> "新版本不支持当前 Android 版本"
+                                available -> "发现新版本"
+                                else -> "已是最新版本"
+                            },
+                            errorCode = if (activeTask) s.errorCode else if (chosen == null && !neverPublished) "CHECK_FAILED" else "")
                     }
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) { if (channel == selected) mutable.update { it.copy(check = Check.FAILED, message = (e as? UpdateFailure)?.message ?: "检查更新失败，请重试", errorCode = (e as? UpdateFailure)?.code ?: "CHECK_FAILED") } }

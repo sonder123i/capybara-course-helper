@@ -76,6 +76,36 @@ class UpdateManagerTest {
         server.enqueue(MockResponse().setResponseCode(503)); val m = create(server); m.checkForUpdate(true)
         assertEquals(UpdateManager.Check.FAILED, awaitCheck(m).check)
     } }
+    /**
+     * 首次发版之前，主源上根本没有清单：404 表示「这个渠道还没发布过版本」，
+     * 不是网络故障。判成 FAILED 会让每个还没发版的构建都弹「请更换网络」。
+     */
+    @Test fun absentPrimaryManifestMeansChannelHasNoReleaseYet() { MockWebServer().use { server ->
+        server.enqueue(MockResponse().setResponseCode(404)); val m = create(server); m.checkForUpdate(true)
+        val result = awaitCheck(m)
+        assertEquals(UpdateManager.Check.UP_TO_DATE, result.check)
+        assertEquals("", result.errorCode)
+        assertEquals("已是最新版本", result.message)
+    } }
+    @Test fun serverErrorIsStillReportedAsFailure() { MockWebServer().use { server ->
+        server.enqueue(MockResponse().setResponseCode(500)); val m = create(server); m.checkForUpdate(true)
+        assertEquals(UpdateManager.Check.FAILED, awaitCheck(m).check)
+    } }
+    /**
+     * 备源因为本地 DNS 劫持完全连不上时，不能把主源的「没有清单」拖成网络故障：
+     * 主源是权威发布点，它说没有就是没有。
+     */
+    @Test fun unreachableMirrorDoesNotOverrideAbsentPrimary() { MockWebServer().use { primary ->
+        MockWebServer().use { mirror ->
+            val m = UpdateManager(app, UpdateFixtures.keys,
+                { listOf(primary.url("/manifest").toString(), mirror.url("/manifest").toString()) },
+                { true }, { listOf("arm64-v8a", "armeabi-v7a") }).also { manager = it }
+            primary.enqueue(MockResponse().setResponseCode(404))
+            mirror.enqueue(MockResponse().setResponseCode(503))
+            m.checkForUpdate(true)
+            assertEquals(UpdateManager.Check.UP_TO_DATE, awaitCheck(m).check)
+        }
+    } }
     @Test fun sameVersionRepackIsNotAccepted() { MockWebServer().use { server ->
         val dir = File(app.filesDir, "app-updates").apply { mkdirs() }; File(dir, "stable-manifest.json").writeText(UpdateFixtures.envelope())
         server.enqueue(MockResponse().setBody(UpdateFixtures.envelope(UpdateFixtures.payload().put("sha256", "c".repeat(64)).put("revision", 101).toString())))
